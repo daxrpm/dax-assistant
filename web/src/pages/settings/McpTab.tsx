@@ -28,6 +28,19 @@ function parseEnv(text: string): Record<string, string> {
   return out;
 }
 
+/** Parse "Key: value" header lines into an object. */
+function parseHeaders(text: string): Record<string, string> {
+  const out: Record<string, string> = {};
+  for (const line of text.split("\n")) {
+    const trimmed = line.trim();
+    if (!trimmed || trimmed.startsWith("#")) continue;
+    const colon = trimmed.indexOf(":");
+    if (colon === -1) continue;
+    out[trimmed.slice(0, colon).trim()] = trimmed.slice(colon + 1).trim();
+  }
+  return out;
+}
+
 export function McpTab({
   config,
   onSaved,
@@ -179,6 +192,7 @@ function AddServerModal({
   const [args, setArgs] = useState("");
   const [url, setUrl] = useState("");
   const [env, setEnv] = useState("");
+  const [headers, setHeaders] = useState("");
   const [saving, setSaving] = useState(false);
 
   const submit = async () => {
@@ -198,6 +212,7 @@ function AddServerModal({
             : [],
         url: transport !== "stdio" ? url.trim() : "",
         env: parseEnv(env),
+        headers: transport !== "stdio" ? parseHeaders(headers) : {},
         enabled: true,
       });
       toast.show(`Added ${name}`, "success");
@@ -206,6 +221,7 @@ function AddServerModal({
       setArgs("");
       setUrl("");
       setEnv("");
+      setHeaders("");
       onAdded();
     } catch (e) {
       toast.show(e instanceof Error ? e.message : "Add failed", "danger");
@@ -262,13 +278,26 @@ function AddServerModal({
             </Field>
           </>
         ) : (
-          <Field label="URL">
-            <TextInput
-              value={url}
-              onChange={(e) => setUrl(e.target.value)}
-              placeholder="https://example.com/mcp"
-            />
-          </Field>
+          <>
+            <Field label="URL">
+              <TextInput
+                value={url}
+                onChange={(e) => setUrl(e.target.value)}
+                placeholder="https://coolify.dax.dev/mcp"
+              />
+            </Field>
+            <Field
+              label="HTTP headers"
+              description='One "Key: value" per line. Use {env:NAME} for secrets.'
+            >
+              <TextArea
+                rows={3}
+                value={headers}
+                onChange={(e) => setHeaders(e.target.value)}
+                placeholder={"Authorization: Bearer {env:COOLIFY_TOKEN}\nX-Custom-Header: value"}
+              />
+            </Field>
+          </>
         )}
         <Field
           label="Environment variables"
