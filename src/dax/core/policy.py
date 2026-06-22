@@ -69,6 +69,16 @@ class ToolPolicy:
             deny=config.deny,
         )
 
+    def reload(self, config: ToolPolicyConfig) -> None:
+        """Update rules in place so the agent picks them up without a restart."""
+        self._default = Decision(config.default)
+        self._allow = [p.lower() for p in config.allow]
+        self._ask = [
+            p.lower()
+            for p in (config.ask if config.ask else DEFAULT_ASK_PATTERNS)
+        ]
+        self._deny = [p.lower() for p in config.deny]
+
     @staticmethod
     def _matches(name: str, patterns: list[str]) -> bool:
         n = name.lower()
