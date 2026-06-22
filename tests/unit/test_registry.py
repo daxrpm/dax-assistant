@@ -109,3 +109,14 @@ class TestToolRegistry:
 
         # Last registration wins
         assert registry.get_server_for_tool("shared_tool") == "server_b"
+
+    def test_unregister_server_drops_only_its_tools(self):
+        registry = ToolRegistry()
+        registry.register(_make_tools("a", ["a1", "a2"]))
+        registry.register(_make_tools("b", ["b1"]))
+
+        registry.unregister_server("a")
+
+        assert registry.tool_count == 1
+        assert registry.get_server_for_tool("a1") is None
+        assert registry.get_server_for_tool("b1") == "b"

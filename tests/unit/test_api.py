@@ -228,3 +228,45 @@ class TestMCPServers:
             "/api/config/mcp/servers/nonexistent",
         )
         assert response.status_code == 404
+
+
+class TestNewEndpoints:
+    async def test_config_includes_security_and_tools(self, client: AsyncClient):
+        data = (await client.get("/api/config")).json()
+        assert "security" in data
+        assert data["security"]["auth_enabled"] is False  # test fixture disables auth
+        assert "tools" in data
+        assert "policy" in data["tools"]
+        assert data["tools"]["policy"]["default"] == "allow"
+
+    async def test_logs_empty_without_buffer(self, client: AsyncClient):
+        assert (await client.get("/api/logs")).json() == []
+
+    async def test_mcp_status_empty_without_manager(self, client: AsyncClient):
+        assert (await client.get("/api/mcp/status")).json() == []
+
+    async def test_update_tools_policy(self, client: AsyncClient, tmp_path: Path):
+        client._transport.app.state.config_path = tmp_path / "dax.toml"  # type: ignore[union-attr]
+        resp = await client.patch(
+            "/api/config/tools",
+            json={
+                "confirm_timeout_seconds": 90,
+                "policy": {"default": "ask", "deny": ["*format*"]},
+            },
+        )
+        assert resp.status_code == 200
+        cfg = (await client.get("/api/config")).json()
+        assert cfg["tools"]["confirm_timeout_seconds"] == 90
+        assert cfg["tools"]["policy"]["default"] == "ask"
+        assert cfg["tools"]["policy"]["deny"] == ["*format*"]
+
+    async def test_update_security(self, client: AsyncClient, tmp_path: Path):
+        client._transport.app.state.config_path = tmp_path / "dax.toml"  # type: ignore[union-attr]
+        resp = await client.patch(
+            "/api/config/security",
+            json={"session_ttl_hours": 48, "cookie_secure": True},
+        )
+        assert resp.status_code == 200
+        cfg = (await client.get("/api/config")).json()
+        assert cfg["security"]["session_ttl_hours"] == 48
+        assert cfg["security"]["cookie_secure"] is True
