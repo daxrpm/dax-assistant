@@ -73,68 +73,51 @@ class MCPManager:
     def registry(self) -> ToolRegistry:
         return self._registry
 
+    def _make_client(self, name: str, server_config: Any) -> MCPClient | None:
+        """Build an unconnected client for a server config (env resolved)."""
+        transport = server_config.transport
+
+        if transport == "stdio":
+            if not server_config.command:
+                logger.warning("MCP server '%s' (stdio) has no command, skipping", name)
+                return None
+            return MCPClient(
+                server_name=name,
+                command=server_config.command,
+                args=server_config.args,
+                env=_resolve_env_dict(server_config.env),
+            )
+
+        if transport in ("streamable_http", "sse", "http"):
+            if not server_config.url:
+                logger.warning(
+                    "MCP server '%s' (%s) has no URL, skipping", name, transport
+                )
+                return None
+            headers = _resolve_env_dict(server_config.headers)
+            oauth_token = _get_oauth_token(name)
+            if oauth_token:
+                headers["Authorization"] = f"Bearer {oauth_token}"
+            return MCPClient(
+                server_name=name,
+                transport="http",
+                url=_resolve_env_vars(server_config.url),
+                headers=headers,
+            )
+
+        logger.warning(
+            "MCP server '%s' has unknown transport '%s', skipping", name, transport
+        )
+        return None
+
     async def start(self) -> None:
         """Launch and connect to all enabled MCP servers."""
         for name, server_config in self._config.servers.items():
             if not server_config.enabled:
                 logger.info("MCP server '%s' is disabled, skipping", name)
                 continue
-
-            transport = server_config.transport
-
-            if transport == "stdio":
-                if not server_config.command:
-                    logger.warning(
-                        "MCP server '%s' (stdio) has no command, skipping", name,
-                    )
-                    continue
-
-                client = MCPClient(
-                    server_name=name,
-                    command=server_config.command,
-                    args=server_config.args,
-                    env=_resolve_env_dict(server_config.env),
-                )
-
-            elif transport in ("streamable_http", "sse", "http"):
-                if not server_config.url:
-                    logger.warning(
-                        "MCP server '%s' (%s) has no URL, skipping",
-                        name, transport,
-                    )
-                    continue
-
-                # Merge config headers with stored OAuth tokens
-                headers = _resolve_env_dict(server_config.headers)
-                oauth_token = _get_oauth_token(name)
-                if oauth_token:
-                    headers["Authorization"] = f"Bearer {oauth_token}"
-
-                client = MCPClient(
-                    server_name=name,
-                    transport="http",
-                    url=_resolve_env_vars(server_config.url),
-                    headers=headers,
-                )
-
-            else:
-                logger.warning(
-                    "MCP server '%s' has unknown transport '%s', skipping",
-                    name, transport,
-                )
-                continue
-
             try:
-                await client.connect()
-                self._clients[name] = client
-
-                tools = await client.list_tools()
-                self._registry.register(tools)
-
-                logger.info(
-                    "MCP server '%s' (%s) ready with %d tools",
-                    name, transport, len(tools),
-                )
+                await self.add_server(name, server_config)
             except Exception:
                 logger.exception("Failed to start MCP server '%s'", name)
 
@@ -143,6 +126,38 @@ class MCPManager:
             len(self._clients),
             self._registry.tool_count,
         )
+
+    async def add_server(self, name: str, server_config: Any) -> int:
+        """Connect to a server and register its tools live. Returns tool count.
+
+        Reconnects cleanly if the server was already connected. Raises on
+        connection failure so callers can surface the error.
+        """
+        await self.remove_server(name)
+
+        client = self._make_client(name, server_config)
+        if client is None:
+            raise ValueError(f"MCP server '{name}' has an invalid configuration")
+
+        await client.connect()
+        self._clients[name] = client
+        tools = await client.list_tools()
+        self._registry.register(tools)
+        logger.info(
+            "MCP server '%s' (%s) ready with %d tools",
+            name, server_config.transport, len(tools),
+        )
+        return len(tools)
+
+    async def remove_server(self, name: str) -> None:
+        """Disconnect a server (if connected) and drop its tools."""
+        client = self._clients.pop(name, None)
+        if client is not None:
+            try:
+                await client.disconnect()
+            except Exception:
+                logger.exception("Error disconnecting MCP server '%s'", name)
+        self._registry.unregister_server(name)
 
     async def stop(self) -> None:
         """Disconnect from all MCP servers."""
@@ -155,6 +170,25 @@ class MCPManager:
         self._clients.clear()
         self._registry.clear()
         logger.info("MCP Manager stopped")
+
+    def server_status(self) -> list[dict[str, Any]]:
+        """Per-configured-server connection + tool status for the web UI."""
+        lookup = self._registry.server_lookup
+        statuses: list[dict[str, Any]] = []
+        for name, cfg in self._config.servers.items():
+            client = self._clients.get(name)
+            tools = sorted(t for t, s in lookup.items() if s == name)
+            statuses.append(
+                {
+                    "name": name,
+                    "connected": client is not None and client.is_connected,
+                    "transport": cfg.transport,
+                    "enabled": cfg.enabled,
+                    "tool_count": len(tools),
+                    "tools": tools,
+                }
+            )
+        return statuses
 
     async def list_tools(self) -> list[dict[str, Any]]:
         """Return all available tool schemas across all servers."""

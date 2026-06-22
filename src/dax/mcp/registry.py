@@ -48,6 +48,17 @@ class ToolRegistry:
 
         logger.info("Registered %d tools from server", len(tools))
 
+    def unregister_server(self, server_name: str) -> None:
+        """Remove all tools belonging to a server (e.g. on disconnect)."""
+        self._tools = [
+            t for t in self._tools if t.get("server_name") != server_name
+        ]
+        self._tool_to_server = {
+            name: server
+            for name, server in self._tool_to_server.items()
+            if server != server_name
+        }
+
     def clear(self) -> None:
         """Remove all registered tools."""
         self._tools.clear()
