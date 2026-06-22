@@ -1,46 +1,37 @@
-import { useCallback, useEffect, useState, type ReactNode } from "react";
-import { Center, Loader } from "@mantine/core";
-
+import { useEffect, useState, type ReactNode } from "react";
 import { api, type AuthStatus } from "../api/client";
-import { LoginPage } from "../pages/Login/LoginPage";
+import { LoginPage } from "../pages/Login";
 
 /**
- * Gates the app behind authentication. If auth is disabled server-side, or the
- * user already has a valid session, children render. Otherwise the login page
- * is shown.
+ * Gates the app behind authentication. While auth is enabled and the user
+ * isn't logged in, it shows the login screen; otherwise it renders the app.
+ * Passes `authEnabled` down so the shell can show/hide the logout control.
  */
-export function AuthGate({ children }: { children: ReactNode }) {
-  const [authStatus, setAuthStatus] = useState<AuthStatus | null>(null);
-  const [loading, setLoading] = useState(true);
+export function AuthGate({
+  children,
+}: {
+  children: (authEnabled: boolean) => ReactNode;
+}) {
+  const [status, setStatus] = useState<AuthStatus | null>(null);
 
-  const check = useCallback(async () => {
-    try {
-      setAuthStatus(await api.authStatus());
-    } catch {
-      // If the status call itself fails, assume auth is required.
-      setAuthStatus({ auth_enabled: true, configured: false, authenticated: false });
-    } finally {
-      setLoading(false);
-    }
-  }, []);
+  const refresh = () => api.authStatus().then(setStatus).catch(() => setStatus(null));
 
   useEffect(() => {
-    void check();
-  }, [check]);
+    refresh();
+  }, []);
 
-  if (loading) {
+  if (status === null) {
     return (
-      <Center h="100vh">
-        <Loader size="lg" />
-      </Center>
+      <div className="flex h-full items-center justify-center bg-background text-muted">
+        Loading…
+      </div>
     );
   }
 
-  if (authStatus && (!authStatus.auth_enabled || authStatus.authenticated)) {
-    return <>{children}</>;
+  const needsLogin = status.auth_enabled && !status.authenticated;
+  if (needsLogin) {
+    return <LoginPage onLoggedIn={refresh} configured={status.configured} />;
   }
 
-  return (
-    <LoginPage configured={authStatus?.configured ?? true} onSuccess={check} />
-  );
+  return <>{children(status.auth_enabled)}</>;
 }

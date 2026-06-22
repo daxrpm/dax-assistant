@@ -65,13 +65,39 @@ export interface MCPServerConfig {
   enabled: boolean;
 }
 
+export interface SecurityConfig {
+  auth_enabled: boolean;
+  configured: boolean;
+  session_ttl_hours: number;
+  cookie_secure: boolean;
+}
+
+export interface ToolsConfig {
+  confirm_timeout_seconds: number;
+  policy: {
+    default: string;
+    allow: string[];
+    ask: string[];
+    deny: string[];
+  };
+}
+
 export interface FullConfig {
   general: GeneralConfig;
   voice: VoiceConfig;
   llm: LLMConfig;
   web: WebConfig;
   whatsapp: WhatsAppConfig;
+  security: SecurityConfig;
+  tools: ToolsConfig;
   mcp: {
     servers: Record<string, MCPServerConfig>;
   };
+}
+
+export interface LogEntry {
+  ts: string;
+  level: string;
+  logger: string;
+  message: string;
 }

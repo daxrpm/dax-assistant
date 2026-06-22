@@ -1,4 +1,4 @@
-import type { FullConfig, StatusResponse } from "../types/config";
+import type { FullConfig, LogEntry, StatusResponse } from "../types/config";
 
 const BASE = "/api";
 
@@ -42,6 +42,23 @@ export interface ToolAuditEntry {
   status: string;
 }
 
+export interface MCPServerStatus {
+  name: string;
+  connected: boolean;
+  transport: string;
+  enabled: boolean;
+  tool_count: number;
+  tools: string[];
+}
+
+export interface ToolPolicyResponse {
+  default: string;
+  allow: string[];
+  ask: string[];
+  deny: string[];
+  confirm_timeout_seconds: number;
+}
+
 interface OllamaModel {
   name: string;
   size_gb: number;
@@ -66,6 +83,24 @@ export const api = {
   // Tools
   getToolAudit: (limit = 50) =>
     request<ToolAuditEntry[]>(`/tools/audit?limit=${limit}`),
+
+  getToolPolicy: () => request<ToolPolicyResponse>("/tools/policy"),
+
+  updateTools: (data: Record<string, unknown>) =>
+    request("/config/tools", {
+      method: "PATCH",
+      body: JSON.stringify(data),
+    }),
+
+  // Logs
+  getLogs: (limit = 200) => request<LogEntry[]>(`/logs?limit=${limit}`),
+
+  // Security
+  updateSecurity: (data: Record<string, unknown>) =>
+    request("/config/security", {
+      method: "PATCH",
+      body: JSON.stringify(data),
+    }),
 
   getStatus: () => request<StatusResponse>("/status"),
 
@@ -105,6 +140,8 @@ export const api = {
 
   getMCPServers: () =>
     request<Record<string, unknown>>("/config/mcp/servers"),
+
+  getMCPStatus: () => request<MCPServerStatus[]>("/mcp/status"),
 
   addMCPServer: (data: Record<string, unknown>) =>
     request("/config/mcp/servers", {
