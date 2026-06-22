@@ -8,11 +8,25 @@ import {
   PanelHeader,
   Field,
   TextInput,
+  TextArea,
   Select,
   Badge,
   Modal,
   useToast,
 } from "../../components/ui";
+
+/** Parse "KEY=value" lines into an object. */
+function parseEnv(text: string): Record<string, string> {
+  const out: Record<string, string> = {};
+  for (const line of text.split("\n")) {
+    const trimmed = line.trim();
+    if (!trimmed || trimmed.startsWith("#")) continue;
+    const eq = trimmed.indexOf("=");
+    if (eq === -1) continue;
+    out[trimmed.slice(0, eq).trim()] = trimmed.slice(eq + 1).trim();
+  }
+  return out;
+}
 
 export function McpTab({
   config,
@@ -164,6 +178,7 @@ function AddServerModal({
   const [command, setCommand] = useState("");
   const [args, setArgs] = useState("");
   const [url, setUrl] = useState("");
+  const [env, setEnv] = useState("");
   const [saving, setSaving] = useState(false);
 
   const submit = async () => {
@@ -182,6 +197,7 @@ function AddServerModal({
             ? args.split(" ").map((a) => a.trim()).filter(Boolean)
             : [],
         url: transport !== "stdio" ? url.trim() : "",
+        env: parseEnv(env),
         enabled: true,
       });
       toast.show(`Added ${name}`, "success");
@@ -189,6 +205,7 @@ function AddServerModal({
       setCommand("");
       setArgs("");
       setUrl("");
+      setEnv("");
       onAdded();
     } catch (e) {
       toast.show(e instanceof Error ? e.message : "Add failed", "danger");
@@ -253,6 +270,17 @@ function AddServerModal({
             />
           </Field>
         )}
+        <Field
+          label="Environment variables"
+          description="One KEY=value per line. Use {env:NAME} to read a secret from .env."
+        >
+          <TextArea
+            rows={3}
+            value={env}
+            onChange={(e) => setEnv(e.target.value)}
+            placeholder={"NEXTCLOUD_HOST=https://cloud.example.com\nNEXTCLOUD_USERNAME=me\nNEXTCLOUD_PASSWORD={env:NEXTCLOUD_PASSWORD}"}
+          />
+        </Field>
       </div>
     </Modal>
   );
