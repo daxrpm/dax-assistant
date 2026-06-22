@@ -1,0 +1,87 @@
+# Dax Assistant — example configuration.
+# Copy to config/dax.toml and edit. SECRETS GO IN .env, NEVER HERE.
+
+[general]
+name = "Dax"
+language_default = "es"
+log_level = "INFO"
+
+[voice]
+enabled = true
+wake_word_threshold = 0.7
+stt_model = "base"
+stt_compute_type = "int8"
+stt_language = "auto"
+tts_voice_es = "models/piper/es_ES-davefx-medium.onnx"
+tts_voice_en = "models/piper/en_US-lessac-medium.onnx"
+vad_threshold = 0.5
+silence_duration_ms = 500
+
+[llm]
+# Local-first: Ollama is the default provider, fully decoupled and swappable.
+# Set default_provider to any of: ollama | anthropic | openai | gemini.
+default_provider = "ollama"
+# Providers tried (in order) if the default fails.
+fallback_order = ["gemini"]
+
+[llm.ollama]
+base_url = "http://localhost:11434"
+model = "llama3.1:8b"
+timeout = 30
+
+[llm.anthropic]
+model = "claude-opus-4-8"
+# api_key -> ANTHROPIC_API_KEY env var
+
+[llm.openai]
+model = "gpt-5.5"
+# base_url = ""   # set to point at any OpenAI-compatible API
+# api_key -> OPENAI_API_KEY env var
+
+[llm.gemini]
+model = "gemini-3.5-flash"
+# api_key -> GEMINI_API_KEY env var
+
+[web]
+host = "127.0.0.1"
+port = 8420
+cors_origins = ["http://localhost:8420"]
+expose_lan = false
+dev_mode = false
+
+[security]
+auth_enabled = true
+session_ttl_hours = 24
+cookie_secure = false
+# password_hash  -> DAX_SECURITY__PASSWORD_HASH env var
+# session_secret -> DAX_SECURITY__SESSION_SECRET env var
+
+[whatsapp]
+enabled = false
+evolution_api_url = "http://localhost:8080"
+evolution_api_instance = "dax"
+respond_with_audio = false
+# evolution_api_key -> DAX_WHATSAPP__EVOLUTION_API_KEY env var
+# webhook_secret    -> DAX_WHATSAPP__WEBHOOK_SECRET env var
+
+[storage]
+database_path = "data/dax.db"
+models_path = "models/"
+
+[tools]
+confirm_timeout_seconds = 120
+# Destructive tools require confirmation in the web UI. The defaults gate
+# anything that writes/deletes/executes/launches; customise with fnmatch globs.
+[tools.policy]
+default = "allow"   # allow | ask | deny for tools matching nothing below
+# ask = ["*write*", "*shell*", "*delete*"]   # empty -> built-in safe defaults
+# deny = ["*format_disk*"]
+
+# Local PC-control server (shipped with Dax). Disable if you don't want the
+# assistant to touch the machine. Destructive tools are gated by [tools.policy].
+[mcp.servers.dax-system]
+command = "python"
+args = ["-m", "dax.mcp_servers.system"]
+transport = "stdio"
+enabled = true
+# env = { DAX_SYSTEM_ROOTS = "/home/you", DAX_SYSTEM_SHELL_ALLOW = "ls,cat,git" }

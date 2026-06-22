@@ -1,0 +1,76 @@
+# MCP Server Definitions
+# Each server runs as a subprocess managed by Dax.
+# Add servers here and they become available as tools automatically.
+#
+# Official registry: https://github.com/modelcontextprotocol/servers
+# Community list:    https://github.com/punkpeye/awesome-mcp-servers
+# MCP Spec:          https://spec.modelcontextprotocol.io/
+#
+# Fields:
+#   command   = Program to run (npx, uvx, node, python)
+#   args      = Command arguments
+#   env       = Environment variables for the server
+#   transport = "stdio" (default) or "streamable_http"
+#   url       = Server URL (only for streamable_http transport)
+#   enabled   = true/false
+
+# --- OFFICIAL MCP SERVERS ---
+
+# [servers.filesystem]
+# command = "npx"
+# args = ["-y", "@modelcontextprotocol/server-filesystem", "/home/daxrpm/Desktop", "/home/daxrpm/Documents"]
+# enabled = true
+
+# [servers.git]
+# command = "uvx"
+# args = ["mcp-server-git", "--repository", "/home/daxrpm/Desktop/Projects"]
+# enabled = true
+
+# [servers.time]
+# command = "uvx"
+# args = ["mcp-server-time"]
+# enabled = true
+
+# [servers.fetch]
+# command = "uvx"
+# args = ["mcp-server-fetch"]
+# enabled = true
+
+# --- COMMUNITY SERVERS ---
+
+# [servers.shell]
+# command = "uvx"
+# args = ["mcp-shell-server"]
+# env = { ALLOW_COMMANDS = "ls,cat,df,free,uptime,date,whoami,bat,eza,fd,rg,sd,uname,ps" }
+# enabled = true
+
+# [servers.homeassistant]
+# command = "npx"
+# args = ["-y", "@jango-blockchained/homeassistant-mcp@latest"]
+# env = { HASS_HOST = "http://homeassistant.local:8123", HASS_TOKEN = "your_long_lived_access_token" }
+# enabled = false
+
+# [servers.spotify]
+# command = "uvx"
+# args = ["spotify-mcp"]
+# env = { SPOTIFY_CLIENT_ID = "your_client_id", SPOTIFY_CLIENT_SECRET = "your_client_secret", SPOTIFY_REDIRECT_URI = "http://127.0.0.1:8080/callback" }
+# enabled = false
+
+# Nextcloud (full: CalDAV, CardDAV, WebDAV, Notes, Deck)
+# Requires Docker: docker run -p 127.0.0.1:8000:8000 \
+#   -e NEXTCLOUD_HOST=https://cloud.example.com \
+#   -e NEXTCLOUD_USERNAME=dax \
+#   -e NEXTCLOUD_PASSWORD=app_password \
+#   ghcr.io/cbcoutinho/nextcloud-mcp-server:latest
+#
+# [servers.nextcloud]
+# transport = "streamable_http"
+# url = "http://127.0.0.1:8000/mcp"
+# enabled = false
+
+# Nextcloud Calendar only (stdio, lightweight)
+# [servers.nextcloud-calendar]
+# command = "npx"
+# args = ["-y", "mcp-nextcloud-calendar"]
+# env = { NEXTCLOUD_BASE_URL = "https://cloud.example.com", NEXTCLOUD_USERNAME = "dax", NEXTCLOUD_APP_TOKEN = "your_app_password" }
+# enabled = false
