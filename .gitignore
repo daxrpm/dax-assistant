@@ -169,3 +169,18 @@ cython_debug/
 
 # PyPI configuration file
 .pypirc
+
+# Dax Assistant
+models/
+data/
+*.db
+*.db-wal
+*.db-shm
+
+# Local config holds secrets — keep only the example in version control
+config/dax.toml
+!config/dax.toml.example
+
+# Local secrets
+.env
+secrets/
