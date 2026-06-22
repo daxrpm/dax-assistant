@@ -41,9 +41,15 @@ class GeneralConfigUpdate(BaseModel):
 
 class LLMConfigUpdate(BaseModel):
     default_provider: str | None = None
+    fallback_order: list[str] | None = None
     ollama_model: str | None = None
     ollama_base_url: str | None = None
     ollama_timeout: int | None = None
+    anthropic_model: str | None = None
+    anthropic_api_key: str | None = None
+    openai_model: str | None = None
+    openai_base_url: str | None = None
+    openai_api_key: str | None = None
     gemini_model: str | None = None
     gemini_api_key: str | None = None
 
@@ -198,9 +204,15 @@ async def get_config(request: Request) -> dict[str, Any]:
         },
         "llm": {
             "default_provider": config.llm.default_provider,
+            "fallback_order": config.llm.fallback_order,
             "ollama_model": config.llm.ollama.model,
             "ollama_base_url": config.llm.ollama.base_url,
             "ollama_timeout": config.llm.ollama.timeout,
+            "anthropic_model": config.llm.anthropic.model,
+            "anthropic_configured": bool(config.llm.anthropic.api_key),
+            "openai_model": config.llm.openai.model,
+            "openai_base_url": config.llm.openai.base_url,
+            "openai_configured": bool(config.llm.openai.api_key),
             "gemini_model": config.llm.gemini.model,
             "gemini_configured": bool(config.llm.gemini.api_key),
         },
@@ -261,9 +273,15 @@ async def update_llm(
 
     field_map = {
         "default_provider": ("llm", "default_provider"),
+        "fallback_order": ("llm", "fallback_order"),
         "ollama_model": ("llm.ollama", "model"),
         "ollama_base_url": ("llm.ollama", "base_url"),
         "ollama_timeout": ("llm.ollama", "timeout"),
+        "anthropic_model": ("llm.anthropic", "model"),
+        "anthropic_api_key": ("llm.anthropic", "api_key"),
+        "openai_model": ("llm.openai", "model"),
+        "openai_base_url": ("llm.openai", "base_url"),
+        "openai_api_key": ("llm.openai", "api_key"),
         "gemini_model": ("llm.gemini", "model"),
         "gemini_api_key": ("llm.gemini", "api_key"),
     }
@@ -487,11 +505,25 @@ def _save_config_to_toml(request: Request) -> None:
     # [llm]
     lines.append("[llm]")
     lines.append(f'default_provider = "{config.llm.default_provider}"')
+    fallback = ", ".join(f'"{p}"' for p in config.llm.fallback_order)
+    lines.append(f"fallback_order = [{fallback}]")
     lines.append("")
     lines.append("[llm.ollama]")
     lines.append(f'base_url = "{config.llm.ollama.base_url}"')
     lines.append(f'model = "{config.llm.ollama.model}"')
     lines.append(f"timeout = {config.llm.ollama.timeout}")
+    lines.append("")
+    lines.append("[llm.anthropic]")
+    lines.append(f'model = "{config.llm.anthropic.model}"')
+    if config.llm.anthropic.api_key:
+        lines.append(f'api_key = "{config.llm.anthropic.api_key}"')
+    lines.append("")
+    lines.append("[llm.openai]")
+    lines.append(f'model = "{config.llm.openai.model}"')
+    if config.llm.openai.base_url:
+        lines.append(f'base_url = "{config.llm.openai.base_url}"')
+    if config.llm.openai.api_key:
+        lines.append(f'api_key = "{config.llm.openai.api_key}"')
     lines.append("")
     lines.append("[llm.gemini]")
     lines.append(f'model = "{config.llm.gemini.model}"')

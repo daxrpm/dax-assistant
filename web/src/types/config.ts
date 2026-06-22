@@ -28,9 +28,15 @@ export interface VoiceConfig {
 
 export interface LLMConfig {
   default_provider: string;
+  fallback_order: string[];
   ollama_model: string;
   ollama_base_url: string;
   ollama_timeout: number;
+  anthropic_model: string;
+  anthropic_configured: boolean;
+  openai_model: string;
+  openai_base_url: string;
+  openai_configured: boolean;
   gemini_model: string;
   gemini_configured: boolean;
 }
