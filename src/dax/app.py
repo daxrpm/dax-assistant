@@ -18,6 +18,7 @@ from dax.channels.voice_channel import VoiceChannel
 from dax.channels.web_channel import WebChannel
 from dax.channels.whatsapp_channel import WhatsAppChannel
 from dax.core.config import DaxConfig, load_config
+from dax.core.logbuffer import LogBuffer
 from dax.core.policy import ToolPolicy
 from dax.llm.factory import build_router
 from dax.mcp.manager import MCPManager
@@ -66,6 +67,10 @@ class DaxApp:
     def __init__(self, config: DaxConfig) -> None:
         self._config = config
         self._shutdown_event = asyncio.Event()
+
+        # Capture stdlib logs into a ring buffer for the web Logs viewer.
+        self._log_buffer = LogBuffer()
+        logging.getLogger().addHandler(self._log_buffer)
 
         # Core components
         self._bus = MessageBus()
@@ -123,6 +128,12 @@ class DaxApp:
         # 1. Storage
         await self._database.start()
         log.info("Storage ready")
+
+        # Deliver live log records to web subscribers on this loop.
+        self._log_buffer.bind_loop(asyncio.get_running_loop())
+        if hasattr(self._web_app, "state"):
+            self._web_app.state.log_buffer = self._log_buffer  # type: ignore[union-attr]
+            self._web_app.state.tool_policy = self._policy  # type: ignore[union-attr]
 
         # 2. Message bus
         self._bus.start()

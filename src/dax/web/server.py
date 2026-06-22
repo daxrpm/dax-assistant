@@ -14,7 +14,7 @@ from fastapi import Depends, FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from dax.web.auth import AuthManager, require_auth
-from dax.web.routes import api, auth, chat, oauth, webhooks
+from dax.web.routes import api, auth, chat, logs, oauth, webhooks
 from dax.web.spa_middleware import SPAStaticFiles
 
 if TYPE_CHECKING:
@@ -70,8 +70,9 @@ def create_app(
     protected = [Depends(require_auth)]
     app.include_router(api.router, prefix="/api", dependencies=protected)
     app.include_router(oauth.router, prefix="/api", dependencies=protected)
-    # Chat WS authenticates in its own handshake; webhooks use a shared secret.
+    # Chat + logs WS authenticate in their own handshake; webhooks use a secret.
     app.include_router(chat.router, prefix="/ws")
+    app.include_router(logs.router, prefix="/ws")
     app.include_router(webhooks.router, prefix="/webhook")
 
     # SPA static files — serves built React app with index.html fallback

@@ -74,6 +74,23 @@ class WhatsAppConfigUpdate(BaseModel):
     respond_with_audio: bool | None = None
 
 
+class ToolPolicyUpdate(BaseModel):
+    default: str | None = None
+    allow: list[str] | None = None
+    ask: list[str] | None = None
+    deny: list[str] | None = None
+
+
+class ToolsConfigUpdate(BaseModel):
+    confirm_timeout_seconds: int | None = None
+    policy: ToolPolicyUpdate | None = None
+
+
+class SecurityConfigUpdate(BaseModel):
+    session_ttl_hours: int | None = None
+    cookie_secure: bool | None = None
+
+
 class MCPServerCreate(BaseModel):
     name: str
     command: str = ""
@@ -142,6 +159,30 @@ async def get_tool_policy(request: Request) -> dict[str, Any]:
         "deny": policy.deny,
         "confirm_timeout_seconds": request.app.state.config.tools.confirm_timeout_seconds,
     }
+
+
+# --- Logs ---
+
+
+@router.get("/logs")
+async def get_logs(request: Request, limit: int = 200) -> list[dict[str, Any]]:
+    """Return recent backend log records (oldest first)."""
+    buffer = getattr(request.app.state, "log_buffer", None)
+    if buffer is None:
+        return []
+    return buffer.recent(limit=limit)
+
+
+# --- MCP status ---
+
+
+@router.get("/mcp/status")
+async def get_mcp_status(request: Request) -> list[dict[str, Any]]:
+    """Per-server MCP connection + tool status."""
+    manager = getattr(request.app.state, "mcp_manager", None)
+    if manager is None:
+        return []
+    return manager.server_status()
 
 
 # --- Status ---
@@ -227,6 +268,21 @@ async def get_config(request: Request) -> dict[str, Any]:
             "evolution_api_instance": config.whatsapp.evolution_api_instance,
             "respond_with_audio": config.whatsapp.respond_with_audio,
             "has_api_key": bool(config.whatsapp.evolution_api_key),
+        },
+        "security": {
+            "auth_enabled": config.security.auth_enabled,
+            "configured": bool(config.security.password_hash),
+            "session_ttl_hours": config.security.session_ttl_hours,
+            "cookie_secure": config.security.cookie_secure,
+        },
+        "tools": {
+            "confirm_timeout_seconds": config.tools.confirm_timeout_seconds,
+            "policy": {
+                "default": config.tools.policy.default,
+                "allow": config.tools.policy.allow,
+                "ask": config.tools.policy.ask,
+                "deny": config.tools.policy.deny,
+            },
         },
         "mcp": {
             "servers": {
@@ -346,6 +402,48 @@ async def update_whatsapp(
     return {"status": "ok"}
 
 
+@router.patch("/config/tools")
+async def update_tools(
+    request: Request, body: ToolsConfigUpdate,
+) -> dict[str, str]:
+    """Update the tool confirmation timeout and allow/ask/deny policy."""
+    config = request.app.state.config
+
+    if body.confirm_timeout_seconds is not None:
+        object.__setattr__(
+            config.tools, "confirm_timeout_seconds", body.confirm_timeout_seconds
+        )
+    if body.policy is not None:
+        policy_updates = body.policy.model_dump(exclude_none=True)
+        for key, value in policy_updates.items():
+            object.__setattr__(config.tools.policy, key, value)
+
+    _save_config_to_toml(request)
+
+    # Apply live: the agent holds the same ToolPolicy instance.
+    policy_obj = getattr(request.app.state, "tool_policy", None)
+    if policy_obj is not None:
+        policy_obj.reload(config.tools.policy)
+
+    return {"status": "ok"}
+
+
+@router.patch("/config/security")
+async def update_security(
+    request: Request, body: SecurityConfigUpdate,
+) -> dict[str, str]:
+    """Update non-secret security settings (TTL, secure cookie)."""
+    config = request.app.state.config
+    updates = body.model_dump(exclude_none=True)
+
+    for key, value in updates.items():
+        if hasattr(config.security, key):
+            object.__setattr__(config.security, key, value)
+
+    _save_config_to_toml(request)
+    return {"status": "ok"}
+
+
 # --- MCP Server Management ---
 
 
@@ -370,8 +468,8 @@ async def list_mcp_servers(request: Request) -> dict[str, Any]:
 @router.post("/config/mcp/servers")
 async def add_mcp_server(
     request: Request, body: MCPServerCreate,
-) -> dict[str, str]:
-    """Add a new MCP server configuration."""
+) -> dict[str, Any]:
+    """Add a new MCP server, persist it, and connect to it live."""
     from dax.core.config import MCPServerConfig
 
     config = request.app.state.config
@@ -382,7 +480,7 @@ async def add_mcp_server(
             detail=f"Server '{body.name}' already exists",
         )
 
-    config.mcp.servers[body.name] = MCPServerConfig(
+    server_config = MCPServerConfig(
         command=body.command,
         args=body.args,
         env=body.env,
@@ -391,80 +489,46 @@ async def add_mcp_server(
         headers=body.headers,
         enabled=body.enabled,
     )
-
+    config.mcp.servers[body.name] = server_config
     _save_config_to_toml(request)
-    return {"status": "ok", "name": body.name}
+
+    # Connect live (best-effort): the server is saved either way.
+    manager = getattr(request.app.state, "mcp_manager", None)
+    if manager is not None and body.enabled:
+        try:
+            tools = await manager.add_server(body.name, server_config)
+            return {"status": "ok", "name": body.name, "tools": tools}
+        except Exception as e:
+            return {"status": "saved", "name": body.name, "error": str(e)}
+
+    return {"status": "ok", "name": body.name, "tools": 0}
 
 
 @router.post("/config/mcp/servers/{server_name}/reconnect")
 async def reconnect_mcp_server(
     request: Request, server_name: str,
 ) -> dict[str, Any]:
-    """Reconnect a specific MCP server (e.g., after OAuth authentication).
-
-    Disconnects if already connected, then reconnects with current config
-    and any stored OAuth tokens.
-    """
-    mcp_manager = getattr(request.app.state, "mcp_manager", None)
-    if not mcp_manager:
+    """Reconnect a server with current config and any stored OAuth token."""
+    manager = getattr(request.app.state, "mcp_manager", None)
+    if not manager:
         raise HTTPException(500, "MCP Manager not available")
 
-    config = request.app.state.config
-    server_config = config.mcp.servers.get(server_name)
+    server_config = request.app.state.config.mcp.servers.get(server_name)
     if not server_config:
         raise HTTPException(404, f"Server '{server_name}' not found")
 
-    # Disconnect if already connected
-    existing = mcp_manager._clients.get(server_name)
-    if existing:
-        await existing.disconnect()
-        del mcp_manager._clients[server_name]
-
-    # Reconnect (manager.start handles one server at a time too,
-    # but we need to do it for just this one)
-    from dax.mcp.client import MCPClient
-    from dax.mcp.manager import _get_oauth_token, _resolve_env_dict, _resolve_env_vars
-
-    transport = server_config.transport
-
-    if transport in ("streamable_http", "http", "sse"):
-        headers = _resolve_env_dict(server_config.headers)
-        oauth_token = _get_oauth_token(server_name)
-        if oauth_token:
-            headers["Authorization"] = f"Bearer {oauth_token}"
-
-        client = MCPClient(
-            server_name=server_name,
-            transport="http",
-            url=_resolve_env_vars(server_config.url),
-            headers=headers,
-        )
-    else:
-        client = MCPClient(
-            server_name=server_name,
-            command=server_config.command,
-            args=server_config.args,
-            env=_resolve_env_dict(server_config.env),
-        )
-
     try:
-        await client.connect()
-        mcp_manager._clients[server_name] = client
-        tools = await client.list_tools()
-        mcp_manager.registry.register(tools)
-        return {
-            "status": "ok",
-            "tools": len(tools),
-        }
+        tools = await manager.add_server(server_name, server_config)
     except Exception as e:
         raise HTTPException(500, f"Failed to connect: {e}") from e
+    return {"status": "ok", "tools": tools}
 
 
 @router.delete("/config/mcp/servers/{server_name}")
 async def delete_mcp_server(
     request: Request, server_name: str,
 ) -> dict[str, str]:
-    """Remove an MCP server configuration."""
+    """Disconnect, drop tools, remove the server config, and persist."""
     config = request.app.state.config
 
     if server_name not in config.mcp.servers:
@@ -472,6 +536,10 @@ async def delete_mcp_server(
             status_code=404,
             detail=f"Server '{server_name}' not found",
         )
+
+    manager = getattr(request.app.state, "mcp_manager", None)
+    if manager is not None:
+        await manager.remove_server(server_name)
 
     del config.mcp.servers[server_name]
     _save_config_to_toml(request)
@@ -571,6 +639,29 @@ def _save_config_to_toml(request: Request) -> None:
         f"respond_with_audio = "
         f"{_toml_bool(config.whatsapp.respond_with_audio)}"
     )
+    lines.append("")
+
+    # [security] — secrets (password_hash, session_secret) stay in env only.
+    lines.append("[security]")
+    lines.append(f"auth_enabled = {_toml_bool(config.security.auth_enabled)}")
+    lines.append(f"session_ttl_hours = {config.security.session_ttl_hours}")
+    lines.append(f"cookie_secure = {_toml_bool(config.security.cookie_secure)}")
+    lines.append("")
+
+    # [tools] + [tools.policy]
+    lines.append("[tools]")
+    lines.append(
+        f"confirm_timeout_seconds = {config.tools.confirm_timeout_seconds}"
+    )
+    lines.append("")
+    lines.append("[tools.policy]")
+    lines.append(f'default = "{config.tools.policy.default}"')
+    allow = ", ".join(f'"{p}"' for p in config.tools.policy.allow)
+    ask = ", ".join(f'"{p}"' for p in config.tools.policy.ask)
+    deny = ", ".join(f'"{p}"' for p in config.tools.policy.deny)
+    lines.append(f"allow = [{allow}]")
+    lines.append(f"ask = [{ask}]")
+    lines.append(f"deny = [{deny}]")
     lines.append("")
 
     # [storage]
