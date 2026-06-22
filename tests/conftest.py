@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 from typing import TYPE_CHECKING
 
 import pytest
@@ -13,6 +14,29 @@ from dax.storage.database import Database
 
 if TYPE_CHECKING:
     from pathlib import Path
+
+# Env vars that, if present in the developer's shell or .env, would leak into
+# DaxConfig and make tests depend on the local machine.
+_LEAKY_ENV = {
+    "OPENAI_API_KEY",
+    "ANTHROPIC_API_KEY",
+    "GEMINI_API_KEY",
+    "GOOGLE_API_KEY",
+}
+
+
+@pytest.fixture(autouse=True)
+def isolate_config_env(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Keep tests independent of the developer's real .env and DAX_* env vars.
+
+    DaxConfig reads ``.env`` and the process environment with higher priority
+    than init kwargs, so without this a real local ``.env`` (e.g. a configured
+    password hash) would override values that tests pass explicitly.
+    """
+    monkeypatch.setitem(DaxConfig.model_config, "env_file", None)
+    for var in list(os.environ):
+        if var.startswith("DAX_") or var in _LEAKY_ENV:
+            monkeypatch.delenv(var, raising=False)
 
 
 @pytest.fixture
