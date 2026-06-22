@@ -1,0 +1,32 @@
+[Unit]
+Description=Dax Personal AI Assistant
+Documentation=https://github.com/daxrpm/dax-assistant
+After=network-online.target ollama.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=daxrpm
+Group=daxrpm
+WorkingDirectory=/home/daxrpm/Desktop/Projects/dax-assistant
+ExecStart=/home/daxrpm/Desktop/Projects/dax-assistant/.venv/bin/python -m dax --config config/dax.toml
+Restart=on-failure
+RestartSec=5
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=dax-assistant
+
+# Audio access for voice pipeline
+SupplementaryGroups=audio
+
+# PipeWire/PulseAudio socket access
+Environment=XDG_RUNTIME_DIR=/run/user/1000
+
+# Security hardening
+NoNewPrivileges=yes
+ProtectSystem=strict
+ReadWritePaths=/home/daxrpm/Desktop/Projects/dax-assistant/data
+ReadWritePaths=/home/daxrpm/Desktop/Projects/dax-assistant/config
+
+[Install]
+WantedBy=default.target
