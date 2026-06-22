@@ -144,6 +144,31 @@ class TestConfigUpdate:
         cfg = await client.get("/api/config")
         assert cfg.json()["llm"]["ollama_model"] == "qwen3.5:4b"
 
+    async def test_update_llm_rebuilds_router(
+        self, client: AsyncClient, tmp_path: Path,
+    ):
+        from dax.llm.factory import build_router
+
+        app = client._transport.app  # type: ignore[union-attr]
+        app.state.config_path = tmp_path / "dax.toml"
+        router = build_router(app.state.config.llm)
+        app.state.llm_router = router
+        assert router.name == "ollama"
+
+        # Switching the provider in the web UI must take effect on the live
+        # router (held by the agent) without a restart.
+        response = await client.patch(
+            "/api/config/llm",
+            json={
+                "default_provider": "openai",
+                "openai_api_key": "sk-test",
+                "fallback_order": [],
+            },
+        )
+        assert response.status_code == 200
+        assert router.name == "openai"
+        assert "ollama" not in router.provider_names
+
 
 class TestMCPServers:
     async def test_list_empty(self, client: AsyncClient):

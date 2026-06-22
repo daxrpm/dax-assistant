@@ -295,6 +295,22 @@ async def update_llm(
             object.__setattr__(obj, attr, value)
 
     _save_config_to_toml(request)
+
+    # Rebuild the live router so the change takes effect immediately — no
+    # restart. The agent holds the same router instance, so it picks up the
+    # new default/fallback providers on its next request.
+    router_obj = getattr(request.app.state, "llm_router", None)
+    if router_obj is not None:
+        from dax.llm.factory import build_providers
+
+        try:
+            router_obj.set_providers(build_providers(config.llm))
+        except Exception as e:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Invalid LLM configuration: {e}",
+            ) from e
+
     return {"status": "ok"}
 
 

@@ -57,16 +57,23 @@ def build_provider(name: str, config: LLMConfig) -> LLMProvider | None:
                 api_key=config.gemini.api_key,
                 timeout=config.gemini.timeout,
             )
-    except Exception:
-        logger.exception("Failed to build LLM provider '%s'", name)
+    except Exception as e:
+        # A missing API key is an expected, recoverable condition (e.g. a cloud
+        # provider listed in the fallback chain without a key) — log it plainly
+        # instead of dumping a traceback, and skip the provider.
+        logger.warning("Skipping LLM provider '%s': %s", name, e)
         return None
 
     logger.warning("Unknown LLM provider '%s' — skipping", name)
     return None
 
 
-def build_router(config: LLMConfig) -> LLMRouter:
-    """Build an LLMRouter: default provider first, then the fallback chain."""
+def build_providers(config: LLMConfig) -> list[LLMProvider]:
+    """Build the ordered provider list: default first, then the fallback chain.
+
+    Providers that can't be built (e.g. a cloud provider with no API key) are
+    skipped. Always returns at least one provider so the router stays usable.
+    """
     order: list[str] = [config.default_provider]
     for name in config.fallback_order:
         if name not in order:
@@ -81,7 +88,15 @@ def build_router(config: LLMConfig) -> LLMRouter:
     if not providers:
         # Last resort: a local Ollama provider so the app still starts.
         logger.warning("No LLM providers configured — defaulting to local Ollama")
-        providers.append(build_provider("ollama", config))  # type: ignore[arg-type]
+        ollama = build_provider("ollama", config)
+        if ollama is not None:
+            providers.append(ollama)
 
+    return providers
+
+
+def build_router(config: LLMConfig) -> LLMRouter:
+    """Build an LLMRouter from configuration."""
+    providers = build_providers(config)
     logger.info("LLM router ready: %s", ", ".join(p.name for p in providers))
     return LLMRouter(providers)

@@ -198,3 +198,10 @@ class TestFactory:
         router = build_router(cfg)
         assert router.provider_names[0] == "ollama"
         assert "gemini" in router.provider_names
+
+    def test_unconfigured_fallback_is_skipped(self):
+        # Gemini in the fallback chain with no API key must be skipped cleanly
+        # (no crash, no traceback), leaving a working router.
+        cfg = LLMConfig(default_provider="ollama", fallback_order=["gemini"])
+        router = build_router(cfg)
+        assert router.provider_names == ["ollama"]

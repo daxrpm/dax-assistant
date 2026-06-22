@@ -134,6 +134,9 @@ class DaxApp:
         if hasattr(self._web_app, "state"):
             self._web_app.state.mcp_manager = self._mcp  # type: ignore[union-attr]
             self._web_app.state.repository = self._repository  # type: ignore[union-attr]
+            # Expose the router so the settings API can rebuild it in place
+            # when the LLM config changes (no restart needed).
+            self._web_app.state.llm_router = self._llm  # type: ignore[union-attr]
         log.info(
             "MCP ready",
             servers=len(self._mcp._clients),

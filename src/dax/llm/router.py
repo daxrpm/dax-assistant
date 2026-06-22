@@ -27,6 +27,17 @@ class LLMRouter:
             raise ValueError("LLMRouter requires at least one provider")
         self._providers = providers
 
+    def set_providers(self, providers: list[LLMProvider]) -> None:
+        """Swap the provider list in place (e.g. after a config change).
+
+        Mutates this router so existing holders (the agent) pick up the new
+        providers without being re-wired.
+        """
+        if not providers:
+            raise ValueError("LLMRouter requires at least one provider")
+        self._providers = providers
+        logger.info("LLM router updated: %s", ", ".join(p.name for p in providers))
+
     @property
     def name(self) -> str:
         return self._providers[0].name
