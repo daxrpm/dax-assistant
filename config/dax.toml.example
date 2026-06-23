@@ -18,20 +18,20 @@ vad_threshold = 0.5
 silence_duration_ms = 500
 
 [llm]
-# Local-first: Ollama is the default provider, fully decoupled and swappable.
-# Set default_provider to any of: ollama | anthropic | openai | gemini.
-default_provider = "ollama"
+# Recommended: Anthropic claude for reliable tool use. Set ANTHROPIC_API_KEY in .env.
+# Alternatives: ollama (local, no key needed) | openai | gemini
+default_provider = "anthropic"
 # Providers tried (in order) if the default fails.
-fallback_order = ["gemini"]
+fallback_order = ["ollama"]
+
+[llm.anthropic]
+model = "claude-opus-4-8"
+# api_key -> ANTHROPIC_API_KEY env var
 
 [llm.ollama]
 base_url = "http://localhost:11434"
 model = "llama3.1:8b"
 timeout = 30
-
-[llm.anthropic]
-model = "claude-opus-4-8"
-# api_key -> ANTHROPIC_API_KEY env var
 
 [llm.openai]
 model = "gpt-5.5"
