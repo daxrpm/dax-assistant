@@ -55,13 +55,17 @@ class ConversationRepository:
         await conn.execute(
             """
             INSERT OR REPLACE INTO conversations
-                (id, channel, session_key, created_at, updated_at)
-            VALUES (?, ?, ?, ?, ?)
+                (id, channel, session_key, title, created_at, updated_at)
+            VALUES (?, ?, ?, COALESCE(
+                (SELECT NULLIF(title, '') FROM conversations WHERE id = ?),
+                ''
+            ), ?, ?)
             """,
             (
                 conversation.id,
                 conversation.channel.value,
                 conversation.session_key,
+                conversation.id,
                 conversation.created_at.isoformat(),
                 conversation.updated_at.isoformat(),
             ),
@@ -85,6 +89,22 @@ class ConversationRepository:
                     json.dumps(msg.metadata, default=str),
                 ),
             )
+
+        # Auto-set title from first user message if still empty.
+        await conn.execute(
+            """
+            UPDATE conversations
+            SET title = (
+                SELECT SUBSTR(content, 1, 60)
+                FROM messages
+                WHERE conversation_id = ? AND role = 'user'
+                ORDER BY timestamp
+                LIMIT 1
+            )
+            WHERE id = ? AND (title IS NULL OR title = '')
+            """,
+            (conversation.id, conversation.id),
+        )
 
         await conn.commit()
         logger.debug(
@@ -209,6 +229,58 @@ class ConversationRepository:
             }
             for r in rows
         ]
+
+    async def list_conversations(
+        self,
+        channel: str,
+        limit: int = 50,
+    ) -> list[dict[str, object]]:
+        """Return a lightweight summary list of conversations for a channel.
+
+        Does NOT load full message objects — suitable for sidebar listings.
+        """
+        conn = self._db.connection
+        cursor = await conn.execute(
+            """
+            SELECT
+                c.id,
+                c.session_key,
+                c.title,
+                c.created_at,
+                c.updated_at,
+                (SELECT COUNT(*) FROM messages WHERE conversation_id = c.id) AS message_count,
+                (SELECT content FROM messages
+                 WHERE conversation_id = c.id AND role = 'user'
+                 ORDER BY timestamp LIMIT 1) AS preview
+            FROM conversations c
+            WHERE c.channel = ?
+            ORDER BY c.updated_at DESC
+            LIMIT ?
+            """,
+            (channel, limit),
+        )
+        rows = await cursor.fetchall()
+        return [
+            {
+                "id": r["id"],
+                "session_key": r["session_key"],
+                "title": r["title"] or r["preview"] or "New conversation",
+                "preview": (r["preview"] or "")[:80],
+                "updated_at": r["updated_at"],
+                "message_count": r["message_count"],
+            }
+            for r in rows
+        ]
+
+    async def delete_conversation(self, conversation_id: str) -> None:
+        """Delete a conversation and all its messages (cascade)."""
+        conn = self._db.connection
+        await conn.execute(
+            "DELETE FROM conversations WHERE id = ?",
+            (conversation_id,),
+        )
+        await conn.commit()
+        logger.debug("Deleted conversation %s", conversation_id)
 
     async def get_recent_conversations(
         self,

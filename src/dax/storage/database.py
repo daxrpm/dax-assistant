@@ -9,13 +9,14 @@ import aiosqlite
 
 logger = logging.getLogger(__name__)
 
-SCHEMA_VERSION = 2
+SCHEMA_VERSION = 3
 
 SCHEMA_SQL = """
 CREATE TABLE IF NOT EXISTS conversations (
     id TEXT PRIMARY KEY,
     channel TEXT NOT NULL,
     session_key TEXT NOT NULL DEFAULT '',
+    title TEXT NOT NULL DEFAULT '',
     created_at TEXT NOT NULL,
     updated_at TEXT NOT NULL
 );
@@ -120,8 +121,11 @@ class Database:
                 "ALTER TABLE conversations ADD COLUMN session_key TEXT NOT NULL DEFAULT ''"
             )
             logger.info("Migrated conversations: added session_key column")
-        # Index lives here (not in SCHEMA_SQL) so it's created only after the
-        # column is guaranteed to exist on migrated databases.
+        if "title" not in columns:
+            await conn.execute(
+                "ALTER TABLE conversations ADD COLUMN title TEXT NOT NULL DEFAULT ''"
+            )
+            logger.info("Migrated conversations: added title column")
         await conn.execute(
             "CREATE INDEX IF NOT EXISTS idx_conversations_channel_session "
             "ON conversations(channel, session_key)"
