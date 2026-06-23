@@ -109,11 +109,17 @@ async def websocket_chat(websocket: WebSocket) -> None:
             except ValueError:
                 language = Language.AUTO
 
+            metadata: dict[str, object] = {}
+            session_id = data.get("session_id", "")
+            if isinstance(session_id, str) and session_id:
+                metadata["session_id"] = session_id
+
             message = Message(
                 role=MessageRole.USER,
                 content=content,
                 channel=ChannelType.WEB,
                 language=language,
+                metadata=metadata,
             )
 
             await bus.publish_inbound(message)

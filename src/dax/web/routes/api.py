@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import os
+import re
 from pathlib import Path
 from typing import Any
 
@@ -87,8 +89,21 @@ class ToolsConfigUpdate(BaseModel):
 
 
 class SecurityConfigUpdate(BaseModel):
+    auth_enabled: bool | None = None
     session_ttl_hours: int | None = None
     cookie_secure: bool | None = None
+
+
+class WebConfigUpdate(BaseModel):
+    host: str | None = None
+    port: int | None = None
+    cors_origins: list[str] | None = None
+    expose_lan: bool | None = None
+
+
+class ChangePasswordRequest(BaseModel):
+    current_password: str = ""
+    new_password: str
 
 
 class MCPServerCreate(BaseModel):
@@ -261,6 +276,7 @@ async def get_config(request: Request) -> dict[str, Any]:
             "host": config.web.host,
             "port": config.web.port,
             "cors_origins": config.web.cors_origins,
+            "expose_lan": getattr(config.web, "expose_lan", False),
         },
         "whatsapp": {
             "enabled": config.whatsapp.enabled,
@@ -394,12 +410,39 @@ async def update_whatsapp(
     config = request.app.state.config
     updates = body.model_dump(exclude_none=True)
 
+    config_path = getattr(
+        request.app.state, "config_path", Path("config/dax.toml"),
+    )
+    env_path = config_path.parent.parent / ".env"
+    _WHATSAPP_SECRETS = {
+        "evolution_api_key": "DAX_WHATSAPP__EVOLUTION_API_KEY",
+        "webhook_secret": "DAX_WHATSAPP__WEBHOOK_SECRET",
+    }
+
     for key, value in updates.items():
+        if key in _WHATSAPP_SECRETS and isinstance(value, str) and value:
+            _upsert_env_var(env_path, _WHATSAPP_SECRETS[key], value)
         if hasattr(config.whatsapp, key):
             object.__setattr__(config.whatsapp, key, value)
 
     _save_config_to_toml(request)
     return {"status": "ok"}
+
+
+@router.patch("/config/web")
+async def update_web(
+    request: Request, body: WebConfigUpdate,
+) -> dict[str, str]:
+    """Update web server settings (restart required for host/port changes)."""
+    config = request.app.state.config
+    updates = body.model_dump(exclude_none=True)
+
+    for key, value in updates.items():
+        if hasattr(config.web, key):
+            object.__setattr__(config.web, key, value)
+
+    _save_config_to_toml(request)
+    return {"status": "ok", "note": "Restart required for host/port changes to take effect"}
 
 
 @router.patch("/config/tools")
@@ -432,13 +475,56 @@ async def update_tools(
 async def update_security(
     request: Request, body: SecurityConfigUpdate,
 ) -> dict[str, str]:
-    """Update non-secret security settings (TTL, secure cookie)."""
+    """Update security settings (TTL, secure cookie, auth toggle)."""
     config = request.app.state.config
     updates = body.model_dump(exclude_none=True)
 
     for key, value in updates.items():
         if hasattr(config.security, key):
             object.__setattr__(config.security, key, value)
+
+    # Sync live auth manager with the new auth_enabled flag.
+    if "auth_enabled" in updates:
+        auth = getattr(request.app.state, "auth", None)
+        if auth is not None:
+            auth._enabled = updates["auth_enabled"]
+
+    _save_config_to_toml(request)
+    return {"status": "ok"}
+
+
+@router.post("/auth/change-password")
+async def change_password(
+    request: Request, body: ChangePasswordRequest,
+) -> dict[str, str]:
+    """Change the login password and persist the new hash to .env."""
+    from dax.web.auth import hash_password, verify_password
+
+    config = request.app.state.config
+    auth = getattr(request.app.state, "auth", None)
+
+    # Verify current password when auth is already configured.
+    if config.security.auth_enabled and config.security.password_hash:
+        if not verify_password(config.security.password_hash, body.current_password):
+            raise HTTPException(status_code=400, detail="Current password is incorrect")
+
+    if len(body.new_password) < 8:
+        raise HTTPException(status_code=400, detail="Password must be at least 8 characters")
+
+    new_hash = hash_password(body.new_password)
+
+    config_path = getattr(
+        request.app.state, "config_path", Path("config/dax.toml"),
+    )
+    env_path = config_path.parent.parent / ".env"
+    _upsert_env_var(env_path, "DAX_SECURITY__PASSWORD_HASH", new_hash)
+
+    # Update live config + auth manager so the new password takes effect immediately.
+    object.__setattr__(config.security, "password_hash", new_hash)
+    object.__setattr__(config.security, "auth_enabled", True)
+    if auth is not None:
+        auth._password_hash = new_hash
+        auth._enabled = True
 
     _save_config_to_toml(request)
     return {"status": "ok"}
@@ -524,6 +610,51 @@ async def reconnect_mcp_server(
     return {"status": "ok", "tools": tools}
 
 
+class MCPServerUpdate(BaseModel):
+    command: str = ""
+    args: list[str] = Field(default_factory=list)
+    env: dict[str, str] = Field(default_factory=dict)
+    transport: str = "stdio"
+    url: str = ""
+    headers: dict[str, str] = Field(default_factory=dict)
+    enabled: bool = True
+
+
+@router.patch("/config/mcp/servers/{server_name}")
+async def update_mcp_server(
+    request: Request, server_name: str, body: MCPServerUpdate,
+) -> dict[str, Any]:
+    """Update an existing MCP server config, persist, and reconnect live."""
+    from dax.core.config import MCPServerConfig
+
+    config = request.app.state.config
+
+    if server_name not in config.mcp.servers:
+        raise HTTPException(status_code=404, detail=f"Server '{server_name}' not found")
+
+    server_config = MCPServerConfig(
+        command=body.command,
+        args=body.args,
+        env=body.env,
+        transport=body.transport,
+        url=body.url,
+        headers=body.headers,
+        enabled=body.enabled,
+    )
+    config.mcp.servers[server_name] = server_config
+    _save_config_to_toml(request)
+
+    manager = getattr(request.app.state, "mcp_manager", None)
+    if manager is not None and body.enabled:
+        try:
+            tools = await manager.add_server(server_name, server_config)
+            return {"status": "ok", "name": server_name, "tools": tools}
+        except Exception as e:
+            return {"status": "saved", "name": server_name, "error": str(e)}
+
+    return {"status": "ok", "name": server_name, "tools": 0}
+
+
 @router.delete("/config/mcp/servers/{server_name}")
 async def delete_mcp_server(
     request: Request, server_name: str,
@@ -549,16 +680,93 @@ async def delete_mcp_server(
 # --- Config persistence ---
 
 
+# Header names that carry secrets and must never land in the TOML file.
+_SENSITIVE_HEADER_NAMES: frozenset[str] = frozenset({
+    "authorization", "x-api-key", "api-key", "x-token", "token",
+    "x-auth-token", "x-access-token", "x-secret", "x-session",
+    "cookie", "x-password", "x-bearer",
+})
+
+
+def _is_sensitive_header(name: str, value: str) -> bool:
+    """Return True if this header likely carries a secret credential."""
+    if name.lower().strip() in _SENSITIVE_HEADER_NAMES:
+        return True
+    # Also catch Bearer / Token / Basic auth regardless of header name.
+    return value.strip().lower().startswith(("bearer ", "token ", "basic "))
+
+
+def _env_var_for_header(server_name: str, header_name: str) -> str:
+    """Build a deterministic env-var name for a sensitive MCP header.
+
+    Example: server "coolify", header "Authorization"
+             → DAX_MCP_COOLIFY_HDR_AUTHORIZATION
+    """
+    s = re.sub(r"[^a-z0-9]", "_", server_name.lower())
+    h = re.sub(r"[^a-z0-9]", "_", header_name.lower())
+    return f"DAX_MCP_{s.upper()}_HDR_{h.upper()}"
+
+
+def _env_ref_for_secret(env_path: Path, var_name: str, value: str) -> str:
+    """Write *value* to .env as *var_name* if it is not already a {env:…} reference.
+
+    Returns the {env:VAR} placeholder string to embed in TOML so secrets are
+    never stored in the config file.
+    """
+    if value.startswith("{env:"):
+        return value  # already a reference — keep as-is
+    _upsert_env_var(env_path, var_name, value)
+    return f"{{env:{var_name}}}"
+
+
+def _upsert_env_var(env_path: Path, var_name: str, value: str) -> None:
+    """Add or update a variable in the .env file and the live process env."""
+    content = env_path.read_text(encoding="utf-8") if env_path.exists() else ""
+    new_line = f"{var_name}={value}"
+    pattern = re.compile(rf"^{re.escape(var_name)}\s*=.*$", re.MULTILINE)
+    if pattern.search(content):
+        content = pattern.sub(new_line, content)
+    else:
+        content = content.rstrip("\n") + ("\n" if content else "") + new_line + "\n"
+    env_path.write_text(content, encoding="utf-8")
+    os.environ[var_name] = value  # take effect immediately without restart
+
+
+def _secure_headers_for_toml(
+    server_name: str,
+    headers: dict[str, str],
+    env_path: Path,
+) -> dict[str, str]:
+    """Return a headers dict safe to write to TOML.
+
+    Sensitive values that are NOT already {env:…} references are extracted
+    to the .env file and replaced with a {env:…} reference in the returned
+    dict. The live process environment is updated so the server can connect
+    immediately without a restart.
+    """
+    safe: dict[str, str] = {}
+    for name, value in headers.items():
+        if value.startswith("{env:") or not _is_sensitive_header(name, value):
+            safe[name] = value
+        else:
+            var = _env_var_for_header(server_name, name)
+            _upsert_env_var(env_path, var, value)
+            safe[name] = f"{{env:{var}}}"
+    return safe
+
+
 def _save_config_to_toml(request: Request) -> None:
     """Write the current config state back to the TOML file.
 
     Reconstructs the TOML structure from the in-memory config
-    and writes it to the config file path.
+    and writes it to the config file path. API keys and secrets are
+    written to .env (never to TOML) and referenced as {env:VAR}.
     """
     config = request.app.state.config
     config_path = getattr(
         request.app.state, "config_path", Path("config/dax.toml"),
     )
+    env_path = config_path.parent.parent / ".env"
 
     lines: list[str] = []
 
@@ -600,19 +808,22 @@ def _save_config_to_toml(request: Request) -> None:
     lines.append("[llm.anthropic]")
     lines.append(f'model = "{config.llm.anthropic.model}"')
     if config.llm.anthropic.api_key:
-        lines.append(f'api_key = "{config.llm.anthropic.api_key}"')
+        ref = _env_ref_for_secret(env_path, "ANTHROPIC_API_KEY", config.llm.anthropic.api_key)
+        lines.append(f'api_key = "{ref}"')
     lines.append("")
     lines.append("[llm.openai]")
     lines.append(f'model = "{config.llm.openai.model}"')
     if config.llm.openai.base_url:
         lines.append(f'base_url = "{config.llm.openai.base_url}"')
     if config.llm.openai.api_key:
-        lines.append(f'api_key = "{config.llm.openai.api_key}"')
+        ref = _env_ref_for_secret(env_path, "OPENAI_API_KEY", config.llm.openai.api_key)
+        lines.append(f'api_key = "{ref}"')
     lines.append("")
     lines.append("[llm.gemini]")
     lines.append(f'model = "{config.llm.gemini.model}"')
     if config.llm.gemini.api_key:
-        lines.append(f'api_key = "{config.llm.gemini.api_key}"')
+        ref = _env_ref_for_secret(env_path, "GEMINI_API_KEY", config.llm.gemini.api_key)
+        lines.append(f'api_key = "{ref}"')
     lines.append("")
 
     # [web]
@@ -621,6 +832,8 @@ def _save_config_to_toml(request: Request) -> None:
     lines.append(f"port = {config.web.port}")
     origins = ", ".join(f'"{o}"' for o in config.web.cors_origins)
     lines.append(f"cors_origins = [{origins}]")
+    expose_lan = getattr(config.web, "expose_lan", False)
+    lines.append(f"expose_lan = {_toml_bool(expose_lan)}")
     lines.append("")
 
     # [whatsapp]
@@ -684,6 +897,17 @@ def _save_config_to_toml(request: Request) -> None:
         lines.append(f'transport = "{srv.transport}"')
         if srv.url:
             lines.append(f'url = "{srv.url}"')
+        # Sensitive header values (Authorization, X-Api-Key, …) are auto-
+        # extracted to .env and replaced with {env:…} references in TOML.
+        # We also patch srv.headers in-place so the in-memory config stays
+        # consistent (raw values → {env:…} references).
+        safe_hdrs = _secure_headers_for_toml(name, srv.headers, env_path)
+        srv.headers.update(safe_hdrs)
+        if safe_hdrs:
+            h_pairs = ", ".join(
+                f'{k} = "{v}"' for k, v in safe_hdrs.items()
+            )
+            lines.append(f"headers = {{ {h_pairs} }}")
         lines.append(
             f"enabled = {_toml_bool(srv.enabled)}"
         )
@@ -695,3 +919,60 @@ def _save_config_to_toml(request: Request) -> None:
 
 def _toml_bool(value: bool) -> str:
     return "true" if value else "false"
+
+
+# --- Conversation history ---
+
+
+@router.get("/conversations")
+async def list_conversations(
+    request: Request,
+    limit: int = 50,
+) -> list[dict[str, Any]]:
+    """List recent web conversations for the sidebar."""
+    repo = getattr(request.app.state, "repository", None)
+    if repo is None:
+        return []
+    return await repo.list_conversations("web", limit=limit)
+
+
+@router.get("/conversations/{conversation_id}")
+async def get_conversation(
+    conversation_id: str,
+    request: Request,
+) -> dict[str, Any]:
+    """Return a conversation with its messages."""
+    repo = getattr(request.app.state, "repository", None)
+    if repo is None:
+        raise HTTPException(status_code=503, detail="Storage not available")
+    conv = await repo.get_conversation(conversation_id)
+    if conv is None:
+        raise HTTPException(status_code=404, detail="Conversation not found")
+    return {
+        "id": conv.id,
+        "session_key": conv.session_key,
+        "created_at": conv.created_at.isoformat(),
+        "updated_at": conv.updated_at.isoformat(),
+        "messages": [
+            {
+                "id": m.id,
+                "role": m.role.value,
+                "content": m.content,
+                "timestamp": m.timestamp.isoformat(),
+            }
+            for m in conv.messages
+            if m.role.value in ("user", "assistant")
+        ],
+    }
+
+
+@router.delete("/conversations/{conversation_id}", status_code=204)
+async def delete_conversation(
+    conversation_id: str,
+    request: Request,
+) -> None:
+    """Delete a conversation and its messages."""
+    repo = getattr(request.app.state, "repository", None)
+    if repo is None:
+        raise HTTPException(status_code=503, detail="Storage not available")
+    await repo.delete_conversation(conversation_id)
