@@ -97,11 +97,15 @@ def parse_tool_calls_from_response(
 
 # Spanish → English keyword expansion for tool matching.
 # Covers common assistant queries so the filter works bilingually.
+# Servers whose tools are always included regardless of query relevance
+# (small footprint, high utility — dax-system has ≤ 15 tools).
+_ALWAYS_INCLUDE_SERVERS: frozenset[str] = frozenset({"dax-system"})
+
 _ES_EN_KEYWORDS: dict[str, list[str]] = {
-    "archivo": ["file", "read", "write"],
-    "archivos": ["file", "files", "list", "directory"],
-    "carpeta": ["directory", "folder", "list"],
-    "directorio": ["directory", "list", "tree"],
+    "archivo": ["file", "read", "write", "fs"],
+    "archivos": ["file", "files", "list", "directory", "fs"],
+    "carpeta": ["directory", "folder", "list", "fs"],
+    "directorio": ["directory", "list", "tree", "fs"],
     "escritorio": ["desktop", "directory", "list", "file"],
     "ver": ["list", "read", "view", "get", "search"],
     "buscar": ["search", "find", "query"],
@@ -110,9 +114,9 @@ _ES_EN_KEYWORDS: dict[str, list[str]] = {
     "editar": ["edit", "update", "write"],
     "leer": ["read", "get", "fetch"],
     "lista": ["list", "get"],
-    "música": ["music", "play", "spotify", "track"],
+    "música": ["music", "play", "spotify", "track", "media"],
     "canción": ["song", "track", "play", "music"],
-    "reproducir": ["play", "music", "spotify"],
+    "reproducir": ["play", "music", "spotify", "media"],
     "luz": ["light", "turn", "switch", "home"],
     "luces": ["lights", "turn", "switch", "home"],
     "temperatura": ["temperature", "climate", "thermostat"],
@@ -123,52 +127,118 @@ _ES_EN_KEYWORDS: dict[str, list[str]] = {
     "proyecto": ["project", "list"],
     "base": ["database", "sql", "query"],
     "datos": ["data", "database", "query"],
-    "comando": ["command", "shell", "execute"],
+    "comando": ["command", "shell", "execute", "run"],
     "ejecutar": ["execute", "run", "command", "shell"],
-    "terminal": ["shell", "command", "execute"],
+    "terminal": ["shell", "command", "execute", "run"],
+    "pc": ["shell", "execute", "system", "command", "run"],
+    "computadora": ["shell", "execute", "system", "command"],
+    "sistema": ["system", "shell", "info", "execute"],
+    "app": ["launch", "app", "open", "application"],
+    "abrir": ["open", "launch", "app"],
+    "aplicación": ["application", "app", "launch", "open"],
+    "portapapeles": ["clipboard", "copy", "paste"],
+    "notificación": ["notify", "notification"],
+    "notificar": ["notify", "notification"],
     "tiempo": ["time", "weather"],
     "hora": ["time", "current"],
     "web": ["fetch", "url", "web"],
     "página": ["page", "fetch", "web", "url"],
+    "contacto": ["contact", "contacts", "address"],
+    "correo": ["mail", "email", "message"],
+    "receta": ["recipe", "cookbook", "cook"],
+    "cocinar": ["recipe", "cookbook"],
+    "deck": ["deck", "board", "card", "kanban"],
+    "noticias": ["news", "feed", "rss"],
+    "feeds": ["news", "feed", "rss"],
+    "chat": ["talk", "message", "conversation"],
+    "mensaje": ["message", "talk", "send"],
+    # Días de la semana
+    "lunes": ["monday", "calendar", "event", "schedule"],
+    "martes": ["tuesday", "calendar", "event", "schedule"],
+    "miércoles": ["wednesday", "calendar", "event", "schedule"],
+    "jueves": ["thursday", "calendar", "event", "schedule"],
+    "viernes": ["friday", "calendar", "event", "schedule"],
+    "sábado": ["saturday", "calendar", "event", "schedule"],
+    "domingo": ["sunday", "calendar", "event", "schedule"],
+    # Temporalidad
+    "hoy": ["today", "current", "upcoming", "event", "calendar"],
+    "mañana": ["tomorrow", "upcoming", "event", "calendar"],
+    "ayer": ["yesterday", "event", "calendar"],
+    "semana": ["week", "calendar", "event", "schedule"],
+    "mes": ["month", "calendar", "event"],
+    "año": ["year", "calendar"],
+    "próximo": ["next", "upcoming", "schedule", "calendar"],
+    "siguiente": ["next", "upcoming", "schedule"],
+    "pasado": ["past", "last", "previous"],
+    "fecha": ["date", "calendar", "event", "schedule"],
+    # Entidades calendario
+    "reunión": ["meeting", "event", "calendar", "create"],
+    "cita": ["appointment", "event", "calendar"],
+    "agenda": ["calendar", "event", "schedule", "list"],
+    "recordatorio": ["reminder", "todo", "task"],
+    "cumpleaños": ["birthday", "event", "calendar"],
+    # Nextcloud específico
+    "nextcloud": ["calendar", "event", "contact", "note", "file"],
+    "nube": ["cloud", "nextcloud", "file", "webdav"],
 }
 
 
 def filter_tools_by_relevance(
     tools: list[dict[str, Any]],
     query: str,
-    max_tools: int = 8,
+    max_tools: int = 40,
 ) -> list[dict[str, Any]]:
     """Filter tools based on keyword relevance to the user's query.
 
-    Supports bilingual (ES/EN) queries via keyword expansion.
-    Returns the most relevant tools up to max_tools.
+    Always includes tools from small/system servers (dax-system), then
+    fills the remaining budget with the best-scoring tools from other
+    servers. Supports bilingual (ES/EN) queries via keyword expansion.
     """
-    if len(tools) <= max_tools:
-        return tools
+    # Always include tools from privileged servers regardless of score.
+    always: list[dict[str, Any]] = []
+    candidates: list[dict[str, Any]] = []
+    for tool in tools:
+        if tool.get("server_name") in _ALWAYS_INCLUDE_SERVERS:
+            always.append(tool)
+        else:
+            candidates.append(tool)
 
+    # If the total fits in the budget, return everything.
+    if len(always) + len(candidates) <= max_tools:
+        return always + candidates
+
+    remaining_budget = max_tools - len(always)
+    if remaining_budget <= 0:
+        return always
+
+    # Score candidates by keyword relevance.
     query_lower = query.lower()
     query_words = set(re.findall(r"\w+", query_lower))
 
-    # Expand Spanish keywords to English equivalents
+    # Expand Spanish keywords to English equivalents.
     expanded_words = set(query_words)
     for word in query_words:
         if word in _ES_EN_KEYWORDS:
             expanded_words.update(_ES_EN_KEYWORDS[word])
 
     scored: list[tuple[float, dict[str, Any]]] = []
-
-    for tool in tools:
+    for tool in candidates:
         name = tool.get("name", "").lower()
         description = tool.get("description", "").lower()
         tool_text = f"{name} {description}"
         tool_words = set(re.findall(r"\w+", tool_text))
 
-        # Score: expanded keyword matches + name match bonus
         word_matches = len(expanded_words & tool_words)
+        # Name-match bonus: if any query word appears in the tool name
         name_bonus = 3.0 if any(w in name for w in expanded_words) else 0.0
-        score = word_matches + name_bonus
+        # Description bonus: partial substring match for short query words
+        desc_bonus = sum(
+            1.0 for w in expanded_words if len(w) >= 4 and w in description
+        )
+        score = word_matches + name_bonus + desc_bonus
 
         scored.append((score, tool))
 
     scored.sort(key=lambda x: x[0], reverse=True)
-    return [tool for _, tool in scored[:max_tools]]
+    top = [tool for _, tool in scored[:remaining_budget]]
+    return always + top
