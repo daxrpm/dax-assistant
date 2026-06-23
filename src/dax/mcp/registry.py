@@ -85,7 +85,7 @@ class ToolRegistry:
     def get_relevant_tools(
         self,
         query: str,
-        max_tools: int = 8,
+        max_tools: int = 120,
     ) -> list[dict[str, Any]]:
         """Return the most relevant tools for a given query.
 
