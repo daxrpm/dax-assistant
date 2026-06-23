@@ -117,26 +117,37 @@ class MCPClient:
                 self._server_name,
             )
 
-        # Pre-check: verify the server is reachable and doesn't need auth
+        # Pre-check: follow redirects so we catch 302→401 chains before
+        # entering the anyio task group inside streamablehttp_client (a
+        # CancelledError from inside anyio is BaseException, not Exception,
+        # and cannot be caught cleanly with a plain except clause).
         import httpx as _httpx
         try:
-            async with _httpx.AsyncClient(timeout=10) as check_client:
+            async with _httpx.AsyncClient(
+                timeout=10, follow_redirects=True
+            ) as check_client:
                 resp = await check_client.post(
                     self._url,
-                    json={"jsonrpc": "2.0", "method": "initialize", "id": 0},
-                    headers=self._headers or {},
+                    content=b"{}",
+                    headers={
+                        "Content-Type": "application/json",
+                        **(self._headers or {}),
+                    },
                 )
                 if resp.status_code == 401:
                     raise ConnectionError(
-                        "Server requires authentication (401). "
-                        "Use the web UI to authenticate first."
+                        f"MCP server '{self._server_name}' requires authentication "
+                        "(401). Add an Authorization header in Settings → MCP Servers."
                     )
                 if resp.status_code == 403:
                     raise ConnectionError(
-                        "Access forbidden (403). Check your credentials."
+                        f"MCP server '{self._server_name}' returned 403 Forbidden. "
+                        "Check your credentials."
                     )
         except _httpx.RequestError as e:
-            raise ConnectionError(f"Cannot reach server: {e}") from e
+            raise ConnectionError(
+                f"Cannot reach MCP server '{self._server_name}': {e}"
+            ) from e
 
         try:
             transport_result = await self._exit_stack.enter_async_context(
@@ -157,7 +168,10 @@ class MCPClient:
             await self._session.initialize()
         except ConnectionError:
             raise
-        except Exception as exc:
+        except BaseException as exc:
+            # Catch BaseException (not just Exception) because anyio task
+            # groups propagate CancelledError (BaseException in Python 3.11)
+            # when an HTTP request fails inside the transport.
             await self._safe_cleanup()
             raise ConnectionError(
                 f"Failed to connect to '{self._server_name}': {exc}"

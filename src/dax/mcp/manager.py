@@ -118,7 +118,12 @@ class MCPManager:
                 continue
             try:
                 await self.add_server(name, server_config)
-            except Exception:
+            except (KeyboardInterrupt, SystemExit):
+                raise
+            except BaseException:
+                # BaseException (not just Exception) because anyio/MCP SDK can
+                # propagate CancelledError (a BaseException in Python 3.11)
+                # when HTTP transport connection fails.
                 logger.exception("Failed to start MCP server '%s'", name)
 
         logger.info(
