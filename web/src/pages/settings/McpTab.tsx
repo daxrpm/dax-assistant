@@ -1,8 +1,8 @@
 import { useEffect, useState } from "react";
 import { Button } from "@heroui/react";
-import { RefreshCw, Trash2, Plus, CheckCircle2, XCircle } from "lucide-react";
+import { RefreshCw, Trash2, Plus, CheckCircle2, XCircle, Pencil, ChevronDown, ChevronRight } from "lucide-react";
 import { api, type MCPServerStatus } from "../../api/client";
-import type { FullConfig } from "../../types/config";
+import type { FullConfig, MCPServerConfig } from "../../types/config";
 import {
   Panel,
   PanelHeader,
@@ -15,7 +15,8 @@ import {
   useToast,
 } from "../../components/ui";
 
-/** Parse "KEY=value" lines into an object. */
+// ---------- text ↔ dict helpers ----------
+
 function parseEnv(text: string): Record<string, string> {
   const out: Record<string, string> = {};
   for (const line of text.split("\n")) {
@@ -28,7 +29,6 @@ function parseEnv(text: string): Record<string, string> {
   return out;
 }
 
-/** Parse "Key: value" header lines into an object. */
 function parseHeaders(text: string): Record<string, string> {
   const out: Record<string, string> = {};
   for (const line of text.split("\n")) {
@@ -41,6 +41,20 @@ function parseHeaders(text: string): Record<string, string> {
   return out;
 }
 
+function envToText(env: Record<string, string> | undefined): string {
+  return Object.entries(env ?? {})
+    .map(([k, v]) => `${k}=${v}`)
+    .join("\n");
+}
+
+function headersToText(headers: Record<string, string> | undefined): string {
+  return Object.entries(headers ?? {})
+    .map(([k, v]) => `${k}: ${v}`)
+    .join("\n");
+}
+
+// ---------- main tab ----------
+
 export function McpTab({
   config,
   onSaved,
@@ -52,6 +66,15 @@ export function McpTab({
   const [status, setStatus] = useState<MCPServerStatus[]>([]);
   const [busy, setBusy] = useState<string | null>(null);
   const [adding, setAdding] = useState(false);
+  const [editing, setEditing] = useState<{ name: string; srv: MCPServerConfig } | null>(null);
+  const [expanded, setExpanded] = useState<Set<string>>(new Set());
+
+  const toggleExpanded = (name: string) =>
+    setExpanded((prev) => {
+      const next = new Set(prev);
+      next.has(name) ? next.delete(name) : next.add(name);
+      return next;
+    });
 
   const refreshStatus = () =>
     api.getMCPStatus().then(setStatus).catch(() => setStatus([]));
@@ -110,6 +133,8 @@ export function McpTab({
         {servers.map(([name, srv]) => {
           const st = statusOf(name);
           const connected = st?.connected ?? false;
+          const tools = st?.tools ?? [];
+          const isExpanded = expanded.has(name);
           return (
             <div
               key={name}
@@ -125,12 +150,33 @@ export function McpTab({
                   <span className="truncate text-sm font-medium">{name}</span>
                   <Badge>{srv.transport}</Badge>
                   {st && (
-                    <Badge color={connected ? "success" : "default"}>
-                      {st.tool_count} tools
-                    </Badge>
+                    <button
+                      className="flex items-center gap-1 rounded px-1 hover:bg-accent-soft transition-colors"
+                      onClick={() => tools.length > 0 && toggleExpanded(name)}
+                      title={tools.length > 0 ? "Show tools" : undefined}
+                    >
+                      <Badge color={connected ? "success" : "default"}>
+                        {st.tool_count} tools
+                      </Badge>
+                      {tools.length > 0 && (
+                        isExpanded
+                          ? <ChevronDown size={12} className="text-muted" />
+                          : <ChevronRight size={12} className="text-muted" />
+                      )}
+                    </button>
                   )}
                 </div>
                 <div className="flex shrink-0 items-center gap-1">
+                  <Button
+                    variant="tertiary"
+                    size="sm"
+                    isIconOnly
+                    isDisabled={busy === name}
+                    onPress={() => setEditing({ name, srv })}
+                    aria-label="Edit"
+                  >
+                    <Pencil size={15} />
+                  </Button>
                   <Button
                     variant="tertiary"
                     size="sm"
@@ -158,102 +204,157 @@ export function McpTab({
                   ? `${srv.command} ${srv.args.join(" ")}`
                   : srv.url}
               </p>
+              {isExpanded && tools.length > 0 && (
+                <div className="mt-2 pl-6">
+                  <div className="flex flex-wrap gap-1">
+                    {tools.map((tool) => (
+                      <span
+                        key={tool}
+                        className="rounded-md bg-accent-soft px-2 py-0.5 font-mono text-xs text-accent"
+                      >
+                        {tool}
+                      </span>
+                    ))}
+                  </div>
+                </div>
+              )}
             </div>
           );
         })}
       </div>
 
-      <AddServerModal
+      <ServerFormModal
+        mode="add"
         open={adding}
         onClose={() => setAdding(false)}
-        onAdded={async () => {
+        onDone={async () => {
           setAdding(false);
           onSaved();
           await refreshStatus();
         }}
       />
+
+      {editing && (
+        <ServerFormModal
+          mode="edit"
+          serverName={editing.name}
+          initial={editing.srv}
+          open
+          onClose={() => setEditing(null)}
+          onDone={async () => {
+            setEditing(null);
+            onSaved();
+            await refreshStatus();
+          }}
+        />
+      )}
     </Panel>
   );
 }
 
-function AddServerModal({
+// ---------- shared form modal ----------
+
+type FormMode = "add" | "edit";
+
+function ServerFormModal({
+  mode,
+  serverName,
+  initial,
   open,
   onClose,
-  onAdded,
+  onDone,
 }: {
+  mode: FormMode;
+  serverName?: string;
+  initial?: MCPServerConfig;
   open: boolean;
   onClose: () => void;
-  onAdded: () => void;
+  onDone: () => void;
 }) {
   const toast = useToast();
-  const [name, setName] = useState("");
-  const [transport, setTransport] = useState("stdio");
-  const [command, setCommand] = useState("");
-  const [args, setArgs] = useState("");
-  const [url, setUrl] = useState("");
-  const [env, setEnv] = useState("");
-  const [headers, setHeaders] = useState("");
+  const [name, setName] = useState(serverName ?? "");
+  const [transport, setTransport] = useState(initial?.transport ?? "stdio");
+  const [command, setCommand] = useState(initial?.command ?? "");
+  const [args, setArgs] = useState(initial?.args.join(" ") ?? "");
+  const [url, setUrl] = useState(initial?.url ?? "");
+  const [env, setEnv] = useState(initial ? envToText(initial.env) : "");
+  const [headers, setHeaders] = useState(initial ? headersToText(initial.headers) : "");
   const [saving, setSaving] = useState(false);
 
+  // Re-sync when switching between edit targets
+  useEffect(() => {
+    setName(serverName ?? "");
+    setTransport(initial?.transport ?? "stdio");
+    setCommand(initial?.command ?? "");
+    setArgs(initial?.args.join(" ") ?? "");
+    setUrl(initial?.url ?? "");
+    setEnv(initial ? envToText(initial.env) : "");
+    setHeaders(initial ? headersToText(initial.headers) : "");
+  }, [serverName, initial]);
+
+  const buildPayload = () => ({
+    transport,
+    command: transport === "stdio" ? command.trim() : "",
+    args: transport === "stdio" ? args.split(" ").map((a) => a.trim()).filter(Boolean) : [],
+    url: transport !== "stdio" ? url.trim() : "",
+    env: parseEnv(env),
+    headers: transport !== "stdio" ? parseHeaders(headers) : {},
+    enabled: true,
+  });
+
   const submit = async () => {
-    if (!name.trim()) {
+    if (mode === "add" && !name.trim()) {
       toast.show("Name is required", "warning");
       return;
     }
     setSaving(true);
     try {
-      await api.addMCPServer({
-        name: name.trim(),
-        transport,
-        command: transport === "stdio" ? command.trim() : "",
-        args:
-          transport === "stdio"
-            ? args.split(" ").map((a) => a.trim()).filter(Boolean)
-            : [],
-        url: transport !== "stdio" ? url.trim() : "",
-        env: parseEnv(env),
-        headers: transport !== "stdio" ? parseHeaders(headers) : {},
-        enabled: true,
-      });
-      toast.show(`Added ${name}`, "success");
-      setName("");
-      setCommand("");
-      setArgs("");
-      setUrl("");
-      setEnv("");
-      setHeaders("");
-      onAdded();
+      if (mode === "add") {
+        await api.addMCPServer({ name: name.trim(), ...buildPayload() });
+        toast.show(`Added ${name.trim()}`, "success");
+      } else {
+        await api.updateMCPServer(serverName!, buildPayload());
+        toast.show(`Saved ${serverName}`, "success");
+      }
+      onDone();
     } catch (e) {
-      toast.show(e instanceof Error ? e.message : "Add failed", "danger");
+      toast.show(e instanceof Error ? e.message : `${mode === "add" ? "Add" : "Save"} failed`, "danger");
     } finally {
       setSaving(false);
     }
   };
 
+  const title = mode === "add" ? "Add MCP server" : `Edit — ${serverName}`;
+  const submitLabel = saving
+    ? mode === "add" ? "Adding…" : "Saving…"
+    : mode === "add" ? "Add" : "Save";
+
   return (
     <Modal
       open={open}
       onClose={onClose}
-      title="Add MCP server"
+      title={title}
       footer={
         <>
           <Button variant="tertiary" onPress={onClose}>
             Cancel
           </Button>
           <Button variant="primary" onPress={submit} isDisabled={saving}>
-            {saving ? "Adding…" : "Add"}
+            {submitLabel}
           </Button>
         </>
       }
     >
       <div className="flex flex-col gap-4">
-        <Field label="Name">
-          <TextInput
-            value={name}
-            onChange={(e) => setName(e.target.value)}
-            placeholder="filesystem"
-          />
-        </Field>
+        {mode === "add" && (
+          <Field label="Name">
+            <TextInput
+              value={name}
+              onChange={(e) => setName(e.target.value)}
+              placeholder="filesystem"
+            />
+          </Field>
+        )}
         <Field label="Transport">
           <Select value={transport} onChange={(e) => setTransport(e.target.value)}>
             <option value="stdio">stdio (local process)</option>
@@ -301,13 +402,13 @@ function AddServerModal({
         )}
         <Field
           label="Environment variables"
-          description="One KEY=value per line. Use {env:NAME} to read a secret from .env."
+          description="One KEY=value per line. Use {env:NAME} to read from .env."
         >
           <TextArea
             rows={3}
             value={env}
             onChange={(e) => setEnv(e.target.value)}
-            placeholder={"NEXTCLOUD_HOST=https://cloud.example.com\nNEXTCLOUD_USERNAME=me\nNEXTCLOUD_PASSWORD={env:NEXTCLOUD_PASSWORD}"}
+            placeholder={"NEXTCLOUD_HOST=https://cloud.example.com\nNEXTCLOUD_PASSWORD={env:NEXTCLOUD_PASSWORD}"}
           />
         </Field>
       </div>
