@@ -14,7 +14,7 @@ from typing import TYPE_CHECKING, Any
 from dax.core.exceptions import LLMError, ToolError
 from dax.core.models import Message, MessageRole, ToolCall, ToolResult
 from dax.core.policy import Decision
-from dax.llm.client import build_messages_for_llm
+from dax.llm.client import SYSTEM_PROMPT, build_messages_for_llm
 from dax.llm.tool_mapper import mcp_tools_to_openai
 
 if TYPE_CHECKING:
@@ -28,6 +28,34 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 MAX_TOOL_ITERATIONS = 5
+
+
+def _build_system_prompt(available_tools: list[dict[str, Any]]) -> str:
+    """Append a concrete live tool inventory to the base system prompt.
+
+    Grouping by server_name and listing tool names makes it unambiguous to
+    the model which tools exist right now — preventing hallucinated "I don't
+    have access" responses when tools are actually registered.
+    """
+    if not available_tools:
+        return SYSTEM_PROMPT
+
+    # Group by server
+    by_server: dict[str, list[str]] = {}
+    for tool in available_tools:
+        server = tool.get("server_name", "unknown")
+        by_server.setdefault(server, []).append(tool["name"])
+
+    lines = ["\n\n## Active tools — available right now in this session"]
+    for server, names in sorted(by_server.items()):
+        tool_list = ", ".join(sorted(names))
+        lines.append(f"- **{server}** ({len(names)} tools): {tool_list}")
+    lines.append(
+        "\nUse these tools directly. Do NOT say you lack access — "
+        "if a tool is listed above you can call it."
+    )
+
+    return SYSTEM_PROMPT + "\n".join(lines)
 # How many prior messages to feed back as conversation context.
 MAX_HISTORY_MESSAGES = 20
 
@@ -125,16 +153,15 @@ class Agent:
         )
         history = conversation.messages[-MAX_HISTORY_MESSAGES:]
 
-        # Build conversation context (system + history + this user message)
-        llm_messages = build_messages_for_llm(message, conversation_history=history)
-
         # Record the user turn in the conversation we'll persist below.
         conversation.add_message(message)
 
-        # Get relevant tools for this query
+        # Gather tools BEFORE building messages so the system prompt can
+        # include a concrete inventory of what is available right now.
         available_tools = await self._tools.list_tools()
         registry = self._get_registry()
 
+        relevant: list[dict[str, Any]] = []
         openai_tools: list[dict[str, Any]] | None = None
         if available_tools:
             if registry:
@@ -142,6 +169,20 @@ class Agent:
             else:
                 relevant = available_tools
             openai_tools = mcp_tools_to_openai(relevant) or None
+
+        # Build conversation context with a dynamic inventory injected into
+        # the system prompt so the model knows exactly which tools it has.
+        system_prompt = _build_system_prompt(available_tools)
+        llm_messages = build_messages_for_llm(
+            message, conversation_history=history, system_prompt=system_prompt
+        )
+
+        logger.debug(
+            "Passing %d tools to LLM for query '%.60s': %s",
+            len(relevant),
+            message.content,
+            [t["name"] for t in relevant[:15]],
+        )
 
         # LLM call + tool execution loop
         for iteration in range(MAX_TOOL_ITERATIONS):
