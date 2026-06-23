@@ -27,7 +27,6 @@ const NAV: NavItem[] = [
 ];
 
 const TITLES: Record<string, string> = {
-  "/": "Chat",
   "/dashboard": "Dashboard",
   "/logs": "Logs",
   "/settings": "Settings",
@@ -35,6 +34,7 @@ const TITLES: Record<string, string> = {
 
 export function AppShell({ authEnabled }: { authEnabled: boolean }) {
   const location = useLocation();
+  const isChat = location.pathname === "/";
   const title = TITLES[location.pathname] ?? "Dax";
 
   const logout = async () => {
@@ -42,29 +42,43 @@ export function AppShell({ authEnabled }: { authEnabled: boolean }) {
     window.location.reload();
   };
 
+  // On the chat route, collapse the nav sidebar to icons-only to save horizontal space.
+  const sidebarWidth = isChat ? "w-14" : "w-60";
+
   return (
     <div className="flex h-full bg-background text-foreground">
-      {/* Sidebar */}
-      <aside className="flex w-60 shrink-0 flex-col border-r border-separator bg-surface">
-        <div className="flex items-center gap-2 px-5 py-5">
-          <div className="flex h-9 w-9 items-center justify-center rounded-xl bg-accent text-accent-foreground">
+      {/* Nav sidebar — narrow on chat route, full on others */}
+      <aside
+        className={cn(
+          "flex shrink-0 flex-col border-r border-separator bg-surface transition-all",
+          sidebarWidth,
+        )}
+      >
+        <div className={cn("flex items-center py-4", isChat ? "justify-center px-0" : "gap-2 px-5")}>
+          <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-accent text-accent-foreground">
             <Sparkles size={18} />
           </div>
-          <div className="leading-tight">
-            <p className="text-sm font-semibold">Dax</p>
-            <p className="text-xs text-muted">Assistant</p>
-          </div>
+          {!isChat && (
+            <div className="leading-tight">
+              <p className="text-sm font-semibold">Dax</p>
+              <p className="text-xs text-muted">Assistant</p>
+            </div>
+          )}
         </div>
 
-        <nav className="flex flex-1 flex-col gap-1 px-3">
+        <nav className={cn("flex flex-1 flex-col gap-1", isChat ? "items-center px-1" : "px-3")}>
           {NAV.map((item) => (
             <NavLink
               key={item.to}
               to={item.to}
               end={item.end}
+              title={isChat ? item.label : undefined}
               className={({ isActive }) =>
                 cn(
-                  "flex items-center gap-3 rounded-xl px-3 py-2 text-sm font-medium transition-colors",
+                  "flex items-center rounded-xl transition-colors",
+                  isChat
+                    ? "h-10 w-10 justify-center"
+                    : "gap-3 px-3 py-2 text-sm font-medium",
                   isActive
                     ? "bg-accent-soft text-accent-soft-foreground"
                     : "text-muted hover:bg-surface-secondary hover:text-foreground",
@@ -72,31 +86,42 @@ export function AppShell({ authEnabled }: { authEnabled: boolean }) {
               }
             >
               {item.icon}
-              {item.label}
+              {!isChat && item.label}
             </NavLink>
           ))}
         </nav>
 
         {authEnabled && (
-          <div className="px-3 pb-4">
+          <div className={cn("pb-4", isChat ? "flex justify-center px-0" : "px-3")}>
             <button
               type="button"
               onClick={logout}
-              className="flex w-full items-center gap-3 rounded-xl px-3 py-2 text-sm font-medium text-muted transition-colors hover:bg-danger-soft hover:text-danger-soft-foreground"
+              title={isChat ? "Log out" : undefined}
+              className={cn(
+                "flex items-center rounded-xl text-muted transition-colors hover:bg-danger-soft hover:text-danger-soft-foreground",
+                isChat ? "h-10 w-10 justify-center" : "w-full gap-3 px-3 py-2 text-sm font-medium",
+              )}
             >
               <LogOut size={18} />
-              Log out
+              {!isChat && "Log out"}
             </button>
           </div>
         )}
       </aside>
 
-      {/* Main */}
+      {/* Main content */}
       <div className="flex min-w-0 flex-1 flex-col">
-        <header className="flex h-16 shrink-0 items-center justify-between border-b border-separator px-6">
-          <h1 className="text-lg font-semibold">{title}</h1>
-          <ThemeToggle />
-        </header>
+        {!isChat && (
+          <header className="flex h-16 shrink-0 items-center justify-between border-b border-separator px-6">
+            <h1 className="text-lg font-semibold">{title}</h1>
+            <ThemeToggle />
+          </header>
+        )}
+        {isChat && (
+          <div className="absolute right-4 top-3 z-10">
+            <ThemeToggle />
+          </div>
+        )}
         <main className="min-h-0 flex-1 overflow-hidden">
           <Outlet />
         </main>

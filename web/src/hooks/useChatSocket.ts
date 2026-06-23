@@ -25,17 +25,23 @@ function wsUrl(): string {
 let idSeq = 0;
 const nextId = () => `m${Date.now()}-${++idSeq}`;
 
-/**
- * Manages the chat WebSocket: outgoing messages, the assistant's (non-streamed)
- * replies, a "thinking" state, and tool-confirmation requests from the gate.
- */
-export function useChatSocket() {
-  const [messages, setMessages] = useState<ChatMessage[]>([]);
+export function useChatSocket(sessionId: string, initialMessages: ChatMessage[] = []) {
+  const [messages, setMessages] = useState<ChatMessage[]>(initialMessages);
   const [status, setStatus] = useState<Status>("connecting");
   const [thinking, setThinking] = useState(false);
   const [confirmation, setConfirmation] = useState<ConfirmationRequest | null>(null);
   const socketRef = useRef<WebSocket | null>(null);
   const retryRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  // Track sessionId in a ref so the WS callbacks always see the latest value.
+  const sessionIdRef = useRef(sessionId);
+
+  // When the session switches, load the new history and reset thinking state.
+  useEffect(() => {
+    sessionIdRef.current = sessionId;
+    setMessages(initialMessages);
+    setThinking(false);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [sessionId]);
 
   const connect = useCallback(() => {
     const ws = new WebSocket(wsUrl());
@@ -90,7 +96,9 @@ export function useChatSocket() {
       { id: nextId(), role: "user", content, timestamp: new Date().toISOString() },
     ]);
     setThinking(true);
-    ws.send(JSON.stringify({ content, language: "auto" }));
+    ws.send(
+      JSON.stringify({ content, language: "auto", session_id: sessionIdRef.current }),
+    );
   }, []);
 
   const respondConfirmation = useCallback((approvalId: string, approved: boolean) => {
