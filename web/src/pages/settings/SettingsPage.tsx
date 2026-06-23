@@ -6,6 +6,7 @@ import {
   MessageCircle,
   ShieldCheck,
   Server,
+  Globe,
 } from "lucide-react";
 import { useConfig } from "../../hooks/useConfig";
 import { Tabs } from "../../components/ui";
@@ -15,6 +16,7 @@ import { VoiceTab } from "./VoiceTab";
 import { WhatsAppTab } from "./WhatsAppTab";
 import { ToolsTab } from "./ToolsTab";
 import { McpTab } from "./McpTab";
+import { ServerTab } from "./ServerTab";
 
 const TABS = [
   { id: "general", label: "General", icon: <SlidersHorizontal size={15} /> },
@@ -23,6 +25,7 @@ const TABS = [
   { id: "whatsapp", label: "WhatsApp", icon: <MessageCircle size={15} /> },
   { id: "tools", label: "Security & Tools", icon: <ShieldCheck size={15} /> },
   { id: "mcp", label: "MCP Servers", icon: <Server size={15} /> },
+  { id: "server", label: "Web Server", icon: <Globe size={15} /> },
 ];
 
 export function SettingsPage() {
@@ -44,6 +47,7 @@ export function SettingsPage() {
             {active === "whatsapp" && <WhatsAppTab config={config} onSaved={refresh} />}
             {active === "tools" && <ToolsTab config={config} onSaved={refresh} />}
             {active === "mcp" && <McpTab config={config} onSaved={refresh} />}
+            {active === "server" && <ServerTab config={config} onSaved={refresh} />}
           </>
         )}
       </div>

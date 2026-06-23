@@ -42,6 +42,30 @@ export interface ToolAuditEntry {
   status: string;
 }
 
+export interface ConversationSummary {
+  id: string;
+  session_key: string;
+  title: string;
+  preview: string;
+  updated_at: string;
+  message_count: number;
+}
+
+export interface ConversationMessage {
+  id: string;
+  role: string;
+  content: string;
+  timestamp: string;
+}
+
+export interface ConversationDetail {
+  id: string;
+  session_key: string;
+  created_at: string;
+  updated_at: string;
+  messages: ConversationMessage[];
+}
+
 export interface MCPServerStatus {
   name: string;
   connected: boolean;
@@ -149,6 +173,12 @@ export const api = {
       body: JSON.stringify(data),
     }),
 
+  updateMCPServer: (name: string, data: Record<string, unknown>) =>
+    request(`/config/mcp/servers/${name}`, {
+      method: "PATCH",
+      body: JSON.stringify(data),
+    }),
+
   deleteMCPServer: (name: string) =>
     request(`/config/mcp/servers/${name}`, { method: "DELETE" }),
 
@@ -172,4 +202,29 @@ export const api = {
 
   logoutMCP: (name: string) =>
     request(`/mcp/${name}/auth/logout`, { method: "POST" }),
+
+  updateWeb: (data: Record<string, unknown>) =>
+    request("/config/web", {
+      method: "PATCH",
+      body: JSON.stringify(data),
+    }),
+
+  changePassword: (currentPassword: string, newPassword: string) =>
+    request<{ status: string }>("/auth/change-password", {
+      method: "POST",
+      body: JSON.stringify({ current_password: currentPassword, new_password: newPassword }),
+    }),
+
+  // Conversation history
+  listConversations: (limit = 50) =>
+    request<ConversationSummary[]>(`/conversations?limit=${limit}`),
+
+  getConversation: (id: string) =>
+    request<ConversationDetail>(`/conversations/${id}`),
+
+  deleteConversation: (id: string) =>
+    fetch(`${BASE}/conversations/${id}`, {
+      method: "DELETE",
+      credentials: "same-origin",
+    }),
 };

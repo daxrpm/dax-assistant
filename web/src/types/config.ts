@@ -45,6 +45,7 @@ export interface WebConfig {
   host: string;
   port: number;
   cors_origins: string[];
+  expose_lan: boolean;
 }
 
 export interface WhatsAppConfig {

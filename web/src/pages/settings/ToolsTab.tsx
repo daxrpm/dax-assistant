@@ -37,9 +37,16 @@ export function ToolsTab({
   const [timeout, setTimeout] = useState(config.tools.confirm_timeout_seconds);
 
   const sec = config.security;
+  const [authEnabled, setAuthEnabled] = useState(sec.auth_enabled);
   const [cookieSecure, setCookieSecure] = useState(sec.cookie_secure);
   const [ttl, setTtl] = useState(sec.session_ttl_hours);
   const [saving, setSaving] = useState(false);
+
+  // Password change state
+  const [currentPw, setCurrentPw] = useState("");
+  const [newPw, setNewPw] = useState("");
+  const [confirmPw, setConfirmPw] = useState("");
+  const [pwSaving, setPwSaving] = useState(false);
 
   const save = async () => {
     setSaving(true);
@@ -54,6 +61,7 @@ export function ToolsTab({
         },
       });
       await api.updateSecurity({
+        auth_enabled: authEnabled,
         cookie_secure: cookieSecure,
         session_ttl_hours: ttl,
       });
@@ -63,6 +71,31 @@ export function ToolsTab({
       toast.show(e instanceof Error ? e.message : "Save failed", "danger");
     } finally {
       setSaving(false);
+    }
+  };
+
+  const changePassword = async () => {
+    if (newPw.length < 8) {
+      toast.show("Password must be at least 8 characters", "warning");
+      return;
+    }
+    if (newPw !== confirmPw) {
+      toast.show("Passwords do not match", "warning");
+      return;
+    }
+    setPwSaving(true);
+    try {
+      await api.changePassword(currentPw, newPw);
+      toast.show("Password changed — auth is now enabled", "success");
+      setCurrentPw("");
+      setNewPw("");
+      setConfirmPw("");
+      setAuthEnabled(true);
+      onSaved();
+    } catch (e) {
+      toast.show(e instanceof Error ? e.message : "Failed to change password", "danger");
+    } finally {
+      setPwSaving(false);
     }
   };
 
@@ -127,14 +160,28 @@ export function ToolsTab({
       <Panel>
         <PanelHeader
           title="Security"
-          description="Session and authentication"
+          description="Session, authentication and login"
           action={
-            <Badge color={sec.auth_enabled ? "success" : "warning"}>
-              {sec.auth_enabled ? "Auth on" : "Auth off"}
+            <Badge color={authEnabled ? "success" : "warning"}>
+              {authEnabled ? "Auth on" : "Auth off"}
             </Badge>
           }
         />
         <div className="flex flex-col gap-4">
+          <div className="flex items-center justify-between rounded-xl border border-separator bg-background px-3 py-2.5">
+            <div>
+              <p className="text-sm font-medium">Require login</p>
+              <p className="text-xs text-muted">
+                Protect the web UI with a password. Requires a password to be set below.
+              </p>
+            </div>
+            <Toggle
+              checked={authEnabled}
+              onChange={setAuthEnabled}
+              label="Require login"
+              disabled={!sec.configured && !authEnabled}
+            />
+          </div>
           <Field label="Session lifetime (hours)">
             <TextInput
               type="number"
@@ -155,11 +202,54 @@ export function ToolsTab({
               label="Secure cookie"
             />
           </div>
-          <p className="text-xs text-muted">
-            The login password and session secret are set via environment variables
-            (<code>DAX_SECURITY__PASSWORD_HASH</code>,{" "}
-            <code>DAX_SECURITY__SESSION_SECRET</code>) and never editable here.
-          </p>
+        </div>
+      </Panel>
+
+      <Panel>
+        <PanelHeader
+          title="Change password"
+          description={
+            sec.configured
+              ? "Update the login password"
+              : "Set a password to enable authentication"
+          }
+        />
+        <div className="flex flex-col gap-4">
+          {sec.configured && (
+            <Field label="Current password">
+              <TextInput
+                type="password"
+                value={currentPw}
+                onChange={(e) => setCurrentPw(e.target.value)}
+                autoComplete="current-password"
+              />
+            </Field>
+          )}
+          <Field label="New password" description="Minimum 8 characters">
+            <TextInput
+              type="password"
+              value={newPw}
+              onChange={(e) => setNewPw(e.target.value)}
+              autoComplete="new-password"
+            />
+          </Field>
+          <Field label="Confirm new password">
+            <TextInput
+              type="password"
+              value={confirmPw}
+              onChange={(e) => setConfirmPw(e.target.value)}
+              autoComplete="new-password"
+            />
+          </Field>
+          <div className="flex justify-end">
+            <Button
+              variant="primary"
+              onPress={changePassword}
+              isDisabled={pwSaving || !newPw || newPw !== confirmPw}
+            >
+              {pwSaving ? "Saving…" : sec.configured ? "Update password" : "Set password"}
+            </Button>
+          </div>
         </div>
       </Panel>
 
