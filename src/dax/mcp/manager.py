@@ -140,6 +140,18 @@ class MCPManager:
         """
         await self.remove_server(name)
 
+        # Best-effort: refresh an expired OAuth token before (re)connecting an
+        # HTTP server so the new Bearer header carries a valid token.
+        if getattr(server_config, "transport", "stdio") in (
+            "streamable_http", "sse", "http"
+        ):
+            try:
+                from dax.web.routes.oauth import refresh_access_token
+
+                await refresh_access_token(name)
+            except Exception:
+                logger.debug("Token refresh skipped for '%s'", name, exc_info=True)
+
         client = self._make_client(name, server_config)
         if client is None:
             raise ValueError(f"MCP server '{name}' has an invalid configuration")

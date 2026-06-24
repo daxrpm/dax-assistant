@@ -143,6 +143,7 @@ async def start_auth(name: str, request: Request) -> dict[str, str]:
 
 @router.get("/mcp/oauth/callback")
 async def oauth_callback(
+    request: Request,
     code: str = "",
     state: str = "",
     error: str = "",
@@ -215,6 +216,11 @@ async def oauth_callback(
         logger.info(
             "OAuth tokens stored for MCP server '%s'", flow["mcp_name"],
         )
+
+        # Reconnect the MCP server NOW so it picks up the fresh token without
+        # requiring a restart (previously the token sat unused until reboot).
+        await _reconnect_mcp_server(request, flow["mcp_name"])
+
         return HTMLResponse(_callback_html(success=True))
 
     except Exception:
@@ -416,6 +422,78 @@ def get_access_token(name: str) -> str | None:
         return None
 
     return tokens.get("access_token")
+
+
+async def _reconnect_mcp_server(request: Request, name: str) -> None:
+    """Reconnect an MCP server so a freshly stored token takes effect."""
+    manager = getattr(request.app.state, "mcp_manager", None)
+    config = getattr(request.app.state, "config", None)
+    if manager is None or config is None:
+        return
+    server_config = config.mcp.servers.get(name)
+    if server_config is None:
+        return
+    try:
+        count = await manager.add_server(name, server_config)
+        logger.info("Reconnected MCP server '%s' after auth (%d tools)", name, count)
+    except Exception:
+        logger.exception("Failed to reconnect MCP server '%s' after auth", name)
+
+
+async def refresh_access_token(name: str) -> str | None:
+    """Refresh an expired access token using the stored refresh_token.
+
+    Returns the new access token, or None if refresh is impossible. Called
+    best-effort before reconnecting an HTTP MCP server.
+    """
+    tokens = _load_tokens(name)
+    if not tokens:
+        return None
+    # Still valid — nothing to do.
+    if tokens.get("expires_at", 0) >= time.time() + 30:
+        return tokens.get("access_token")
+
+    refresh_token = tokens.get("refresh_token")
+    client = _load_client_info(name)
+    if not refresh_token or not client:
+        return None
+
+    # The token endpoint lives in the AS metadata; rediscover from server_url.
+    auth_info = await _discover_auth(tokens.get("server_url", ""))
+    if not auth_info or not auth_info.get("token_endpoint"):
+        return None
+
+    try:
+        async with httpx.AsyncClient(timeout=30) as http:
+            data = {
+                "grant_type": "refresh_token",
+                "refresh_token": refresh_token,
+                "client_id": client.get("client_id", ""),
+            }
+            if client.get("client_secret"):
+                data["client_secret"] = client["client_secret"]
+            resp = await http.post(
+                auth_info["token_endpoint"],
+                data=data,
+                headers={"Content-Type": "application/x-www-form-urlencoded"},
+            )
+        new = resp.json()
+        if not new.get("access_token"):
+            logger.warning("Token refresh failed for '%s': %s", name, resp.text[:200])
+            return None
+        tokens.update(
+            {
+                "access_token": new["access_token"],
+                "refresh_token": new.get("refresh_token", refresh_token),
+                "expires_at": time.time() + new.get("expires_in", 3600),
+            }
+        )
+        _store_tokens(name, tokens)
+        logger.info("Refreshed OAuth token for '%s'", name)
+        return new["access_token"]
+    except Exception:
+        logger.exception("Token refresh error for '%s'", name)
+        return None
 
 
 # -- Dynamic Client Registration (RFC 7591) --
