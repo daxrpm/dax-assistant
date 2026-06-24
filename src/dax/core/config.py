@@ -58,6 +58,10 @@ class OpenAIProviderConfig(BaseModel):
     # Leave blank for the OpenAI cloud; set to point at any OpenAI-compatible API.
     base_url: str = ""
     timeout: int = 60
+    # Reasoning effort for gpt-5.x reasoning models: "minimal" | "low" |
+    # "medium" | "high". Lower = much faster responses (big latency win for a
+    # personal assistant). Ignored by OpenAI-compatible endpoints (Ollama).
+    reasoning_effort: str = "low"
 
 
 class GeminiProviderConfig(BaseModel):
@@ -67,6 +71,22 @@ class GeminiProviderConfig(BaseModel):
     # Read from GEMINI_API_KEY / GOOGLE_API_KEY env var by the SDK if blank.
     api_key: str = ""
     timeout: int = 60
+
+
+class CodexProviderConfig(BaseModel):
+    """OpenAI Codex CLI provider — runs `codex exec --json` as a subprocess.
+
+    Uses your ChatGPT plan (via ~/.codex/auth.json) or CODEX_API_KEY. Codex
+    runs its own agentic loop, so this provider returns text only and does NOT
+    use Dax's tool-calling pipeline. Give Codex its own MCP servers via the
+    generated ~/.codex/config.toml (see the MCP section).
+    """
+
+    # Path to the codex binary (or just "codex" if on PATH).
+    binary: str = "codex"
+    # Model Codex should use; blank = Codex default for your account.
+    model: str = ""
+    timeout: int = 300
 
 
 class LLMConfig(BaseModel):
@@ -81,10 +101,15 @@ class LLMConfig(BaseModel):
     default_provider: str = "ollama"
     # Providers tried (in order) after the default fails.
     fallback_order: list[str] = Field(default_factory=lambda: ["gemini"])
+    # Max tool schemas sent to the LLM per request. Keep modest: large tool
+    # payloads dramatically increase prompt size and latency. The relevance
+    # filter picks the best-scoring tools for the query within this budget.
+    max_tools: int = 45
     ollama: OllamaProviderConfig = Field(default_factory=OllamaProviderConfig)
     anthropic: AnthropicProviderConfig = Field(default_factory=AnthropicProviderConfig)
     openai: OpenAIProviderConfig = Field(default_factory=OpenAIProviderConfig)
     gemini: GeminiProviderConfig = Field(default_factory=GeminiProviderConfig)
+    codex: CodexProviderConfig = Field(default_factory=CodexProviderConfig)
 
 
 class WebConfig(BaseModel):
@@ -137,6 +162,20 @@ class WhatsAppConfig(BaseModel):
     respond_with_audio: bool = False
 
 
+class TelegramConfig(BaseModel):
+    """Telegram bot integration via long-polling (aiogram).
+
+    No public URL needed — the bot polls Telegram. Create a bot with
+    @BotFather and paste its token. Restrict access with allowed_user_ids
+    (numeric Telegram user IDs); empty = allow anyone who messages the bot.
+    """
+
+    enabled: bool = False
+    bot_token: str = ""
+    allowed_user_ids: list[int] = Field(default_factory=list)
+    respond_with_audio: bool = False
+
+
 class StorageConfig(BaseModel):
     """Persistence configuration."""
 
@@ -162,6 +201,10 @@ class MCPServerConfig(BaseModel):
     url: str = ""
     headers: dict[str, str] = Field(default_factory=dict)
     enabled: bool = True
+    # When true, this server is included in the generated config for the
+    # respective external client (so you can pick which MCPs each tool sees).
+    export_codex: bool = False
+    export_claude: bool = False
 
 
 class MCPConfig(BaseModel):
@@ -232,6 +275,7 @@ class DaxConfig(BaseSettings):
     web: WebConfig = Field(default_factory=WebConfig)
     security: SecurityConfig = Field(default_factory=SecurityConfig)
     whatsapp: WhatsAppConfig = Field(default_factory=WhatsAppConfig)
+    telegram: TelegramConfig = Field(default_factory=TelegramConfig)
     storage: StorageConfig = Field(default_factory=StorageConfig)
     mcp: MCPConfig = Field(default_factory=MCPConfig)
     tools: ToolsConfig = Field(default_factory=ToolsConfig)

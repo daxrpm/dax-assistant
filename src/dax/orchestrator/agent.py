@@ -81,6 +81,7 @@ class Agent:
         storage: Storage,
         policy: ToolPolicy | None = None,
         approval: ApprovalManager | None = None,
+        max_tools: int = 45,
     ) -> None:
         self._bus = bus
         self._llm = llm
@@ -90,6 +91,9 @@ class Agent:
         # tests). In the app both are provided so destructive actions are gated.
         self._policy = policy
         self._approval = approval
+        # Cap on tool schemas sent per LLM request — keeps prompts small and
+        # responses fast. The relevance filter picks the best within this.
+        self._max_tools = max_tools
         self._task: asyncio.Task[None] | None = None
         self._event_broadcaster: Callable[[dict[str, Any]], Coroutine[Any, Any, None]] | None = None
 
@@ -180,14 +184,17 @@ class Agent:
         openai_tools: list[dict[str, Any]] | None = None
         if available_tools:
             if registry:
-                relevant = registry.get_relevant_tools(message.content)
+                relevant = registry.get_relevant_tools(
+                    message.content, max_tools=self._max_tools
+                )
             else:
-                relevant = available_tools
+                relevant = available_tools[: self._max_tools]
             openai_tools = mcp_tools_to_openai(relevant) or None
 
         # Build conversation context with a dynamic inventory injected into
-        # the system prompt so the model knows exactly which tools it has.
-        system_prompt = _build_system_prompt(available_tools)
+        # the system prompt. List only the tools actually passed this turn so
+        # the prompt stays small (listing all ~150 tools is slow and pointless).
+        system_prompt = _build_system_prompt(relevant or available_tools)
         llm_messages = build_messages_for_llm(
             message, conversation_history=history, system_prompt=system_prompt
         )

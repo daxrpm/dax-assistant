@@ -14,6 +14,7 @@ from typing import TYPE_CHECKING
 import structlog
 import uvicorn
 
+from dax.channels.telegram_channel import TelegramChannel
 from dax.channels.voice_channel import VoiceChannel
 from dax.channels.web_channel import WebChannel
 from dax.channels.whatsapp_channel import WhatsAppChannel
@@ -92,7 +93,9 @@ class DaxApp:
         )
 
         # Channels
-        self._channels: dict[str, VoiceChannel | WebChannel | WhatsAppChannel] = {}
+        self._channels: dict[
+            str, VoiceChannel | WebChannel | WhatsAppChannel | TelegramChannel
+        ] = {}
 
         # Voice pipeline (initialized in start() if enabled)
         self._voice_pipeline: VoicePipeline | None = None
@@ -171,6 +174,11 @@ class DaxApp:
             await wa_channel.start()
             self._channels["whatsapp"] = wa_channel
 
+        if self._config.telegram.enabled:
+            tg_channel = TelegramChannel(self._config.telegram, self._bus)
+            await tg_channel.start()
+            self._channels["telegram"] = tg_channel
+
         # Voice channel (always registered so dispatcher can route to it)
         if self._config.voice.enabled:
             voice_channel = VoiceChannel()
@@ -187,6 +195,7 @@ class DaxApp:
             storage=self._repository,  # type: ignore[arg-type]
             policy=self._policy,
             approval=self._approval,
+            max_tools=self._config.llm.max_tools,
         )
         await self._agent.start()
 
