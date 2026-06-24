@@ -45,6 +45,7 @@ class GeneralConfigUpdate(BaseModel):
 class LLMConfigUpdate(BaseModel):
     default_provider: str | None = None
     fallback_order: list[str] | None = None
+    max_tools: int | None = None
     ollama_model: str | None = None
     ollama_base_url: str | None = None
     ollama_timeout: int | None = None
@@ -53,8 +54,11 @@ class LLMConfigUpdate(BaseModel):
     openai_model: str | None = None
     openai_base_url: str | None = None
     openai_api_key: str | None = None
+    openai_reasoning_effort: str | None = None
     gemini_model: str | None = None
     gemini_api_key: str | None = None
+    codex_binary: str | None = None
+    codex_model: str | None = None
 
 
 class VoiceConfigUpdate(BaseModel):
@@ -107,6 +111,13 @@ class ChangePasswordRequest(BaseModel):
     new_password: str
 
 
+class TelegramConfigUpdate(BaseModel):
+    enabled: bool | None = None
+    bot_token: str | None = None
+    allowed_user_ids: list[int] | None = None
+    respond_with_audio: bool | None = None
+
+
 class MCPServerCreate(BaseModel):
     name: str
     command: str = ""
@@ -116,6 +127,8 @@ class MCPServerCreate(BaseModel):
     url: str = ""
     headers: dict[str, str] = Field(default_factory=dict)
     enabled: bool = True
+    export_codex: bool = False
+    export_claude: bool = False
 
 
 # --- Ollama Models ---
@@ -263,6 +276,7 @@ async def get_config(request: Request) -> dict[str, Any]:
         "llm": {
             "default_provider": config.llm.default_provider,
             "fallback_order": config.llm.fallback_order,
+            "max_tools": getattr(config.llm, "max_tools", 45),
             "ollama_model": config.llm.ollama.model,
             "ollama_base_url": config.llm.ollama.base_url,
             "ollama_timeout": config.llm.ollama.timeout,
@@ -271,8 +285,13 @@ async def get_config(request: Request) -> dict[str, Any]:
             "openai_model": config.llm.openai.model,
             "openai_base_url": config.llm.openai.base_url,
             "openai_configured": bool(config.llm.openai.api_key),
+            "openai_reasoning_effort": getattr(
+                config.llm.openai, "reasoning_effort", "low"
+            ),
             "gemini_model": config.llm.gemini.model,
             "gemini_configured": bool(config.llm.gemini.api_key),
+            "codex_binary": getattr(config.llm.codex, "binary", "codex"),
+            "codex_model": getattr(config.llm.codex, "model", ""),
         },
         "web": {
             "host": config.web.host,
@@ -286,6 +305,12 @@ async def get_config(request: Request) -> dict[str, Any]:
             "evolution_api_instance": config.whatsapp.evolution_api_instance,
             "respond_with_audio": config.whatsapp.respond_with_audio,
             "has_api_key": bool(config.whatsapp.evolution_api_key),
+        },
+        "telegram": {
+            "enabled": config.telegram.enabled,
+            "allowed_user_ids": config.telegram.allowed_user_ids,
+            "respond_with_audio": config.telegram.respond_with_audio,
+            "has_token": bool(config.telegram.bot_token),
         },
         "security": {
             "auth_enabled": config.security.auth_enabled,
@@ -348,6 +373,7 @@ async def update_llm(
     field_map = {
         "default_provider": ("llm", "default_provider"),
         "fallback_order": ("llm", "fallback_order"),
+        "max_tools": ("llm", "max_tools"),
         "ollama_model": ("llm.ollama", "model"),
         "ollama_base_url": ("llm.ollama", "base_url"),
         "ollama_timeout": ("llm.ollama", "timeout"),
@@ -356,8 +382,11 @@ async def update_llm(
         "openai_model": ("llm.openai", "model"),
         "openai_base_url": ("llm.openai", "base_url"),
         "openai_api_key": ("llm.openai", "api_key"),
+        "openai_reasoning_effort": ("llm.openai", "reasoning_effort"),
         "gemini_model": ("llm.gemini", "model"),
         "gemini_api_key": ("llm.gemini", "api_key"),
+        "codex_binary": ("llm.codex", "binary"),
+        "codex_model": ("llm.codex", "model"),
     }
 
     for key, value in updates.items():
@@ -445,6 +474,27 @@ async def update_web(
 
     _save_config_to_toml(request)
     return {"status": "ok", "note": "Restart required for host/port changes to take effect"}
+
+
+@router.patch("/config/telegram")
+async def update_telegram(
+    request: Request, body: TelegramConfigUpdate,
+) -> dict[str, str]:
+    """Update Telegram bot settings. Token is stored in .env; restart to apply."""
+    config = request.app.state.config
+    updates = body.model_dump(exclude_none=True)
+
+    config_path = getattr(request.app.state, "config_path", Path("config/dax.toml"))
+    env_path = config_path.parent.parent / ".env"
+
+    for key, value in updates.items():
+        if key == "bot_token" and isinstance(value, str) and value:
+            _upsert_env_var(env_path, "DAX_TELEGRAM__BOT_TOKEN", value)
+        if hasattr(config.telegram, key):
+            object.__setattr__(config.telegram, key, value)
+
+    _save_config_to_toml(request)
+    return {"status": "ok", "note": "Restart required for Telegram changes to take effect"}
 
 
 @router.patch("/config/tools")
@@ -548,6 +598,8 @@ async def list_mcp_servers(request: Request) -> dict[str, Any]:
             "url": srv.url,
             "headers": srv.headers,
             "enabled": srv.enabled,
+            "export_codex": getattr(srv, "export_codex", False),
+            "export_claude": getattr(srv, "export_claude", False),
         }
         for name, srv in config.mcp.servers.items()
     }
@@ -576,6 +628,8 @@ async def add_mcp_server(
         url=body.url,
         headers=body.headers,
         enabled=body.enabled,
+        export_codex=body.export_codex,
+        export_claude=body.export_claude,
     )
     config.mcp.servers[body.name] = server_config
     _save_config_to_toml(request)
@@ -620,6 +674,8 @@ class MCPServerUpdate(BaseModel):
     url: str = ""
     headers: dict[str, str] = Field(default_factory=dict)
     enabled: bool = True
+    export_codex: bool = False
+    export_claude: bool = False
 
 
 @router.patch("/config/mcp/servers/{server_name}")
@@ -642,6 +698,8 @@ async def update_mcp_server(
         url=body.url,
         headers=body.headers,
         enabled=body.enabled,
+        export_codex=body.export_codex,
+        export_claude=body.export_claude,
     )
     config.mcp.servers[server_name] = server_config
     _save_config_to_toml(request)
@@ -804,6 +862,7 @@ def _save_config_to_toml(request: Request) -> None:
     lines.append(f'default_provider = "{config.llm.default_provider}"')
     fallback = ", ".join(f'"{p}"' for p in config.llm.fallback_order)
     lines.append(f"fallback_order = [{fallback}]")
+    lines.append(f"max_tools = {getattr(config.llm, 'max_tools', 45)}")
     lines.append("")
     lines.append("[llm.ollama]")
     lines.append(f'base_url = "{config.llm.ollama.base_url}"')
@@ -820,6 +879,9 @@ def _save_config_to_toml(request: Request) -> None:
     lines.append(f'model = "{config.llm.openai.model}"')
     if config.llm.openai.base_url:
         lines.append(f'base_url = "{config.llm.openai.base_url}"')
+    reasoning = getattr(config.llm.openai, "reasoning_effort", "")
+    if reasoning:
+        lines.append(f'reasoning_effort = "{reasoning}"')
     if config.llm.openai.api_key:
         ref = _env_ref_for_secret(env_path, "OPENAI_API_KEY", config.llm.openai.api_key)
         lines.append(f'api_key = "{ref}"')
@@ -830,6 +892,14 @@ def _save_config_to_toml(request: Request) -> None:
         ref = _env_ref_for_secret(env_path, "GEMINI_API_KEY", config.llm.gemini.api_key)
         lines.append(f'api_key = "{ref}"')
     lines.append("")
+    codex = getattr(config.llm, "codex", None)
+    if codex is not None:
+        lines.append("[llm.codex]")
+        lines.append(f'binary = "{codex.binary}"')
+        if codex.model:
+            lines.append(f'model = "{codex.model}"')
+        lines.append(f"timeout = {codex.timeout}")
+        lines.append("")
 
     # [web]
     lines.append("[web]")
@@ -858,6 +928,18 @@ def _save_config_to_toml(request: Request) -> None:
         f"{_toml_bool(config.whatsapp.respond_with_audio)}"
     )
     lines.append("")
+
+    # [telegram] — bot_token is a secret, stored in .env not TOML.
+    tg = getattr(config, "telegram", None)
+    if tg is not None:
+        lines.append("[telegram]")
+        lines.append(f"enabled = {_toml_bool(tg.enabled)}")
+        ids = ", ".join(str(i) for i in tg.allowed_user_ids)
+        lines.append(f"allowed_user_ids = [{ids}]")
+        lines.append(f"respond_with_audio = {_toml_bool(tg.respond_with_audio)}")
+        if tg.bot_token and not tg.bot_token.startswith("{env:"):
+            _upsert_env_var(env_path, "DAX_TELEGRAM__BOT_TOKEN", tg.bot_token)
+        lines.append("")
 
     # [security] — secrets (password_hash, session_secret) stay in env only.
     lines.append("[security]")
@@ -916,6 +998,10 @@ def _save_config_to_toml(request: Request) -> None:
         lines.append(
             f"enabled = {_toml_bool(srv.enabled)}"
         )
+        if getattr(srv, "export_codex", False):
+            lines.append("export_codex = true")
+        if getattr(srv, "export_claude", False):
+            lines.append("export_claude = true")
         lines.append("")
 
     config_path.parent.mkdir(parents=True, exist_ok=True)
@@ -1213,54 +1299,191 @@ async def delete_memory(slug: str, request: Request) -> None:
 
 @router.get("/codex-config")
 async def get_codex_config(request: Request) -> dict[str, Any]:
-    """Generate a ~/.codex/config.toml snippet connecting to all enabled MCP servers."""
+    """Generate ~/.codex/config.toml for MCP servers flagged export_codex."""
     config = request.app.state.config
-    servers: dict[str, Any] = {}
+    toml_lines = ["# Generated by Dax — paste into ~/.codex/config.toml", ""]
+    count = 0
 
     for name, srv in config.mcp.servers.items():
-        if not srv.enabled:
+        if not srv.enabled or not getattr(srv, "export_codex", False):
             continue
-        entry: dict[str, Any] = {}
-        if srv.transport == "http" and srv.url:
-            entry["url"] = srv.url
-            if srv.headers:
-                # Resolve {env:VAR} references to env var names for Codex
-                static = {}
-                env_hdrs = {}
-                for k, v in srv.headers.items():
-                    if v.startswith("{env:") and v.endswith("}"):
-                        var = v[5:-1]
-                        env_hdrs[k] = var
-                    else:
-                        static[k] = v
-                if env_hdrs:
-                    entry["env_http_headers"] = env_hdrs
-                if static:
-                    entry["http_headers"] = static
+        count += 1
+        toml_lines.append(f"[mcp_servers.{name}]")
+        if srv.transport in ("http", "streamable_http", "sse") and srv.url:
+            toml_lines.append(f'url = "{srv.url}"')
+            static, env_hdrs = {}, {}
+            for k, v in srv.headers.items():
+                if v.startswith("{env:") and v.endswith("}"):
+                    env_hdrs[k] = v[5:-1]
+                else:
+                    static[k] = v
+            if env_hdrs:
+                inner = ", ".join(f'"{k}" = "{var}"' for k, var in env_hdrs.items())
+                toml_lines.append(f"env_http_headers = {{ {inner} }}")
+            if static:
+                inner = ", ".join(f'"{k}" = "{v}"' for k, v in static.items())
+                toml_lines.append(f"http_headers = {{ {inner} }}")
         elif srv.command:
-            entry["command"] = srv.command
+            toml_lines.append(f'command = "{srv.command}"')
             if srv.args:
-                entry["args"] = srv.args
+                items = ", ".join(f'"{a}"' for a in srv.args)
+                toml_lines.append(f"args = [{items}]")
             if srv.env:
-                entry["env_vars"] = list(srv.env.keys())
-        servers[name] = entry
-
-    toml_lines = ["# Generated by Dax — paste into ~/.codex/config.toml", ""]
-    for sname, scfg in servers.items():
-        toml_lines.append(f"[mcp_servers.{sname}]")
-        for k, v in scfg.items():
-            if isinstance(v, str):
-                toml_lines.append(f'{k} = "{v}"')
-            elif isinstance(v, list):
-                items = ", ".join(f'"{i}"' for i in v)
-                toml_lines.append(f"{k} = [{items}]")
-            elif isinstance(v, dict):
-                inner = ", ".join(f'"{kk}" = "{vv}"' for kk, vv in v.items())
-                toml_lines.append(f"{k} = {{ {inner} }}")
+                items = ", ".join(f'"{k}"' for k in srv.env)
+                toml_lines.append(f"env_vars = [{items}]")
         toml_lines.append("")
 
     return {
         "toml": "\n".join(toml_lines),
-        "server_count": len(servers),
-        "note": "Requires Codex CLI (github.com/openai/codex). Works with ChatGPT Pro account or OpenAI API key.",
+        "server_count": count,
+        "note": "Requires Codex CLI (npm i -g @openai/codex). Works with ChatGPT Pro account or OpenAI API key.",
     }
+
+
+@router.get("/claude-config")
+async def get_claude_config(request: Request) -> dict[str, Any]:
+    """Generate Claude Desktop / Claude Code MCP config (servers flagged export_claude)."""
+    config = request.app.state.config
+    servers: dict[str, Any] = {}
+
+    for name, srv in config.mcp.servers.items():
+        if not srv.enabled or not getattr(srv, "export_claude", False):
+            continue
+        if srv.transport in ("http", "streamable_http", "sse") and srv.url:
+            entry: dict[str, Any] = {"type": "http", "url": srv.url}
+            if srv.headers:
+                entry["headers"] = {
+                    k: (f"${{{v[5:-1]}}}" if v.startswith("{env:") and v.endswith("}") else v)
+                    for k, v in srv.headers.items()
+                }
+        else:
+            entry = {"command": srv.command, "args": srv.args}
+            if srv.env:
+                entry["env"] = {k: f"${{{k}}}" for k in srv.env}
+        servers[name] = entry
+
+    payload = {"mcpServers": servers}
+    import json as _json
+    return {
+        "json": _json.dumps(payload, indent=2),
+        "server_count": len(servers),
+        "note": "Add to claude_desktop_config.json, or run `claude mcp add-json <name> '<entry>'` for Claude Code.",
+    }
+
+
+# ---------------------------------------------------------------------------
+# MCP Marketplace — official registry + curated presets
+# ---------------------------------------------------------------------------
+
+_MCP_REGISTRY_BASE = "https://registry.modelcontextprotocol.io"
+
+# Curated, ready-to-use presets for the most popular MCP servers. Each maps to
+# an MCPServerCreate-compatible payload the UI can install with one click.
+_MCP_PRESETS: list[dict[str, Any]] = [
+    {
+        "id": "filesystem", "name": "Filesystem", "category": "Files",
+        "description": "Read/write local files in allowed directories.",
+        "transport": "stdio", "command": "npx",
+        "args": ["-y", "@modelcontextprotocol/server-filesystem", "/home"],
+        "env": {},
+    },
+    {
+        "id": "github", "name": "GitHub", "category": "Dev",
+        "description": "Manage repos, issues, PRs and code search.",
+        "transport": "stdio", "command": "npx",
+        "args": ["-y", "@modelcontextprotocol/server-github"],
+        "env": {"GITHUB_PERSONAL_ACCESS_TOKEN": ""},
+    },
+    {
+        "id": "brave-search", "name": "Brave Search", "category": "Web",
+        "description": "Web and local search via the Brave Search API.",
+        "transport": "stdio", "command": "npx",
+        "args": ["-y", "@modelcontextprotocol/server-brave-search"],
+        "env": {"BRAVE_API_KEY": ""},
+    },
+    {
+        "id": "puppeteer", "name": "Puppeteer", "category": "Web",
+        "description": "Browse and scrape the web with a headless browser.",
+        "transport": "stdio", "command": "npx",
+        "args": ["-y", "@modelcontextprotocol/server-puppeteer"], "env": {},
+    },
+    {
+        "id": "postgres", "name": "PostgreSQL", "category": "Data",
+        "description": "Read-only SQL queries against a Postgres database.",
+        "transport": "stdio", "command": "npx",
+        "args": ["-y", "@modelcontextprotocol/server-postgres",
+                 "postgresql://localhost/mydb"], "env": {},
+    },
+    {
+        "id": "memory", "name": "Memory (Knowledge Graph)", "category": "Productivity",
+        "description": "Persistent knowledge-graph memory across sessions.",
+        "transport": "stdio", "command": "npx",
+        "args": ["-y", "@modelcontextprotocol/server-memory"], "env": {},
+    },
+    {
+        "id": "slack", "name": "Slack", "category": "Productivity",
+        "description": "Read and post messages in Slack channels.",
+        "transport": "stdio", "command": "npx",
+        "args": ["-y", "@modelcontextprotocol/server-slack"],
+        "env": {"SLACK_BOT_TOKEN": "", "SLACK_TEAM_ID": ""},
+    },
+    {
+        "id": "sequential-thinking", "name": "Sequential Thinking",
+        "category": "Reasoning",
+        "description": "Step-by-step structured reasoning tool.",
+        "transport": "stdio", "command": "npx",
+        "args": ["-y", "@modelcontextprotocol/server-sequential-thinking"],
+        "env": {},
+    },
+]
+
+
+@router.get("/mcp/presets")
+async def mcp_presets() -> list[dict[str, Any]]:
+    """Return the curated list of ready-to-install MCP server presets."""
+    return _MCP_PRESETS
+
+
+@router.get("/mcp/registry/search")
+async def mcp_registry_search(q: str = "", limit: int = 30) -> dict[str, Any]:
+    """Search the official MCP registry. Proxies registry.modelcontextprotocol.io."""
+    import aiohttp
+
+    params: dict[str, Any] = {"limit": min(limit, 100)}
+    if q:
+        params["search"] = q
+    try:
+        async with aiohttp.ClientSession() as session:
+            async with session.get(
+                f"{_MCP_REGISTRY_BASE}/v0.1/servers",
+                params=params,
+                timeout=aiohttp.ClientTimeout(total=12),
+            ) as r:
+                if r.status != 200:
+                    return {"servers": [], "error": f"registry returned {r.status}"}
+                data = await r.json()
+    except Exception as e:
+        return {"servers": [], "error": str(e)}
+
+    results = []
+    for srv in data.get("servers", []):
+        pkgs = srv.get("packages", []) or []
+        remotes = srv.get("remotes", []) or []
+        results.append({
+            "name": srv.get("name", ""),
+            "description": srv.get("description", ""),
+            "version": srv.get("version", ""),
+            "packages": [
+                {
+                    "registry_type": p.get("registryType", ""),
+                    "identifier": p.get("identifier", ""),
+                    "version": p.get("version", ""),
+                }
+                for p in pkgs
+            ],
+            "remotes": [
+                {"type": rm.get("type", ""), "url": rm.get("url", "")}
+                for rm in remotes
+            ],
+        })
+    return {"servers": results, "count": len(results)}
