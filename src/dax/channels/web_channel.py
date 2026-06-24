@@ -43,6 +43,7 @@ class WebChannel:
             return
 
         await ws_manager.broadcast({
+            "type": "message",
             "content": message.content,
             "role": message.role.value,
             "channel": message.channel.value,

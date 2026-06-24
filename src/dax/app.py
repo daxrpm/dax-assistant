@@ -195,6 +195,11 @@ class DaxApp:
         from dax.web.routes.chat import ws_manager
 
         self._approval.set_notifier(ws_manager.broadcast)
+        # Stream agent events (tool calls, thinking) to the web UI in real time.
+        async def _broadcast_event(event: dict) -> None:
+            await ws_manager.broadcast({"type": "agent_event", "event": event})
+
+        self._agent.set_event_broadcaster(_broadcast_event)  # type: ignore[union-attr]
         if hasattr(self._web_app, "state"):
             self._web_app.state.approval = self._approval  # type: ignore[union-attr]
         log.info("Agent ready")

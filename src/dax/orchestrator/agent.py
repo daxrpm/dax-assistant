@@ -9,7 +9,8 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import logging
-from typing import TYPE_CHECKING, Any
+import time
+from typing import TYPE_CHECKING, Any, Callable, Coroutine
 
 from dax.core.exceptions import LLMError, ToolError
 from dax.core.models import Message, MessageRole, ToolCall, ToolResult
@@ -90,6 +91,20 @@ class Agent:
         self._policy = policy
         self._approval = approval
         self._task: asyncio.Task[None] | None = None
+        self._event_broadcaster: Callable[[dict[str, Any]], Coroutine[Any, Any, None]] | None = None
+
+    def set_event_broadcaster(
+        self,
+        broadcaster: Callable[[dict[str, Any]], Coroutine[Any, Any, None]],
+    ) -> None:
+        """Wire a callback that receives real-time agent events (tool calls, etc.)."""
+        self._event_broadcaster = broadcaster
+
+    async def _emit(self, event: dict[str, Any]) -> None:
+        """Fire an agent event to the broadcaster, silently ignoring errors."""
+        if self._event_broadcaster is not None:
+            with contextlib.suppress(Exception):
+                await self._event_broadcaster(event)
 
     async def start(self) -> None:
         """Begin the agent processing loop."""
@@ -184,6 +199,9 @@ class Agent:
             [t["name"] for t in relevant[:15]],
         )
 
+        await self._emit({"type": "thinking"})
+        _start_ts = time.monotonic()
+
         # LLM call + tool execution loop
         for iteration in range(MAX_TOOL_ITERATIONS):
             try:
@@ -197,6 +215,8 @@ class Agent:
 
             # If no tool calls, we have our final answer
             if not response.tool_calls:
+                elapsed = round(time.monotonic() - _start_ts, 1)
+                await self._emit({"type": "done", "elapsed_s": elapsed})
                 return await self._finalize(
                     conversation,
                     Message(
@@ -217,9 +237,21 @@ class Agent:
             # Add assistant message with tool calls to context
             llm_messages.append(self._format_assistant_tool_calls(response))
 
-            # Execute each tool call and add results
+            # Execute each tool call, emitting events so the UI can show activity
             for tool_call in response.tool_calls:
+                await self._emit({
+                    "type": "tool_call",
+                    "tool": tool_call.tool_name,
+                    "server": tool_call.server_name or "",
+                    "args": dict(tool_call.arguments),
+                })
                 result = await self._execute_tool_safe(tool_call, registry)
+                await self._emit({
+                    "type": "tool_result",
+                    "tool": tool_call.tool_name,
+                    "preview": result.content[:300] if result.content else "",
+                    "error": result.is_error,
+                })
                 llm_messages.append({
                     "role": "tool",
                     "tool_call_id": tool_call.id,
@@ -228,6 +260,8 @@ class Agent:
 
         # If we exhausted iterations, return whatever we have
         logger.warning("Max tool iterations (%d) reached", MAX_TOOL_ITERATIONS)
+        elapsed = round(time.monotonic() - _start_ts, 1)
+        await self._emit({"type": "done", "elapsed_s": elapsed})
         return await self._finalize(
             conversation,
             Message(
