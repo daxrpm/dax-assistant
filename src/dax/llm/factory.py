@@ -7,6 +7,8 @@ adapters, keeping the rest of the app decoupled from any specific SDK.
 from __future__ import annotations
 
 import logging
+import os
+import re
 from typing import TYPE_CHECKING
 
 from dax.llm.providers import AnthropicProvider, GeminiProvider, OpenAIProvider
@@ -17,6 +19,24 @@ if TYPE_CHECKING:
     from dax.core.ports import LLMProvider
 
 logger = logging.getLogger(__name__)
+
+_ENV_REF = re.compile(r"^\{env:([^}]+)\}$")
+
+
+def _resolve_env(value: str) -> str:
+    """Resolve a ``{env:VAR}`` reference to its environment value.
+
+    API keys are stored in TOML as ``{env:OPENAI_API_KEY}`` (the secret itself
+    lives in .env). Provider SDKs need the real value, so resolve it here. A
+    plain value is returned unchanged; an unset env var resolves to "" so the
+    SDK can fall back to its own env lookup.
+    """
+    if not value:
+        return value
+    match = _ENV_REF.match(value.strip())
+    if match:
+        return os.environ.get(match.group(1), "")
+    return value
 
 
 def _ollama_base_url(base_url: str) -> str:
@@ -39,22 +59,32 @@ def build_provider(name: str, config: LLMConfig) -> LLMProvider | None:
             return OpenAIProvider(
                 name="openai",
                 model=config.openai.model,
-                api_key=config.openai.api_key,
-                base_url=config.openai.base_url,
+                api_key=_resolve_env(config.openai.api_key),
+                base_url=_resolve_env(config.openai.base_url),
                 timeout=config.openai.timeout,
+                reasoning_effort=config.openai.reasoning_effort,
+            )
+        if name == "codex":
+            from dax.llm.providers.codex_provider import CodexProvider
+
+            return CodexProvider(
+                name="codex",
+                binary=config.codex.binary,
+                model=config.codex.model,
+                timeout=config.codex.timeout,
             )
         if name == "anthropic":
             return AnthropicProvider(
                 name="anthropic",
                 model=config.anthropic.model,
-                api_key=config.anthropic.api_key,
+                api_key=_resolve_env(config.anthropic.api_key),
                 timeout=config.anthropic.timeout,
             )
         if name == "gemini":
             return GeminiProvider(
                 name="gemini",
                 model=config.gemini.model,
-                api_key=config.gemini.api_key,
+                api_key=_resolve_env(config.gemini.api_key),
                 timeout=config.gemini.timeout,
             )
     except Exception as e:

@@ -30,9 +30,11 @@ class OpenAIProvider:
         api_key: str = "",
         base_url: str = "",
         timeout: int = 60,
+        reasoning_effort: str = "",
     ) -> None:
         self._name = name
         self._model = model
+        self._reasoning_effort = reasoning_effort
         # base_url set => an OpenAI-compatible endpoint (e.g. Ollama). When
         # talking to a local endpoint a key isn't needed, but the SDK requires
         # a non-empty value, so fall back to a placeholder.
@@ -67,8 +69,14 @@ class OpenAIProvider:
             kwargs["temperature"] = temperature
             if max_tokens is not None:
                 kwargs["max_tokens"] = max_tokens
-        elif max_tokens is not None:
-            kwargs["max_completion_tokens"] = max_tokens
+        else:
+            if max_tokens is not None:
+                kwargs["max_completion_tokens"] = max_tokens
+            # Lower reasoning effort = faster responses on gpt-5.x. BUT OpenAI
+            # rejects reasoning_effort alongside function tools on
+            # /v1/chat/completions, so only send it for tool-less turns.
+            if self._reasoning_effort and not tools:
+                kwargs["reasoning_effort"] = self._reasoning_effort
 
         try:
             response = await self._client.chat.completions.create(**kwargs)
