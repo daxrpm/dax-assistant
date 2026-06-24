@@ -7,6 +7,7 @@ import {
   ShieldCheck,
   Server,
   Globe,
+  Brain,
 } from "lucide-react";
 import { useConfig } from "../../hooks/useConfig";
 import { Tabs } from "../../components/ui";
@@ -17,6 +18,7 @@ import { WhatsAppTab } from "./WhatsAppTab";
 import { ToolsTab } from "./ToolsTab";
 import { McpTab } from "./McpTab";
 import { ServerTab } from "./ServerTab";
+import { MemoryTab } from "./MemoryTab";
 
 const TABS = [
   { id: "general", label: "General", icon: <SlidersHorizontal size={15} /> },
@@ -26,6 +28,7 @@ const TABS = [
   { id: "tools", label: "Security & Tools", icon: <ShieldCheck size={15} /> },
   { id: "mcp", label: "MCP Servers", icon: <Server size={15} /> },
   { id: "server", label: "Web Server", icon: <Globe size={15} /> },
+  { id: "memory", label: "Memory", icon: <Brain size={15} /> },
 ];
 
 export function SettingsPage() {
@@ -48,6 +51,7 @@ export function SettingsPage() {
             {active === "tools" && <ToolsTab config={config} onSaved={refresh} />}
             {active === "mcp" && <McpTab config={config} onSaved={refresh} />}
             {active === "server" && <ServerTab config={config} onSaved={refresh} />}
+            {active === "memory" && <MemoryTab config={config} onSaved={refresh} />}
           </>
         )}
       </div>
