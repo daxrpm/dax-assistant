@@ -17,6 +17,7 @@ class ChannelType(StrEnum):
 
     VOICE = "voice"
     WHATSAPP = "whatsapp"
+    TELEGRAM = "telegram"
     WEB = "web"
 
 
