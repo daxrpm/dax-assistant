@@ -225,6 +225,7 @@ class DaxConfig(BaseSettings):
     name: str = "Dax"
     language_default: str = "es"
     log_level: str = "INFO"
+    memory_path: str = ""  # path to the Claude Code memory directory; empty = disabled
 
     voice: VoiceConfig = Field(default_factory=VoiceConfig)
     llm: LLMConfig = Field(default_factory=LLMConfig)

@@ -39,6 +39,7 @@ class GeneralConfigUpdate(BaseModel):
     name: str | None = None
     language_default: str | None = None
     log_level: str | None = None
+    memory_path: str | None = None
 
 
 class LLMConfigUpdate(BaseModel):
@@ -246,6 +247,7 @@ async def get_config(request: Request) -> dict[str, Any]:
             "name": config.name,
             "language_default": config.language_default,
             "log_level": config.log_level,
+            "memory_path": getattr(config, "memory_path", ""),
         },
         "voice": {
             "enabled": config.voice.enabled,
@@ -775,6 +777,9 @@ def _save_config_to_toml(request: Request) -> None:
     lines.append(f'name = "{config.name}"')
     lines.append(f'language_default = "{config.language_default}"')
     lines.append(f'log_level = "{config.log_level}"')
+    memory_path = getattr(config, "memory_path", "")
+    if memory_path:
+        lines.append(f'memory_path = "{memory_path}"')
     lines.append("")
 
     # [voice]
@@ -976,3 +981,286 @@ async def delete_conversation(
     if repo is None:
         raise HTTPException(status_code=503, detail="Storage not available")
     await repo.delete_conversation(conversation_id)
+
+
+# ---------------------------------------------------------------------------
+# LLM Model Discovery
+# ---------------------------------------------------------------------------
+
+
+@router.get("/llm/models")
+async def list_llm_models(request: Request, provider: str = "") -> dict[str, list[str]]:
+    """Return available model IDs for each configured provider.
+
+    Query param ``provider`` limits the response to a single provider.
+    """
+    import aiohttp
+
+    config = request.app.state.config
+    results: dict[str, list[str]] = {}
+
+    async def _openai() -> list[str]:
+        key = config.llm.openai.api_key or ""
+        base = (config.llm.openai.base_url or "https://api.openai.com/v1").rstrip("/")
+        if not key:
+            return []
+        async with aiohttp.ClientSession() as session:
+            async with session.get(
+                f"{base}/models",
+                headers={"Authorization": f"Bearer {key}"},
+                timeout=aiohttp.ClientTimeout(total=10),
+            ) as r:
+                if r.status != 200:
+                    return []
+                data = await r.json()
+        return sorted(
+            {m["id"] for m in data.get("data", []) if "gpt" in m.get("id", "").lower()},
+        )
+
+    async def _anthropic() -> list[str]:
+        key = config.llm.anthropic.api_key or ""
+        if not key:
+            return []
+        async with aiohttp.ClientSession() as session:
+            async with session.get(
+                "https://api.anthropic.com/v1/models",
+                headers={"x-api-key": key, "anthropic-version": "2023-06-01"},
+                timeout=aiohttp.ClientTimeout(total=10),
+            ) as r:
+                if r.status != 200:
+                    return []
+                data = await r.json()
+        return sorted(m["id"] for m in data.get("data", []))
+
+    async def _gemini() -> list[str]:
+        key = config.llm.gemini.api_key or ""
+        if not key:
+            return []
+        async with aiohttp.ClientSession() as session:
+            async with session.get(
+                f"https://generativelanguage.googleapis.com/v1beta/models?key={key}&pageSize=1000",
+                timeout=aiohttp.ClientTimeout(total=10),
+            ) as r:
+                if r.status != 200:
+                    return []
+                data = await r.json()
+        return sorted(
+            m["name"].removeprefix("models/")
+            for m in data.get("models", [])
+            if "generateContent" in m.get("supportedGenerationMethods", [])
+        )
+
+    async def _ollama() -> list[str]:
+        base = (config.llm.ollama.base_url or "http://localhost:11434").rstrip("/")
+        try:
+            async with aiohttp.ClientSession() as session:
+                async with session.get(
+                    f"{base}/api/tags",
+                    timeout=aiohttp.ClientTimeout(total=5),
+                ) as r:
+                    if r.status != 200:
+                        return []
+                    data = await r.json()
+            return sorted(m["name"] for m in data.get("models", []))
+        except Exception:
+            return []
+
+    targets = {"openai": _openai, "anthropic": _anthropic, "gemini": _gemini, "ollama": _ollama}
+    chosen = {provider: targets[provider]} if provider in targets else targets
+
+    import asyncio as _asyncio
+    fetched = await _asyncio.gather(*[fn() for fn in chosen.values()], return_exceptions=True)
+    for prov, res in zip(chosen.keys(), fetched):
+        results[prov] = res if isinstance(res, list) else []
+
+    return results
+
+
+# ---------------------------------------------------------------------------
+# Memory management
+# ---------------------------------------------------------------------------
+
+
+def _memory_dir(request: Request) -> Path | None:
+    config = request.app.state.config
+    raw = getattr(config, "memory_path", "")
+    if not raw:
+        return None
+    p = Path(raw).expanduser()
+    return p if p.is_dir() else None
+
+
+def _parse_memory_file(path: Path) -> dict[str, Any]:
+    """Parse a memory .md file and return structured data."""
+    text = path.read_text(encoding="utf-8")
+    slug = path.stem
+    name = slug
+    description = ""
+    mem_type = "user"
+    body = text
+
+    if text.startswith("---"):
+        parts = text.split("---", 2)
+        if len(parts) >= 3:
+            fm_text = parts[1].strip()
+            body = parts[2].strip()
+            for line in fm_text.splitlines():
+                if line.startswith("name:"):
+                    name = line.split(":", 1)[1].strip()
+                elif line.startswith("description:"):
+                    description = line.split(":", 1)[1].strip()
+                elif "type:" in line:
+                    mem_type = line.split(":", 1)[1].strip()
+
+    return {
+        "slug": slug,
+        "name": name,
+        "description": description,
+        "type": mem_type,
+        "body": body,
+        "filename": path.name,
+    }
+
+
+@router.get("/memory")
+async def list_memory(request: Request) -> list[dict[str, Any]]:
+    """List all memory entries."""
+    mem_dir = _memory_dir(request)
+    if mem_dir is None:
+        return []
+    entries = []
+    for p in sorted(mem_dir.glob("*.md")):
+        if p.name == "MEMORY.md":
+            continue
+        try:
+            entries.append(_parse_memory_file(p))
+        except Exception:
+            pass
+    return entries
+
+
+@router.get("/memory/{slug}")
+async def get_memory(slug: str, request: Request) -> dict[str, Any]:
+    mem_dir = _memory_dir(request)
+    if mem_dir is None:
+        raise HTTPException(status_code=503, detail="memory_path not configured")
+    path = mem_dir / f"{slug}.md"
+    if not path.exists():
+        raise HTTPException(status_code=404, detail="Memory not found")
+    return _parse_memory_file(path)
+
+
+class MemoryUpdate(BaseModel):
+    body: str
+    description: str | None = None
+
+
+@router.patch("/memory/{slug}")
+async def update_memory(slug: str, request: Request, body: MemoryUpdate) -> dict[str, str]:
+    mem_dir = _memory_dir(request)
+    if mem_dir is None:
+        raise HTTPException(status_code=503, detail="memory_path not configured")
+    path = mem_dir / f"{slug}.md"
+    if not path.exists():
+        raise HTTPException(status_code=404, detail="Memory not found")
+
+    existing = _parse_memory_file(path)
+    desc = body.description if body.description is not None else existing["description"]
+
+    # Reconstruct file with updated body while preserving frontmatter structure
+    original = path.read_text(encoding="utf-8")
+    if original.startswith("---"):
+        parts = original.split("---", 2)
+        if len(parts) >= 3:
+            fm = parts[1]
+            if body.description is not None:
+                # Update description line in frontmatter
+                new_fm_lines = []
+                for line in fm.splitlines():
+                    if line.startswith("description:"):
+                        new_fm_lines.append(f"description: {desc}")
+                    else:
+                        new_fm_lines.append(line)
+                fm = "\n".join(new_fm_lines)
+            path.write_text(f"---{fm}---\n\n{body.body}\n", encoding="utf-8")
+            return {"status": "ok"}
+
+    path.write_text(body.body, encoding="utf-8")
+    return {"status": "ok"}
+
+
+@router.delete("/memory/{slug}", status_code=204)
+async def delete_memory(slug: str, request: Request) -> None:
+    mem_dir = _memory_dir(request)
+    if mem_dir is None:
+        raise HTTPException(status_code=503, detail="memory_path not configured")
+    path = mem_dir / f"{slug}.md"
+    if not path.exists():
+        raise HTTPException(status_code=404, detail="Memory not found")
+    path.unlink()
+    # Remove from MEMORY.md index
+    index_path = mem_dir / "MEMORY.md"
+    if index_path.exists():
+        lines = index_path.read_text(encoding="utf-8").splitlines()
+        new_lines = [ln for ln in lines if f"({path.name})" not in ln]
+        index_path.write_text("\n".join(new_lines) + "\n", encoding="utf-8")
+
+
+# ---------------------------------------------------------------------------
+# Codex CLI config generator
+# ---------------------------------------------------------------------------
+
+
+@router.get("/codex-config")
+async def get_codex_config(request: Request) -> dict[str, Any]:
+    """Generate a ~/.codex/config.toml snippet connecting to all enabled MCP servers."""
+    config = request.app.state.config
+    servers: dict[str, Any] = {}
+
+    for name, srv in config.mcp.servers.items():
+        if not srv.enabled:
+            continue
+        entry: dict[str, Any] = {}
+        if srv.transport == "http" and srv.url:
+            entry["url"] = srv.url
+            if srv.headers:
+                # Resolve {env:VAR} references to env var names for Codex
+                static = {}
+                env_hdrs = {}
+                for k, v in srv.headers.items():
+                    if v.startswith("{env:") and v.endswith("}"):
+                        var = v[5:-1]
+                        env_hdrs[k] = var
+                    else:
+                        static[k] = v
+                if env_hdrs:
+                    entry["env_http_headers"] = env_hdrs
+                if static:
+                    entry["http_headers"] = static
+        elif srv.command:
+            entry["command"] = srv.command
+            if srv.args:
+                entry["args"] = srv.args
+            if srv.env:
+                entry["env_vars"] = list(srv.env.keys())
+        servers[name] = entry
+
+    toml_lines = ["# Generated by Dax — paste into ~/.codex/config.toml", ""]
+    for sname, scfg in servers.items():
+        toml_lines.append(f"[mcp_servers.{sname}]")
+        for k, v in scfg.items():
+            if isinstance(v, str):
+                toml_lines.append(f'{k} = "{v}"')
+            elif isinstance(v, list):
+                items = ", ".join(f'"{i}"' for i in v)
+                toml_lines.append(f"{k} = [{items}]")
+            elif isinstance(v, dict):
+                inner = ", ".join(f'"{kk}" = "{vv}"' for kk, vv in v.items())
+                toml_lines.append(f"{k} = {{ {inner} }}")
+        toml_lines.append("")
+
+    return {
+        "toml": "\n".join(toml_lines),
+        "server_count": len(servers),
+        "note": "Requires Codex CLI (github.com/openai/codex). Works with ChatGPT Pro account or OpenAI API key.",
+    }
