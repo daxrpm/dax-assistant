@@ -5,6 +5,18 @@ export interface ChatMessage {
   role: "user" | "assistant";
   content: string;
   timestamp: string;
+  agentEvents?: AgentEvent[];
+  thinkingElapsed?: number;
+}
+
+export interface AgentEvent {
+  type: "thinking" | "tool_call" | "tool_result" | "done";
+  tool?: string;
+  server?: string;
+  args?: Record<string, unknown>;
+  preview?: string;
+  error?: boolean;
+  elapsed_s?: number;
 }
 
 export interface ConfirmationRequest {
@@ -30,16 +42,18 @@ export function useChatSocket(sessionId: string, initialMessages: ChatMessage[] 
   const [status, setStatus] = useState<Status>("connecting");
   const [thinking, setThinking] = useState(false);
   const [confirmation, setConfirmation] = useState<ConfirmationRequest | null>(null);
+  // Accumulate agent events for the in-flight response
+  const pendingEvents = useRef<AgentEvent[]>([]);
+  const thinkingElapsed = useRef<number | undefined>(undefined);
   const socketRef = useRef<WebSocket | null>(null);
   const retryRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  // Track sessionId in a ref so the WS callbacks always see the latest value.
   const sessionIdRef = useRef(sessionId);
 
-  // When the session switches, load the new history and reset thinking state.
   useEffect(() => {
     sessionIdRef.current = sessionId;
     setMessages(initialMessages);
     setThinking(false);
+    pendingEvents.current = [];
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [sessionId]);
 
@@ -54,6 +68,7 @@ export function useChatSocket(sessionId: string, initialMessages: ChatMessage[] 
       retryRef.current = setTimeout(connect, 2000);
     };
     ws.onerror = () => ws.close();
+
     ws.onmessage = (event) => {
       let data: Record<string, unknown>;
       try {
@@ -61,11 +76,49 @@ export function useChatSocket(sessionId: string, initialMessages: ChatMessage[] 
       } catch {
         return;
       }
+
+      // Tool confirmation modal
       if (data.type === "tool_confirmation_request") {
         setConfirmation(data as unknown as ConfirmationRequest);
         return;
       }
-      if (data.role === "assistant" && typeof data.content === "string") {
+
+      // Agent streaming events
+      if (data.type === "agent_event") {
+        const ev = data.event as AgentEvent;
+        if (ev.type === "thinking") {
+          setThinking(true);
+        } else if (ev.type === "done") {
+          thinkingElapsed.current = ev.elapsed_s;
+        } else {
+          pendingEvents.current = [...pendingEvents.current, ev];
+        }
+        return;
+      }
+
+      // Final assistant message
+      if (data.type === "message" && data.role === "assistant" && typeof data.content === "string") {
+        const events = [...pendingEvents.current];
+        const elapsed = thinkingElapsed.current;
+        pendingEvents.current = [];
+        thinkingElapsed.current = undefined;
+        setThinking(false);
+        setMessages((prev) => [
+          ...prev,
+          {
+            id: nextId(),
+            role: "assistant",
+            content: data.content as string,
+            timestamp: (data.timestamp as string) ?? new Date().toISOString(),
+            agentEvents: events.length > 0 ? events : undefined,
+            thinkingElapsed: elapsed,
+          },
+        ]);
+        return;
+      }
+
+      // Legacy format (no type field) — backward compat
+      if (!data.type && data.role === "assistant" && typeof data.content === "string") {
         setThinking(false);
         setMessages((prev) => [
           ...prev,
@@ -91,6 +144,8 @@ export function useChatSocket(sessionId: string, initialMessages: ChatMessage[] 
   const send = useCallback((content: string) => {
     const ws = socketRef.current;
     if (!ws || ws.readyState !== WebSocket.OPEN) return;
+    pendingEvents.current = [];
+    thinkingElapsed.current = undefined;
     setMessages((prev) => [
       ...prev,
       { id: nextId(), role: "user", content, timestamp: new Date().toISOString() },

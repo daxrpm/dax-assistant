@@ -12,6 +12,7 @@ export interface GeneralConfig {
   name: string;
   language_default: string;
   log_level: string;
+  memory_path: string;
 }
 
 export interface VoiceConfig {

@@ -66,6 +66,15 @@ export interface ConversationDetail {
   messages: ConversationMessage[];
 }
 
+export interface MemoryEntry {
+  slug: string;
+  name: string;
+  description: string;
+  type: "user" | "feedback" | "project" | "reference";
+  body: string;
+  filename: string;
+}
+
 export interface MCPServerStatus {
   name: string;
   connected: boolean;
@@ -202,6 +211,24 @@ export const api = {
 
   logoutMCP: (name: string) =>
     request(`/mcp/${name}/auth/logout`, { method: "POST" }),
+
+  // LLM model discovery
+  listLLMModels: (provider?: string) =>
+    request<Record<string, string[]>>(`/llm/models${provider ? `?provider=${provider}` : ""}`),
+
+  // Memory management
+  listMemory: () => request<MemoryEntry[]>("/memory"),
+  getMemory: (slug: string) => request<MemoryEntry>(`/memory/${slug}`),
+  updateMemory: (slug: string, data: { body: string; description?: string }) =>
+    request<{ status: string }>(`/memory/${slug}`, {
+      method: "PATCH",
+      body: JSON.stringify(data),
+    }),
+  deleteMemory: (slug: string) =>
+    fetch(`${BASE}/memory/${slug}`, { method: "DELETE", credentials: "same-origin" }),
+
+  // Codex config generator
+  getCodexConfig: () => request<{ toml: string; server_count: number; note: string }>("/codex-config"),
 
   updateWeb: (data: Record<string, unknown>) =>
     request("/config/web", {
