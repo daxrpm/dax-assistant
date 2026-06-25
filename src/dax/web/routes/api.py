@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import os
 import re
 from pathlib import Path
 from typing import Any
@@ -11,7 +10,24 @@ import httpx
 from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel, Field
 
+from dax.storage.secrets import SecretStore
+
 router = APIRouter(tags=["api"])
+
+
+def _secret_store(request: Request) -> SecretStore:
+    """Return the live encrypted secret store (or build one from config).
+
+    Secrets (API keys, tokens, password hash) are persisted encrypted in
+    SQLite — never in TOML and no longer in .env. The store also exports each
+    value to ``os.environ`` so ``{env:VAR}`` references and provider SDKs keep
+    resolving them transparently.
+    """
+    store = getattr(request.app.state, "secret_store", None)
+    if store is not None:
+        return store
+    config = request.app.state.config
+    return SecretStore(config.storage.database_path)
 
 
 # --- Response / Request Models ---
@@ -441,10 +457,7 @@ async def update_whatsapp(
     config = request.app.state.config
     updates = body.model_dump(exclude_none=True)
 
-    config_path = getattr(
-        request.app.state, "config_path", Path("config/dax.toml"),
-    )
-    env_path = config_path.parent.parent / ".env"
+    store = _secret_store(request)
     _WHATSAPP_SECRETS = {
         "evolution_api_key": "DAX_WHATSAPP__EVOLUTION_API_KEY",
         "webhook_secret": "DAX_WHATSAPP__WEBHOOK_SECRET",
@@ -452,7 +465,7 @@ async def update_whatsapp(
 
     for key, value in updates.items():
         if key in _WHATSAPP_SECRETS and isinstance(value, str) and value:
-            _upsert_env_var(env_path, _WHATSAPP_SECRETS[key], value)
+            store.set(_WHATSAPP_SECRETS[key], value)
         if hasattr(config.whatsapp, key):
             object.__setattr__(config.whatsapp, key, value)
 
@@ -480,21 +493,31 @@ async def update_web(
 async def update_telegram(
     request: Request, body: TelegramConfigUpdate,
 ) -> dict[str, str]:
-    """Update Telegram bot settings. Token is stored in .env; restart to apply."""
+    """Update Telegram bot settings. Token is stored encrypted in SQLite and
+    the channel is reloaded live — no restart needed."""
     config = request.app.state.config
     updates = body.model_dump(exclude_none=True)
 
-    config_path = getattr(request.app.state, "config_path", Path("config/dax.toml"))
-    env_path = config_path.parent.parent / ".env"
+    store = _secret_store(request)
 
     for key, value in updates.items():
         if key == "bot_token" and isinstance(value, str) and value:
-            _upsert_env_var(env_path, "DAX_TELEGRAM__BOT_TOKEN", value)
-        if hasattr(config.telegram, key):
+            store.set("DAX_TELEGRAM__BOT_TOKEN", value)
+            object.__setattr__(config.telegram, "bot_token", value)
+        elif hasattr(config.telegram, key):
             object.__setattr__(config.telegram, key, value)
 
     _save_config_to_toml(request)
-    return {"status": "ok", "note": "Restart required for Telegram changes to take effect"}
+
+    # Apply live: restart the Telegram channel with the new settings.
+    dax_app = getattr(request.app.state, "dax_app", None)
+    if dax_app is not None:
+        try:
+            await dax_app.reload_telegram()
+        except Exception as e:
+            return {"status": "saved", "note": f"Saved, but reload failed: {e}"}
+
+    return {"status": "ok"}
 
 
 @router.patch("/config/tools")
@@ -565,11 +588,7 @@ async def change_password(
 
     new_hash = hash_password(body.new_password)
 
-    config_path = getattr(
-        request.app.state, "config_path", Path("config/dax.toml"),
-    )
-    env_path = config_path.parent.parent / ".env"
-    _upsert_env_var(env_path, "DAX_SECURITY__PASSWORD_HASH", new_hash)
+    _secret_store(request).set("DAX_SECURITY__PASSWORD_HASH", new_hash)
 
     # Update live config + auth manager so the new password takes effect immediately.
     object.__setattr__(config.security, "password_hash", new_hash)
@@ -772,42 +791,28 @@ def _env_var_for_header(server_name: str, header_name: str) -> str:
     return f"DAX_MCP_{s.upper()}_HDR_{h.upper()}"
 
 
-def _env_ref_for_secret(env_path: Path, var_name: str, value: str) -> str:
-    """Write *value* to .env as *var_name* if it is not already a {env:…} reference.
-
-    Returns the {env:VAR} placeholder string to embed in TOML so secrets are
-    never stored in the config file.
+def _env_ref_for_secret(store: SecretStore, var_name: str, value: str) -> str:
+    """Persist *value* to the encrypted store as *var_name* unless it is already
+    an ``{env:…}`` reference. Returns the ``{env:VAR}`` placeholder to embed in
+    TOML so secrets never land in the config file.
     """
     if value.startswith("{env:"):
         return value  # already a reference — keep as-is
-    _upsert_env_var(env_path, var_name, value)
+    store.set(var_name, value)
     return f"{{env:{var_name}}}"
-
-
-def _upsert_env_var(env_path: Path, var_name: str, value: str) -> None:
-    """Add or update a variable in the .env file and the live process env."""
-    content = env_path.read_text(encoding="utf-8") if env_path.exists() else ""
-    new_line = f"{var_name}={value}"
-    pattern = re.compile(rf"^{re.escape(var_name)}\s*=.*$", re.MULTILINE)
-    if pattern.search(content):
-        content = pattern.sub(new_line, content)
-    else:
-        content = content.rstrip("\n") + ("\n" if content else "") + new_line + "\n"
-    env_path.write_text(content, encoding="utf-8")
-    os.environ[var_name] = value  # take effect immediately without restart
 
 
 def _secure_headers_for_toml(
     server_name: str,
     headers: dict[str, str],
-    env_path: Path,
+    store: SecretStore,
 ) -> dict[str, str]:
     """Return a headers dict safe to write to TOML.
 
-    Sensitive values that are NOT already {env:…} references are extracted
-    to the .env file and replaced with a {env:…} reference in the returned
-    dict. The live process environment is updated so the server can connect
-    immediately without a restart.
+    Sensitive values that are NOT already {env:…} references are extracted to
+    the encrypted secret store and replaced with a {env:…} reference in the
+    returned dict. The value is also exported to the process env so the server
+    can connect immediately without a restart.
     """
     safe: dict[str, str] = {}
     for name, value in headers.items():
@@ -815,7 +820,7 @@ def _secure_headers_for_toml(
             safe[name] = value
         else:
             var = _env_var_for_header(server_name, name)
-            _upsert_env_var(env_path, var, value)
+            store.set(var, value)
             safe[name] = f"{{env:{var}}}"
     return safe
 
@@ -831,7 +836,7 @@ def _save_config_to_toml(request: Request) -> None:
     config_path = getattr(
         request.app.state, "config_path", Path("config/dax.toml"),
     )
-    env_path = config_path.parent.parent / ".env"
+    store = _secret_store(request)
 
     lines: list[str] = []
 
@@ -877,7 +882,7 @@ def _save_config_to_toml(request: Request) -> None:
     lines.append("[llm.anthropic]")
     lines.append(f'model = "{config.llm.anthropic.model}"')
     if config.llm.anthropic.api_key:
-        ref = _env_ref_for_secret(env_path, "ANTHROPIC_API_KEY", config.llm.anthropic.api_key)
+        ref = _env_ref_for_secret(store, "ANTHROPIC_API_KEY", config.llm.anthropic.api_key)
         lines.append(f'api_key = "{ref}"')
     lines.append("")
     lines.append("[llm.openai]")
@@ -888,13 +893,13 @@ def _save_config_to_toml(request: Request) -> None:
     if reasoning:
         lines.append(f'reasoning_effort = "{reasoning}"')
     if config.llm.openai.api_key:
-        ref = _env_ref_for_secret(env_path, "OPENAI_API_KEY", config.llm.openai.api_key)
+        ref = _env_ref_for_secret(store, "OPENAI_API_KEY", config.llm.openai.api_key)
         lines.append(f'api_key = "{ref}"')
     lines.append("")
     lines.append("[llm.gemini]")
     lines.append(f'model = "{config.llm.gemini.model}"')
     if config.llm.gemini.api_key:
-        ref = _env_ref_for_secret(env_path, "GEMINI_API_KEY", config.llm.gemini.api_key)
+        ref = _env_ref_for_secret(store, "GEMINI_API_KEY", config.llm.gemini.api_key)
         lines.append(f'api_key = "{ref}"')
     lines.append("")
     codex = getattr(config.llm, "codex", None)
@@ -943,7 +948,7 @@ def _save_config_to_toml(request: Request) -> None:
         lines.append(f"allowed_user_ids = [{ids}]")
         lines.append(f"respond_with_audio = {_toml_bool(tg.respond_with_audio)}")
         if tg.bot_token and not tg.bot_token.startswith("{env:"):
-            _upsert_env_var(env_path, "DAX_TELEGRAM__BOT_TOKEN", tg.bot_token)
+            store.set("DAX_TELEGRAM__BOT_TOKEN", tg.bot_token)
         lines.append("")
 
     # [security] — secrets (password_hash, session_secret) stay in env only.
@@ -993,7 +998,7 @@ def _save_config_to_toml(request: Request) -> None:
         # extracted to .env and replaced with {env:…} references in TOML.
         # We also patch srv.headers in-place so the in-memory config stays
         # consistent (raw values → {env:…} references).
-        safe_hdrs = _secure_headers_for_toml(name, srv.headers, env_path)
+        safe_hdrs = _secure_headers_for_toml(name, srv.headers, store)
         srv.headers.update(safe_hdrs)
         if safe_hdrs:
             h_pairs = ", ".join(

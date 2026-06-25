@@ -29,6 +29,7 @@ from dax.orchestrator.bus import MessageBus
 from dax.orchestrator.dispatcher import Dispatcher
 from dax.storage.database import Database
 from dax.storage.repository import ConversationRepository
+from dax.storage.secrets import SecretStore
 from dax.web.server import create_app
 
 if TYPE_CHECKING:
@@ -77,6 +78,9 @@ class DaxApp:
         self._bus = MessageBus()
         self._database = Database(config.storage.database_path)
         self._repository = ConversationRepository(self._database)
+
+        # Encrypted secret store (replaces .env as the source of truth).
+        self._secrets = SecretStore(config.storage.database_path)
 
         # LLM router — decoupled, multi-provider (official SDKs). The default
         # provider plus the configured fallback chain, all behind the
@@ -137,6 +141,10 @@ class DaxApp:
         if hasattr(self._web_app, "state"):
             self._web_app.state.log_buffer = self._log_buffer  # type: ignore[union-attr]
             self._web_app.state.tool_policy = self._policy  # type: ignore[union-attr]
+            # Expose the secret store + the app itself so settings endpoints can
+            # persist secrets to SQLite and reload live channels (Telegram).
+            self._web_app.state.secret_store = self._secrets  # type: ignore[union-attr]
+            self._web_app.state.dax_app = self  # type: ignore[union-attr]
 
         # 2. Message bus
         self._bus.start()
@@ -245,6 +253,22 @@ class DaxApp:
                 self._voice_pipeline = None
 
         log.info("Dax Assistant is ready")
+
+    async def reload_telegram(self) -> None:
+        """Restart the Telegram channel to apply config changes without a full
+        app restart. Stops any running channel, then starts a fresh one when
+        enabled. Safe to call when Telegram is disabled (just tears down)."""
+        # The dispatcher shares this exact dict reference, so mutating it in
+        # place is enough — routing picks up the change immediately.
+        existing = self._channels.pop("telegram", None)
+        if existing is not None:
+            await existing.stop()
+
+        if self._config.telegram.enabled and self._config.telegram.bot_token:
+            tg_channel = TelegramChannel(self._config.telegram, self._bus)
+            await tg_channel.start()
+            self._channels["telegram"] = tg_channel
+            logger.info("Telegram channel reloaded")
 
     async def stop(self) -> None:
         """Shut down all components in reverse order."""
