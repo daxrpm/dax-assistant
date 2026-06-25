@@ -42,7 +42,9 @@ export function useChatSocket(sessionId: string, initialMessages: ChatMessage[] 
   const [status, setStatus] = useState<Status>("connecting");
   const [thinking, setThinking] = useState(false);
   const [confirmation, setConfirmation] = useState<ConfirmationRequest | null>(null);
-  // Accumulate agent events for the in-flight response
+  // Live events for the in-flight response — exposed as STATE so the UI shows
+  // tool calls happening in real time (not just after the answer arrives).
+  const [liveEvents, setLiveEvents] = useState<AgentEvent[]>([]);
   const pendingEvents = useRef<AgentEvent[]>([]);
   const thinkingElapsed = useRef<number | undefined>(undefined);
   const socketRef = useRef<WebSocket | null>(null);
@@ -54,6 +56,7 @@ export function useChatSocket(sessionId: string, initialMessages: ChatMessage[] 
     setMessages(initialMessages);
     setThinking(false);
     pendingEvents.current = [];
+    setLiveEvents([]);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [sessionId]);
 
@@ -92,6 +95,7 @@ export function useChatSocket(sessionId: string, initialMessages: ChatMessage[] 
           thinkingElapsed.current = ev.elapsed_s;
         } else {
           pendingEvents.current = [...pendingEvents.current, ev];
+          setLiveEvents(pendingEvents.current); // live update for the UI
         }
         return;
       }
@@ -103,6 +107,7 @@ export function useChatSocket(sessionId: string, initialMessages: ChatMessage[] 
         pendingEvents.current = [];
         thinkingElapsed.current = undefined;
         setThinking(false);
+        setLiveEvents([]);
         setMessages((prev) => [
           ...prev,
           {
@@ -146,6 +151,7 @@ export function useChatSocket(sessionId: string, initialMessages: ChatMessage[] 
     if (!ws || ws.readyState !== WebSocket.OPEN) return;
     pendingEvents.current = [];
     thinkingElapsed.current = undefined;
+    setLiveEvents([]);
     setMessages((prev) => [
       ...prev,
       { id: nextId(), role: "user", content, timestamp: new Date().toISOString() },
@@ -164,5 +170,13 @@ export function useChatSocket(sessionId: string, initialMessages: ChatMessage[] 
     setConfirmation(null);
   }, []);
 
-  return { messages, status, thinking, confirmation, send, respondConfirmation };
+  return {
+    messages,
+    status,
+    thinking,
+    liveEvents,
+    confirmation,
+    send,
+    respondConfirmation,
+  };
 }

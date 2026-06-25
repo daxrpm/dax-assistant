@@ -128,3 +128,9 @@ body {
   background: color-mix(in oklab, currentColor 22%, transparent);
   border-radius: 999px;
 }
+
+/* Shimmer animation for the live "thinking" headline (Perplexity-style). */
+@keyframes shimmer {
+  0% { background-position: 200% 0; }
+  100% { background-position: -200% 0; }
+}

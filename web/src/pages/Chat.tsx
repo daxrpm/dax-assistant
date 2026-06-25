@@ -123,6 +123,41 @@ function ThoughtSummary({
   );
 }
 
+/* ── Live thinking (in-flight) ────────────────────────────────────────────── */
+
+function LiveThinking({ events }: { events: AgentEvent[] }) {
+  // Most recent activity drives the headline label.
+  const lastCall = [...events].reverse().find((e) => e.type === "tool_call");
+  const headline = lastCall
+    ? `Using ${lastCall.server ? `${lastCall.server} · ` : ""}${lastCall.tool}`
+    : "Thinking";
+
+  return (
+    <div className="flex gap-3">
+      <div className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-accent text-accent-foreground">
+        <Sparkles size={13} />
+      </div>
+      <div className="min-w-0 flex-1 pt-0.5">
+        <div className="flex items-center gap-2 text-sm text-muted">
+          <span className="bg-gradient-to-r from-muted via-foreground to-muted bg-[length:200%_100%] bg-clip-text text-transparent animate-[shimmer_2s_linear_infinite]">
+            {headline}
+          </span>
+          <span className="flex items-center gap-0.5">
+            <Dot /> <Dot delay="150ms" /> <Dot delay="300ms" />
+          </span>
+        </div>
+        {events.length > 0 && (
+          <div className="mt-2 flex flex-col gap-1 rounded-xl border border-separator bg-surface-secondary px-3 py-2">
+            {events.map((ev, i) => (
+              <ToolEventLine key={i} ev={ev} />
+            ))}
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
 /* ── Message bubble ───────────────────────────────────────────────────────── */
 
 function MessageBubble({ message }: { message: ChatMessage }) {
@@ -158,10 +193,12 @@ function MessageBubble({ message }: { message: ChatMessage }) {
 function ActivityPanel({
   events,
   elapsed,
+  live = false,
   onClose,
 }: {
   events: AgentEvent[];
   elapsed?: number;
+  live?: boolean;
   onClose: () => void;
 }) {
   const toolCalls = events.filter((e) => e.type === "tool_call" || e.type === "tool_result");
@@ -172,6 +209,7 @@ function ActivityPanel({
         <div className="flex items-center gap-2 text-sm font-semibold">
           <Activity size={15} />
           Activity
+          {live && <Loader2 size={12} className="animate-spin text-accent" />}
           {elapsed != null && (
             <span className="text-xs font-normal text-muted">· {elapsed}s</span>
           )}
@@ -238,7 +276,7 @@ function ActivityPanel({
 
 /* ── Model selector ───────────────────────────────────────────────────────── */
 
-const PROVIDERS = ["openai", "anthropic", "gemini", "ollama"] as const;
+const PROVIDERS = ["openai", "anthropic", "gemini", "ollama", "codex"] as const;
 
 function ModelSelector({
   provider,
@@ -345,7 +383,7 @@ export function ChatPage() {
   const [provider, setProvider] = useState("openai");
   const [model, setModel] = useState("gpt-4o");
 
-  const { messages, status, thinking, confirmation, send, respondConfirmation } =
+  const { messages, status, thinking, liveEvents, confirmation, send, respondConfirmation } =
     useChatSocket(sessionId, initialMessages);
 
   const [input, setInput] = useState("");
@@ -354,6 +392,13 @@ export function ChatPage() {
 
   // Last message for activity panel
   const lastAssistant = [...messages].reverse().find((m) => m.role === "assistant");
+  // Events shown in the activity panel: live ones while thinking, otherwise the
+  // last completed assistant turn's recorded events.
+  const panelEvents: AgentEvent[] =
+    thinking && liveEvents.length > 0
+      ? liveEvents
+      : lastAssistant?.agentEvents ?? [];
+  const panelElapsed = thinking ? undefined : lastAssistant?.thinkingElapsed;
 
   // Load current provider/model from config
   useEffect(() => {
@@ -527,7 +572,7 @@ export function ChatPage() {
           {/* Header */}
           <div className="flex h-12 shrink-0 items-center justify-between border-b border-separator px-5">
             <h2 className="truncate text-sm font-semibold">{currentTitle}</h2>
-            {lastAssistant?.agentEvents && lastAssistant.agentEvents.length > 0 && (
+            {panelEvents.length > 0 && (
               <button
                 type="button"
                 onClick={() => setActivityOpen((v) => !v)}
@@ -540,8 +585,9 @@ export function ChatPage() {
               >
                 <Activity size={13} />
                 Activity
-                {lastAssistant.thinkingElapsed != null && (
-                  <span className="text-muted">· {lastAssistant.thinkingElapsed}s</span>
+                {thinking && <Loader2 size={11} className="animate-spin" />}
+                {panelElapsed != null && (
+                  <span className="text-muted">· {panelElapsed}s</span>
                 )}
               </button>
             )}
@@ -564,19 +610,8 @@ export function ChatPage() {
 
               {messages.map((m) => <MessageBubble key={m.id} message={m} />)}
 
-              {/* Inline thinking state */}
-              {thinking && (
-                <div className="flex gap-3">
-                  <div className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-accent text-accent-foreground">
-                    <Sparkles size={13} />
-                  </div>
-                  <div className="pt-1.5 text-sm text-muted">
-                    <div className="flex items-center gap-1">
-                      <Dot /> <Dot delay="150ms" /> <Dot delay="300ms" />
-                    </div>
-                  </div>
-                </div>
-              )}
+              {/* Live thinking — shows tools executing in real time */}
+              {thinking && <LiveThinking events={liveEvents} />}
             </div>
           </div>
 
@@ -628,11 +663,12 @@ export function ChatPage() {
           </div>
         </div>
 
-        {/* Activity panel */}
-        {activityOpen && lastAssistant?.agentEvents && (
+        {/* Activity panel — live while thinking, recorded otherwise */}
+        {activityOpen && panelEvents.length > 0 && (
           <ActivityPanel
-            events={lastAssistant.agentEvents}
-            elapsed={lastAssistant.thinkingElapsed}
+            events={panelEvents}
+            elapsed={panelElapsed}
+            live={thinking}
             onClose={() => setActivityOpen(false)}
           />
         )}
