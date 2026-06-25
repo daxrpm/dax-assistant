@@ -6,7 +6,6 @@ import {
   MessageCircle,
   Send,
   ShieldCheck,
-  Server,
   Globe,
   Brain,
 } from "lucide-react";
@@ -18,7 +17,6 @@ import { VoiceTab } from "./VoiceTab";
 import { WhatsAppTab } from "./WhatsAppTab";
 import { TelegramTab } from "./TelegramTab";
 import { ToolsTab } from "./ToolsTab";
-import { McpTab } from "./McpTab";
 import { ServerTab } from "./ServerTab";
 import { MemoryTab } from "./MemoryTab";
 
@@ -29,7 +27,6 @@ const TABS = [
   { id: "whatsapp", label: "WhatsApp", icon: <MessageCircle size={15} /> },
   { id: "telegram", label: "Telegram", icon: <Send size={15} /> },
   { id: "tools", label: "Security & Tools", icon: <ShieldCheck size={15} /> },
-  { id: "mcp", label: "MCP Servers", icon: <Server size={15} /> },
   { id: "server", label: "Web Server", icon: <Globe size={15} /> },
   { id: "memory", label: "Memory", icon: <Brain size={15} /> },
 ];
@@ -53,7 +50,6 @@ export function SettingsPage({ initialTab = "general" }: { initialTab?: string }
             {active === "whatsapp" && <WhatsAppTab config={config} onSaved={refresh} />}
             {active === "telegram" && <TelegramTab config={config} onSaved={refresh} />}
             {active === "tools" && <ToolsTab config={config} onSaved={refresh} />}
-            {active === "mcp" && <McpTab config={config} onSaved={refresh} />}
             {active === "server" && <ServerTab config={config} onSaved={refresh} />}
             {active === "memory" && <MemoryTab config={config} onSaved={refresh} />}
           </>
