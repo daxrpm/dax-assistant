@@ -7,6 +7,7 @@ is handled by the Dispatcher → WebChannel → WebSocketManager path.
 from __future__ import annotations
 
 import logging
+import asyncio
 from typing import Any
 
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect
@@ -125,7 +126,7 @@ async def websocket_chat(websocket: WebSocket) -> None:
             await bus.publish_inbound(message)
             logger.debug("WebSocket message published to bus: %.50s", content)
 
-    except WebSocketDisconnect:
+    except (WebSocketDisconnect, asyncio.CancelledError):
         pass
     finally:
         ws_manager.disconnect(websocket)

@@ -5,6 +5,7 @@
 name = "Dax"
 language_default = "es"
 log_level = "INFO"
+memory_path = "~/.dax/memory"
 
 [voice]
 enabled = true

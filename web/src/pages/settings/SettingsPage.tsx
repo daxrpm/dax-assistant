@@ -34,13 +34,13 @@ const TABS = [
   { id: "memory", label: "Memory", icon: <Brain size={15} /> },
 ];
 
-export function SettingsPage() {
+export function SettingsPage({ initialTab = "general" }: { initialTab?: string }) {
   const { config, loading, refresh } = useConfig();
-  const [active, setActive] = useState("general");
+  const [active, setActive] = useState(initialTab);
 
   return (
     <div className="h-full overflow-y-auto scroll-slim p-6">
-      <div className="mx-auto flex max-w-3xl flex-col gap-5">
+      <div className="mx-auto flex max-w-5xl flex-col gap-5">
         <Tabs tabs={TABS} active={active} onChange={setActive} />
 
         {loading || !config ? (

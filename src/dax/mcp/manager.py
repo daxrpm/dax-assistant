@@ -12,6 +12,7 @@ from __future__ import annotations
 import logging
 import os
 import re
+import asyncio
 from typing import TYPE_CHECKING, Any
 
 from dax.core.exceptions import ToolNotFoundError
@@ -68,6 +69,12 @@ class MCPManager:
         self._config = config
         self._clients: dict[str, MCPClient] = {}
         self._registry = ToolRegistry()
+        self._lock = asyncio.Lock()
+        self._stopping = False
+        self._ops: asyncio.Queue[
+            tuple[str, str | None, Any, asyncio.Future[Any]]
+        ] | None = None
+        self._worker: asyncio.Task[None] | None = None
 
     @property
     def registry(self) -> ToolRegistry:
@@ -112,6 +119,8 @@ class MCPManager:
 
     async def start(self) -> None:
         """Launch and connect to all enabled MCP servers."""
+        self._stopping = False
+        self._ensure_worker()
         for name, server_config in self._config.servers.items():
             if not server_config.enabled:
                 logger.info("MCP server '%s' is disabled, skipping", name)
@@ -138,7 +147,13 @@ class MCPManager:
         Reconnects cleanly if the server was already connected. Raises on
         connection failure so callers can surface the error.
         """
-        await self.remove_server(name)
+        return await self._submit("add", name, server_config)
+
+    async def _add_server_now(self, name: str, server_config: Any) -> int:
+        if self._stopping:
+            raise RuntimeError("MCP manager is stopping")
+
+        await self._remove_server_now(name)
 
         # Best-effort: refresh an expired OAuth token before (re)connecting an
         # HTTP server so the new Bearer header carries a valid token.
@@ -156,9 +171,14 @@ class MCPManager:
         if client is None:
             raise ValueError(f"MCP server '{name}' has an invalid configuration")
 
-        await client.connect()
+        try:
+            await client.connect()
+            tools = await client.list_tools()
+        except BaseException:
+            await client.disconnect()
+            raise
+
         self._clients[name] = client
-        tools = await client.list_tools()
         self._registry.register(tools)
         logger.info(
             "MCP server '%s' (%s) ready with %d tools",
@@ -168,6 +188,10 @@ class MCPManager:
 
     async def remove_server(self, name: str) -> None:
         """Disconnect a server (if connected) and drop its tools."""
+        await self._submit("remove", name, None)
+
+    async def _remove_server_now(self, name: str) -> None:
+        """Disconnect a server from the MCP lifecycle worker task."""
         client = self._clients.pop(name, None)
         if client is not None:
             try:
@@ -178,15 +202,69 @@ class MCPManager:
 
     async def stop(self) -> None:
         """Disconnect from all MCP servers."""
-        for name, client in self._clients.items():
+        self._stopping = True
+        if self._worker is not None and not self._worker.done():
+            await self._submit("stop", None, None)
+            await self._worker
+            self._worker = None
+            self._ops = None
+            return
+
+        await self._stop_now()
+
+    async def _stop_now(self) -> None:
+        clients = list(self._clients.items())
+        self._clients.clear()
+        self._registry.clear()
+
+        for name, client in clients:
             try:
                 await client.disconnect()
             except Exception:
                 logger.exception("Error disconnecting MCP server '%s'", name)
 
-        self._clients.clear()
-        self._registry.clear()
         logger.info("MCP Manager stopped")
+
+    def _ensure_worker(self) -> None:
+        if self._worker is None or self._worker.done():
+            self._ops = asyncio.Queue()
+            self._worker = asyncio.create_task(
+                self._run_lifecycle_worker(),
+                name="mcp-lifecycle-worker",
+            )
+
+    async def _submit(self, op: str, name: str | None, payload: Any) -> Any:
+        self._ensure_worker()
+        assert self._ops is not None
+        loop = asyncio.get_running_loop()
+        future: asyncio.Future[Any] = loop.create_future()
+        await self._ops.put((op, name, payload, future))
+        return await future
+
+    async def _run_lifecycle_worker(self) -> None:
+        assert self._ops is not None
+        while True:
+            op, name, payload, future = await self._ops.get()
+            try:
+                if op == "add":
+                    assert name is not None
+                    result = await self._add_server_now(name, payload)
+                elif op == "remove":
+                    assert name is not None
+                    result = await self._remove_server_now(name)
+                elif op == "stop":
+                    result = await self._stop_now()
+                    if not future.done():
+                        future.set_result(result)
+                    break
+                else:
+                    raise RuntimeError(f"Unknown MCP lifecycle op: {op}")
+            except BaseException as exc:
+                if not future.done():
+                    future.set_exception(exc)
+            else:
+                if not future.done():
+                    future.set_result(result)
 
     def server_status(self) -> list[dict[str, Any]]:
         """Per-configured-server connection + tool status for the web UI."""

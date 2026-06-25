@@ -30,7 +30,7 @@ const NAV: NavItem[] = [
 
 const TITLES: Record<string, string> = {
   "/dashboard": "Dashboard",
-  "/mcp": "MCP Marketplace",
+  "/mcp": "MCP Servers",
   "/logs": "Logs",
   "/settings": "Settings",
 };

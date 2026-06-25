@@ -238,7 +238,15 @@ export const api = {
   // Memory management
   listMemory: () => request<MemoryEntry[]>("/memory"),
   getMemory: (slug: string) => request<MemoryEntry>(`/memory/${slug}`),
-  updateMemory: (slug: string, data: { body: string; description?: string }) =>
+  createMemory: (data: { name: string; body: string; description?: string; type?: string }) =>
+    request<MemoryEntry>("/memory", {
+      method: "POST",
+      body: JSON.stringify(data),
+    }),
+  updateMemory: (
+    slug: string,
+    data: { name?: string; body?: string; description?: string; type?: string },
+  ) =>
     request<{ status: string }>(`/memory/${slug}`, {
       method: "PATCH",
       body: JSON.stringify(data),

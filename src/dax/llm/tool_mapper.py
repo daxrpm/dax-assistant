@@ -143,6 +143,9 @@ _ES_EN_KEYWORDS: dict[str, list[str]] = {
     "hora": ["time", "current"],
     "web": ["fetch", "url", "web"],
     "página": ["page", "fetch", "web", "url"],
+    "servidor": ["server", "list", "get"],
+    "servidores": ["server", "servers", "list", "get"],
+    "coolify": ["coolify", "server", "servers", "application", "deployment"],
     "contacto": ["contact", "contacts", "address"],
     "correo": ["mail", "email", "message"],
     "receta": ["recipe", "cookbook", "cook"],
@@ -223,19 +226,23 @@ def filter_tools_by_relevance(
 
     scored: list[tuple[float, dict[str, Any]]] = []
     for tool in candidates:
+        server = tool.get("server_name", "").lower()
         name = tool.get("name", "").lower()
         description = tool.get("description", "").lower()
-        tool_text = f"{name} {description}"
+        tool_text = f"{server} {name} {description}"
         tool_words = set(re.findall(r"\w+", tool_text))
 
         word_matches = len(expanded_words & tool_words)
+        # Server-name match: "Coolify", "Nextcloud", etc. should strongly
+        # prefer tools from that server even if individual tool names vary.
+        server_bonus = 10.0 if any(w in server for w in query_words) else 0.0
         # Name-match bonus: if any query word appears in the tool name
         name_bonus = 3.0 if any(w in name for w in expanded_words) else 0.0
         # Description bonus: partial substring match for short query words
         desc_bonus = sum(
             1.0 for w in expanded_words if len(w) >= 4 and w in description
         )
-        score = word_matches + name_bonus + desc_bonus
+        score = word_matches + server_bonus + name_bonus + desc_bonus
 
         scored.append((score, tool))
 

@@ -690,6 +690,7 @@ async def update_mcp_server(
     if server_name not in config.mcp.servers:
         raise HTTPException(status_code=404, detail=f"Server '{server_name}' not found")
 
+    previous = config.mcp.servers[server_name]
     server_config = MCPServerConfig(
         command=body.command,
         args=body.args,
@@ -704,8 +705,12 @@ async def update_mcp_server(
     config.mcp.servers[server_name] = server_config
     _save_config_to_toml(request)
 
+    connection_changed = any(
+        getattr(previous, field) != getattr(server_config, field)
+        for field in ("command", "args", "env", "transport", "url", "headers", "enabled")
+    )
     manager = getattr(request.app.state, "mcp_manager", None)
-    if manager is not None and body.enabled:
+    if manager is not None and body.enabled and connection_changed:
         try:
             tools = await manager.add_server(server_name, server_config)
             return {"status": "ok", "name": server_name, "tools": tools}
@@ -1167,13 +1172,71 @@ async def list_llm_models(request: Request, provider: str = "") -> dict[str, lis
 # ---------------------------------------------------------------------------
 
 
-def _memory_dir(request: Request) -> Path | None:
+def _memory_dir(request: Request, *, create: bool = False) -> Path:
     config = request.app.state.config
-    raw = getattr(config, "memory_path", "")
-    if not raw:
-        return None
+    raw = getattr(config, "memory_path", "") or "~/.dax/memory"
     p = Path(raw).expanduser()
-    return p if p.is_dir() else None
+    if create:
+        p.mkdir(parents=True, exist_ok=True)
+    if not p.exists():
+        p.mkdir(parents=True, exist_ok=True)
+    if not p.is_dir():
+        raise HTTPException(status_code=500, detail="memory_path is not a directory")
+    return p
+
+
+def _memory_slug(value: str) -> str:
+    slug = re.sub(r"[^a-zA-Z0-9_-]+", "-", value.strip().lower()).strip("-")
+    if not slug:
+        slug = "memory"
+    return slug[:80]
+
+
+def _memory_path(mem_dir: Path, slug: str) -> Path:
+    clean = _memory_slug(slug)
+    path = (mem_dir / f"{clean}.md").resolve()
+    root = mem_dir.resolve()
+    if root not in path.parents:
+        raise HTTPException(status_code=400, detail="Invalid memory slug")
+    return path
+
+
+def _memory_frontmatter(
+    *,
+    name: str,
+    description: str = "",
+    mem_type: str = "user",
+    body: str = "",
+) -> str:
+    safe_type = mem_type if mem_type in {"user", "feedback", "project", "reference"} else "user"
+    return (
+        "---\n"
+        f"name: {name.strip() or 'Memory'}\n"
+        f"description: {description.strip()}\n"
+        f"type: {safe_type}\n"
+        "---\n\n"
+        f"{body.strip()}\n"
+    )
+
+
+def _refresh_memory_index(mem_dir: Path) -> None:
+    entries: list[dict[str, Any]] = []
+    for p in sorted(mem_dir.glob("*.md")):
+        if p.name == "MEMORY.md":
+            continue
+        try:
+            entries.append(_parse_memory_file(p))
+        except Exception:
+            pass
+    lines = ["# Dax Memory", ""]
+    if entries:
+        lines.extend(
+            f"- [{entry['name']}]({entry['filename']}) - {entry['description']}"
+            for entry in entries
+        )
+    else:
+        lines.append("_No memories yet._")
+    (mem_dir / "MEMORY.md").write_text("\n".join(lines) + "\n", encoding="utf-8")
 
 
 def _parse_memory_file(path: Path) -> dict[str, Any]:
@@ -1211,9 +1274,7 @@ def _parse_memory_file(path: Path) -> dict[str, Any]:
 @router.get("/memory")
 async def list_memory(request: Request) -> list[dict[str, Any]]:
     """List all memory entries."""
-    mem_dir = _memory_dir(request)
-    if mem_dir is None:
-        return []
+    mem_dir = _memory_dir(request, create=True)
     entries = []
     for p in sorted(mem_dir.glob("*.md")):
         if p.name == "MEMORY.md":
@@ -1227,69 +1288,83 @@ async def list_memory(request: Request) -> list[dict[str, Any]]:
 
 @router.get("/memory/{slug}")
 async def get_memory(slug: str, request: Request) -> dict[str, Any]:
-    mem_dir = _memory_dir(request)
-    if mem_dir is None:
-        raise HTTPException(status_code=503, detail="memory_path not configured")
-    path = mem_dir / f"{slug}.md"
+    mem_dir = _memory_dir(request, create=True)
+    path = _memory_path(mem_dir, slug)
     if not path.exists():
         raise HTTPException(status_code=404, detail="Memory not found")
     return _parse_memory_file(path)
 
 
+class MemoryCreate(BaseModel):
+    name: str
+    body: str = ""
+    description: str = ""
+    type: str = "user"
+
+
 class MemoryUpdate(BaseModel):
-    body: str
+    name: str | None = None
+    body: str | None = None
     description: str | None = None
+    type: str | None = None
+
+
+@router.post("/memory", status_code=201)
+async def create_memory(request: Request, body: MemoryCreate) -> dict[str, Any]:
+    mem_dir = _memory_dir(request, create=True)
+    base_slug = _memory_slug(body.name)
+    slug = base_slug
+    i = 2
+    while _memory_path(mem_dir, slug).exists():
+        slug = f"{base_slug}-{i}"
+        i += 1
+    path = _memory_path(mem_dir, slug)
+    path.write_text(
+        _memory_frontmatter(
+            name=body.name,
+            description=body.description,
+            mem_type=body.type,
+            body=body.body,
+        ),
+        encoding="utf-8",
+    )
+    _refresh_memory_index(mem_dir)
+    return _parse_memory_file(path)
 
 
 @router.patch("/memory/{slug}")
 async def update_memory(slug: str, request: Request, body: MemoryUpdate) -> dict[str, str]:
-    mem_dir = _memory_dir(request)
-    if mem_dir is None:
-        raise HTTPException(status_code=503, detail="memory_path not configured")
-    path = mem_dir / f"{slug}.md"
+    mem_dir = _memory_dir(request, create=True)
+    path = _memory_path(mem_dir, slug)
     if not path.exists():
         raise HTTPException(status_code=404, detail="Memory not found")
 
     existing = _parse_memory_file(path)
-    desc = body.description if body.description is not None else existing["description"]
-
-    # Reconstruct file with updated body while preserving frontmatter structure
-    original = path.read_text(encoding="utf-8")
-    if original.startswith("---"):
-        parts = original.split("---", 2)
-        if len(parts) >= 3:
-            fm = parts[1]
-            if body.description is not None:
-                # Update description line in frontmatter
-                new_fm_lines = []
-                for line in fm.splitlines():
-                    if line.startswith("description:"):
-                        new_fm_lines.append(f"description: {desc}")
-                    else:
-                        new_fm_lines.append(line)
-                fm = "\n".join(new_fm_lines)
-            path.write_text(f"---{fm}---\n\n{body.body}\n", encoding="utf-8")
-            return {"status": "ok"}
-
-    path.write_text(body.body, encoding="utf-8")
+    path.write_text(
+        _memory_frontmatter(
+            name=body.name if body.name is not None else existing["name"],
+            description=(
+                body.description
+                if body.description is not None
+                else existing["description"]
+            ),
+            mem_type=body.type if body.type is not None else existing["type"],
+            body=body.body if body.body is not None else existing["body"],
+        ),
+        encoding="utf-8",
+    )
+    _refresh_memory_index(mem_dir)
     return {"status": "ok"}
 
 
 @router.delete("/memory/{slug}", status_code=204)
 async def delete_memory(slug: str, request: Request) -> None:
-    mem_dir = _memory_dir(request)
-    if mem_dir is None:
-        raise HTTPException(status_code=503, detail="memory_path not configured")
-    path = mem_dir / f"{slug}.md"
+    mem_dir = _memory_dir(request, create=True)
+    path = _memory_path(mem_dir, slug)
     if not path.exists():
         raise HTTPException(status_code=404, detail="Memory not found")
     path.unlink()
-    # Remove from MEMORY.md index
-    index_path = mem_dir / "MEMORY.md"
-    if index_path.exists():
-        lines = index_path.read_text(encoding="utf-8").splitlines()
-        new_lines = [ln for ln in lines if f"({path.name})" not in ln]
-        index_path.write_text("\n".join(new_lines) + "\n", encoding="utf-8")
+    _refresh_memory_index(mem_dir)
 
 
 # ---------------------------------------------------------------------------

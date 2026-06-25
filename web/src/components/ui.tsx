@@ -6,6 +6,14 @@ import {
   type SelectHTMLAttributes,
   type TextareaHTMLAttributes,
 } from "react";
+import {
+  Card as HeroCard,
+  Chip as HeroChip,
+  Input as HeroInput,
+  Modal as HeroModal,
+  Switch as HeroSwitch,
+  TextArea as HeroTextArea,
+} from "@heroui/react";
 import { cn } from "../lib/cn";
 
 /* ── Panel / Card ──────────────────────────────────────────────────────── */
@@ -16,15 +24,12 @@ export function Panel({
   ...rest
 }: { children: ReactNode; className?: string } & React.HTMLAttributes<HTMLDivElement>) {
   return (
-    <div
-      className={cn(
-        "rounded-2xl border border-separator bg-surface p-5 shadow-sm",
-        className,
-      )}
+    <HeroCard
+      className={cn("p-5", className)}
       {...rest}
     >
       {children}
-    </div>
+    </HeroCard>
   );
 }
 
@@ -54,14 +59,6 @@ export function PanelHeader({
 
 type BadgeColor = "default" | "accent" | "success" | "warning" | "danger";
 
-const BADGE_CLS: Record<BadgeColor, string> = {
-  default: "bg-surface-secondary text-muted",
-  accent: "bg-accent-soft text-accent-soft-foreground",
-  success: "bg-success-soft text-success-soft-foreground",
-  warning: "bg-warning-soft text-warning-soft-foreground",
-  danger: "bg-danger-soft text-danger-soft-foreground",
-};
-
 export function Badge({
   children,
   color = "default",
@@ -71,16 +68,17 @@ export function Badge({
   color?: BadgeColor;
   className?: string;
 }) {
+  const colorMap: Record<BadgeColor, "default" | "accent" | "success" | "warning" | "danger"> = {
+    default: "default",
+    accent: "accent",
+    success: "success",
+    warning: "warning",
+    danger: "danger",
+  };
   return (
-    <span
-      className={cn(
-        "inline-flex items-center gap-1 rounded-full px-2.5 py-0.5 text-xs font-medium",
-        BADGE_CLS[color],
-        className,
-      )}
-    >
+    <HeroChip size="sm" color={colorMap[color]} variant="soft" className={className}>
       {children}
-    </span>
+    </HeroChip>
   );
 }
 
@@ -114,13 +112,11 @@ const FIELD_BASE =
   "focus:border-accent focus:ring-2 focus:ring-accent/30 disabled:opacity-60";
 
 export function TextInput(props: InputHTMLAttributes<HTMLInputElement>) {
-  return <input {...props} className={cn(FIELD_BASE, props.className)} />;
+  return <HeroInput {...props} fullWidth className={props.className} />;
 }
 
 export function TextArea(props: TextareaHTMLAttributes<HTMLTextAreaElement>) {
-  return (
-    <textarea {...props} className={cn(FIELD_BASE, "resize-none", props.className)} />
-  );
+  return <HeroTextArea {...props} fullWidth className={props.className} />;
 }
 
 export function Select(props: SelectHTMLAttributes<HTMLSelectElement>) {
@@ -146,26 +142,12 @@ export function Toggle({
   label?: string;
 }) {
   return (
-    <button
-      type="button"
-      role="switch"
-      aria-checked={checked}
+    <HeroSwitch
+      isSelected={checked}
       aria-label={label}
-      disabled={disabled}
-      onClick={() => onChange(!checked)}
-      className={cn(
-        "relative inline-flex h-6 w-11 shrink-0 cursor-pointer items-center rounded-full transition-colors",
-        "focus:outline-none focus:ring-2 focus:ring-accent/40 disabled:opacity-50",
-        checked ? "bg-accent" : "bg-surface-tertiary",
-      )}
-    >
-      <span
-        className={cn(
-          "inline-block h-5 w-5 transform rounded-full bg-white shadow transition-transform",
-          checked ? "translate-x-5" : "translate-x-0.5",
-        )}
-      />
-    </button>
+      isDisabled={disabled}
+      onChange={onChange}
+    />
   );
 }
 
@@ -219,21 +201,21 @@ export function Modal({
 }) {
   if (!open) return null;
   return (
-    <div
-      className="fixed inset-0 z-50 flex items-center justify-center p-4"
-      role="dialog"
-      aria-modal="true"
-    >
-      <div
-        className="absolute inset-0 bg-black/50 backdrop-blur-sm"
-        onClick={onClose}
-      />
-      <div className="relative z-10 w-full max-w-md rounded-2xl border border-separator bg-surface p-5 shadow-xl">
-        {title && <h3 className="mb-3 text-lg font-semibold">{title}</h3>}
-        <div className="text-sm">{children}</div>
-        {footer && <div className="mt-5 flex justify-end gap-2">{footer}</div>}
-      </div>
-    </div>
+    <HeroModal isOpen={open} onOpenChange={(next) => !next && onClose?.()}>
+      <HeroModal.Backdrop>
+        <HeroModal.Container size="lg" scroll="inside">
+          <HeroModal.Dialog>
+            {title && (
+              <HeroModal.Header>
+                <HeroModal.Heading>{title}</HeroModal.Heading>
+              </HeroModal.Header>
+            )}
+            <HeroModal.Body>{children}</HeroModal.Body>
+            {footer && <HeroModal.Footer>{footer}</HeroModal.Footer>}
+          </HeroModal.Dialog>
+        </HeroModal.Container>
+      </HeroModal.Backdrop>
+    </HeroModal>
   );
 }
 

@@ -293,7 +293,19 @@ class DaxApp:
         try:
             await self._uvicorn_server.serve()
         finally:
-            await self.stop()
+            await self._stop_even_if_cancelled()
+
+    async def _stop_even_if_cancelled(self) -> None:
+        """Run shutdown to completion even if uvicorn/request cancellation leaks."""
+        task = asyncio.create_task(self.stop(), name="dax-shutdown")
+        while not task.done():
+            try:
+                await asyncio.shield(task)
+            except asyncio.CancelledError:
+                current = asyncio.current_task()
+                if current is not None:
+                    current.uncancel()
+        await task
 
     def _request_shutdown(self) -> None:
         """Signal handler — request graceful shutdown."""
