@@ -1533,37 +1533,59 @@ async def mcp_registry_search(q: str = "", limit: int = 30) -> dict[str, Any]:
     if q:
         params["search"] = q
     try:
-        async with aiohttp.ClientSession() as session:
-            async with session.get(
-                f"{_MCP_REGISTRY_BASE}/v0.1/servers",
-                params=params,
-                timeout=aiohttp.ClientTimeout(total=12),
-            ) as r:
-                if r.status != 200:
-                    return {"servers": [], "error": f"registry returned {r.status}"}
-                data = await r.json()
+        async with aiohttp.ClientSession() as session, session.get(
+            f"{_MCP_REGISTRY_BASE}/v0/servers",
+            params=params,
+            timeout=aiohttp.ClientTimeout(total=12),
+        ) as r:
+            if r.status != 200:
+                return {"servers": [], "error": f"registry returned {r.status}"}
+            data = await r.json()
     except Exception as e:
         return {"servers": [], "error": str(e)}
 
-    results = []
-    for srv in data.get("servers", []):
+    # The registry wraps each entry as {"server": {...}, "_meta": {...}} and may
+    # return several versions of the same server — keep the latest of each name.
+    results: list[dict[str, Any]] = []
+    seen: dict[str, int] = {}
+    for entry in data.get("servers", []):
+        srv = entry.get("server", entry) if isinstance(entry, dict) else {}
+        meta = (entry.get("_meta") or {}).get(
+            "io.modelcontextprotocol.registry/official", {}
+        )
+        name = srv.get("name", "")
+        if not name:
+            continue
+        # Skip superseded versions when the registry tells us which is latest.
+        if meta.get("isLatest") is False and name in seen:
+            continue
+
         pkgs = srv.get("packages", []) or []
         remotes = srv.get("remotes", []) or []
-        results.append({
-            "name": srv.get("name", ""),
-            "description": srv.get("description", ""),
+        record = {
+            "name": name,
+            "description": srv.get("description", "") or srv.get("title", ""),
             "version": srv.get("version", ""),
             "packages": [
                 {
-                    "registry_type": p.get("registryType", ""),
+                    "registry_type": p.get("registryType", p.get("registry_type", "")),
                     "identifier": p.get("identifier", ""),
                     "version": p.get("version", ""),
                 }
                 for p in pkgs
             ],
             "remotes": [
-                {"type": rm.get("type", ""), "url": rm.get("url", "")}
+                {
+                    "type": rm.get("type", ""),
+                    "url": rm.get("url", ""),
+                }
                 for rm in remotes
             ],
-        })
+        }
+        if name in seen:
+            results[seen[name]] = record
+        else:
+            seen[name] = len(results)
+            results.append(record)
+
     return {"servers": results, "count": len(results)}
