@@ -26,6 +26,10 @@ class LoginRequest(BaseModel):
     password: str
 
 
+class SetupRequest(BaseModel):
+    password: str
+
+
 class LoginResponse(BaseModel):
     ok: bool
 
@@ -48,6 +52,48 @@ async def auth_status(request: Request) -> AuthStatus:
         configured=auth.configured,
         authenticated=auth.is_authenticated(request),
     )
+
+
+@router.post("/auth/setup", response_model=LoginResponse)
+async def setup(request: Request, body: SetupRequest, response: Response) -> LoginResponse:
+    """First-run account creation — set the login password and sign in.
+
+    Public on purpose, but only usable while no password exists yet (i.e. the
+    very first boot). The password hash is stored encrypted in SQLite (never in
+    .env), and the user is logged in immediately. After this, the endpoint is a
+    no-op 409 so it can't be used to reset an existing account.
+    """
+    from dax.web.auth import hash_password
+
+    auth = _auth(request)
+    if auth.configured:
+        response.status_code = 409
+        return LoginResponse(ok=False)
+
+    if len(body.password) < 8:
+        response.status_code = 400
+        return LoginResponse(ok=False)
+
+    new_hash = hash_password(body.password)
+
+    # Persist encrypted, then update the live config + auth manager in place.
+    store = getattr(request.app.state, "secret_store", None)
+    if store is None:
+        from dax.storage.secrets import SecretStore
+
+        store = SecretStore(request.app.state.config.storage.database_path)
+    store.set("DAX_SECURITY__PASSWORD_HASH", new_hash)
+
+    config = request.app.state.config
+    object.__setattr__(config.security, "password_hash", new_hash)
+    object.__setattr__(config.security, "auth_enabled", True)
+    auth._password_hash = new_hash
+    auth._enabled = True
+
+    token = auth.issue_token()
+    auth.set_cookie(response, token)
+    logger.info("First-run account created and signed in")
+    return LoginResponse(ok=True)
 
 
 @router.post("/auth/login", response_model=LoginResponse)
