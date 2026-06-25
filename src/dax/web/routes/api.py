@@ -24,7 +24,7 @@ def _secret_store(request: Request) -> SecretStore:
     resolving them transparently.
     """
     store = getattr(request.app.state, "secret_store", None)
-    if store is not None:
+    if isinstance(store, SecretStore):
         return store
     config = request.app.state.config
     return SecretStore(config.storage.database_path)

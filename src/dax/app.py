@@ -143,8 +143,8 @@ class DaxApp:
             self._web_app.state.tool_policy = self._policy  # type: ignore[union-attr]
             # Expose the secret store + the app itself so settings endpoints can
             # persist secrets to SQLite and reload live channels (Telegram).
-            self._web_app.state.secret_store = self._secrets  # type: ignore[union-attr]
-            self._web_app.state.dax_app = self  # type: ignore[union-attr]
+            self._web_app.state.secret_store = self._secrets
+            self._web_app.state.dax_app = self
 
         # 2. Message bus
         self._bus.start()
