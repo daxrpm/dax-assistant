@@ -6,6 +6,7 @@ Pydantic Settings handles the merge automatically.
 
 from __future__ import annotations
 
+import os
 from typing import TYPE_CHECKING, Any
 
 from pydantic import BaseModel, Field
@@ -290,9 +291,8 @@ def load_config(config_path: Path | None = None) -> DaxConfig:
     Returns:
         Fully resolved DaxConfig instance.
     """
-    # Load .env into the process environment so provider SDKs (which read
-    # ANTHROPIC_API_KEY / OPENAI_API_KEY / GEMINI_API_KEY directly) and the
-    # DAX_* settings below all see the same secrets.
+    # Legacy: load .env if present (still supported, but the encrypted SQLite
+    # secret store below is now the source of truth — see storage/secrets.py).
     from dotenv import load_dotenv
 
     load_dotenv()
@@ -306,7 +306,40 @@ def load_config(config_path: Path | None = None) -> DaxConfig:
             toml_data = tomllib.load(f)
         overrides = _flatten_toml(toml_data)
 
+    _bootstrap_secrets(overrides, config_path)
+
     return DaxConfig(**overrides)
+
+
+def _bootstrap_secrets(overrides: dict[str, Any], config_path: Path | None) -> None:
+    """Seed os.environ from the encrypted secret store before config is built.
+
+    Secrets (API keys, password hash, session secret) live encrypted in SQLite,
+    not in .env. We decrypt them into os.environ here so pydantic-settings and
+    the provider SDKs pick them up exactly as they used to from .env. A missing
+    session secret is generated and stored so sessions survive restarts.
+    """
+    import secrets as _secrets
+
+    from dax.storage.secrets import SecretStore
+
+    db_path = (overrides.get("storage") or {}).get("database_path", "data/dax.db")
+    store = SecretStore(db_path)
+
+    # One-time migration of any legacy .env next to the config file.
+    if config_path is not None:
+        import contextlib
+
+        env_path = config_path.parent.parent / ".env"
+        with contextlib.suppress(Exception):  # best effort
+            store.import_dotenv(env_path)
+
+    store.load_into_env()
+
+    # Auto-generate a persistent session secret on first run so logins survive
+    # restarts without any manual setup.
+    if not os.environ.get("DAX_SECURITY__SESSION_SECRET"):
+        store.set("DAX_SECURITY__SESSION_SECRET", _secrets.token_urlsafe(48))
 
 
 def _flatten_toml(data: dict[str, Any]) -> dict[str, Any]:
