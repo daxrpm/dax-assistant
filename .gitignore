@@ -184,3 +184,6 @@ config/dax.toml
 # Local secrets
 .env
 secrets/
+
+# Encrypted secret-store key (never commit)
+*.key
