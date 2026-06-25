@@ -17,6 +17,7 @@ const PROVIDERS = [
   { id: "anthropic", label: "Anthropic (Claude)" },
   { id: "openai", label: "OpenAI" },
   { id: "gemini", label: "Google Gemini" },
+  { id: "codex", label: "Codex (ChatGPT Pro)" },
 ];
 
 export function LLMTab({
@@ -30,6 +31,7 @@ export function LLMTab({
   const llm = config.llm;
   const [provider, setProvider] = useState(llm.default_provider);
   const [fallback, setFallback] = useState<string[]>(llm.fallback_order ?? []);
+  const [maxTools, setMaxTools] = useState(llm.max_tools ?? 45);
   const [ollamaModel, setOllamaModel] = useState(llm.ollama_model);
   const [ollamaUrl, setOllamaUrl] = useState(llm.ollama_base_url);
   const [ollamaTimeout, setOllamaTimeout] = useState(llm.ollama_timeout);
@@ -38,8 +40,11 @@ export function LLMTab({
   const [openaiModel, setOpenaiModel] = useState(llm.openai_model);
   const [openaiBaseUrl, setOpenaiBaseUrl] = useState(llm.openai_base_url);
   const [openaiKey, setOpenaiKey] = useState("");
+  const [openaiReasoning, setOpenaiReasoning] = useState(llm.openai_reasoning_effort ?? "low");
   const [geminiModel, setGeminiModel] = useState(llm.gemini_model);
   const [geminiKey, setGeminiKey] = useState("");
+  const [codexBinary, setCodexBinary] = useState(llm.codex_binary ?? "codex");
+  const [codexModel, setCodexModel] = useState(llm.codex_model ?? "");
   const [models, setModels] = useState<string[]>([]);
   const [saving, setSaving] = useState(false);
 
@@ -61,13 +66,17 @@ export function LLMTab({
       const payload: Record<string, unknown> = {
         default_provider: provider,
         fallback_order: fallback.filter((p) => p !== provider),
+        max_tools: maxTools,
         ollama_model: ollamaModel,
         ollama_base_url: ollamaUrl,
         ollama_timeout: ollamaTimeout,
         anthropic_model: anthropicModel,
         openai_model: openaiModel,
         openai_base_url: openaiBaseUrl,
+        openai_reasoning_effort: openaiReasoning,
         gemini_model: geminiModel,
+        codex_binary: codexBinary,
+        codex_model: codexModel,
       };
       if (anthropicKey) payload.anthropic_api_key = anthropicKey;
       if (openaiKey) payload.openai_api_key = openaiKey;
@@ -123,6 +132,16 @@ export function LLMTab({
                 );
               })}
             </div>
+          </Field>
+          <Field
+            label="Max tools per request"
+            description="Lower = faster responses. Tools are picked by relevance to your query (recommended 30–50; raising this slows the model)."
+          >
+            <TextInput
+              type="number"
+              value={maxTools}
+              onChange={(e) => setMaxTools(Number(e.target.value))}
+            />
           </Field>
         </div>
       </Panel>
@@ -190,6 +209,8 @@ export function LLMTab({
         keyEnvVar="OPENAI_API_KEY"
         baseUrl={openaiBaseUrl}
         onBaseUrl={setOpenaiBaseUrl}
+        reasoning={openaiReasoning}
+        onReasoning={setOpenaiReasoning}
       />
 
       <ProviderPanel
@@ -202,6 +223,29 @@ export function LLMTab({
         onApiKey={setGeminiKey}
         keyEnvVar="GEMINI_API_KEY"
       />
+
+      <Panel>
+        <PanelHeader
+          title="Codex (ChatGPT Pro)"
+          description="Runs `codex exec` as a subprocess using your ChatGPT plan. Returns text only — Codex runs its own tools. Run `codex login` first."
+        />
+        <div className="flex flex-col gap-4">
+          <Field label="Binary" description="Path to the codex CLI, or just 'codex' if on PATH">
+            <TextInput
+              value={codexBinary}
+              onChange={(e) => setCodexBinary(e.target.value)}
+              placeholder="codex"
+            />
+          </Field>
+          <Field label="Model" description="Leave blank for your account default">
+            <TextInput
+              value={codexModel}
+              onChange={(e) => setCodexModel(e.target.value)}
+              placeholder="gpt-5.5-codex"
+            />
+          </Field>
+        </div>
+      </Panel>
 
       <div className="flex justify-end">
         <Button variant="primary" onPress={save} isDisabled={saving}>
@@ -223,6 +267,8 @@ function ProviderPanel({
   keyEnvVar,
   baseUrl,
   onBaseUrl,
+  reasoning,
+  onReasoning,
 }: {
   title: string;
   configured: boolean;
@@ -234,6 +280,8 @@ function ProviderPanel({
   keyEnvVar: string;
   baseUrl?: string;
   onBaseUrl?: (v: string) => void;
+  reasoning?: string;
+  onReasoning?: (v: string) => void;
 }) {
   return (
     <Panel>
@@ -263,6 +311,19 @@ function ProviderPanel({
               onChange={(e) => onBaseUrl(e.target.value)}
               placeholder="https://api.openai.com/v1"
             />
+          </Field>
+        )}
+        {onReasoning && (
+          <Field
+            label="Reasoning effort"
+            description="Lower = faster. Only applied to tool-less turns (gpt-5.x rejects it with function tools)."
+          >
+            <Select value={reasoning ?? "low"} onChange={(e) => onReasoning(e.target.value)}>
+              <option value="minimal">Minimal (fastest)</option>
+              <option value="low">Low</option>
+              <option value="medium">Medium</option>
+              <option value="high">High</option>
+            </Select>
           </Field>
         )}
         <Field

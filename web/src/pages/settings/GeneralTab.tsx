@@ -18,10 +18,12 @@ export function GeneralTab({
   const [logLevel, setLogLevel] = useState(config.general.log_level);
   const [saving, setSaving] = useState(false);
 
-  // Codex config
+  // External-client config exports
   const [codex, setCodex] = useState<string | null>(null);
   const [codexLoading, setCodexLoading] = useState(false);
-  const [copied, setCopied] = useState(false);
+  const [claude, setClaude] = useState<string | null>(null);
+  const [claudeLoading, setClaudeLoading] = useState(false);
+  const [copied, setCopied] = useState<"codex" | "claude" | null>(null);
 
   const save = async () => {
     setSaving(true);
@@ -41,7 +43,8 @@ export function GeneralTab({
     try {
       const { toml, server_count, note } = await api.getCodexConfig();
       setCodex(toml);
-      if (server_count === 0) toast.show("No enabled MCP servers found", "warning");
+      if (server_count === 0)
+        toast.show("No MCP servers flagged for Codex (toggle in Settings → MCP)", "warning");
       else toast.show(`Config for ${server_count} server(s) — ${note}`, "success");
     } catch (e) {
       toast.show(e instanceof Error ? e.message : "Failed", "danger");
@@ -50,11 +53,25 @@ export function GeneralTab({
     }
   };
 
-  const copyCodex = () => {
-    if (!codex) return;
-    navigator.clipboard.writeText(codex).then(() => {
-      setCopied(true);
-      setTimeout(() => setCopied(false), 2000);
+  const loadClaude = async () => {
+    setClaudeLoading(true);
+    try {
+      const { json, server_count, note } = await api.getClaudeConfig();
+      setClaude(json);
+      if (server_count === 0)
+        toast.show("No MCP servers flagged for Claude (toggle in Settings → MCP)", "warning");
+      else toast.show(`Config for ${server_count} server(s) — ${note}`, "success");
+    } catch (e) {
+      toast.show(e instanceof Error ? e.message : "Failed", "danger");
+    } finally {
+      setClaudeLoading(false);
+    }
+  };
+
+  const copy = (text: string, which: "codex" | "claude") => {
+    navigator.clipboard.writeText(text).then(() => {
+      setCopied(which);
+      setTimeout(() => setCopied(null), 2000);
     });
   };
 
@@ -91,34 +108,68 @@ export function GeneralTab({
 
       <Panel>
         <PanelHeader
-          title="Codex CLI integration"
-          description="Use Dax's MCP servers from OpenAI Codex CLI (works with ChatGPT Pro account)"
+          title="Export MCP servers to external clients"
+          description="Share selected MCP servers with Codex CLI or Claude. Pick which servers in Settings → MCP (per-server toggles)."
         />
-        <div className="flex flex-col gap-3">
-          <p className="text-xs text-muted">
-            Generate a <span className="font-mono">~/.codex/config.toml</span> snippet that
-            connects Codex CLI to all of Dax's enabled MCP servers. Works with a ChatGPT Pro
-            account or a separate OpenAI API key.
-          </p>
-          {!codex ? (
-            <Button variant="ghost" onPress={loadCodex} isDisabled={codexLoading}>
-              {codexLoading ? "Generating…" : "Generate config"}
-            </Button>
-          ) : (
-            <div className="relative">
-              <pre className="overflow-x-auto rounded-xl border border-separator bg-surface-secondary p-3 font-mono text-xs text-muted scroll-slim">
-                {codex}
-              </pre>
-              <button
-                type="button"
-                onClick={copyCodex}
-                className="absolute right-2 top-2 rounded-lg p-1.5 text-muted transition-colors hover:bg-surface hover:text-foreground"
-                title="Copy to clipboard"
-              >
-                {copied ? <Check size={14} /> : <Copy size={14} />}
-              </button>
+        <div className="flex flex-col gap-4">
+          {/* Codex */}
+          <div className="flex flex-col gap-2">
+            <div className="flex items-center justify-between">
+              <p className="text-sm font-medium">Codex CLI (ChatGPT Pro)</p>
+              <Button variant="ghost" size="sm" onPress={loadCodex} isDisabled={codexLoading}>
+                {codexLoading ? "Generating…" : codex ? "Regenerate" : "Generate"}
+              </Button>
             </div>
-          )}
+            {codex && (
+              <div className="relative">
+                <pre className="max-h-60 overflow-auto rounded-xl border border-separator bg-surface-secondary p-3 font-mono text-xs text-muted scroll-slim">
+                  {codex}
+                </pre>
+                <button
+                  type="button"
+                  onClick={() => copy(codex, "codex")}
+                  className="absolute right-2 top-2 rounded-lg p-1.5 text-muted transition-colors hover:bg-surface hover:text-foreground"
+                  title="Copy"
+                >
+                  {copied === "codex" ? <Check size={14} /> : <Copy size={14} />}
+                </button>
+              </div>
+            )}
+            <p className="text-[11px] text-muted">
+              Paste into <span className="font-mono">~/.codex/config.toml</span>
+            </p>
+          </div>
+
+          <div className="border-t border-separator" />
+
+          {/* Claude */}
+          <div className="flex flex-col gap-2">
+            <div className="flex items-center justify-between">
+              <p className="text-sm font-medium">Claude (Desktop / Code)</p>
+              <Button variant="ghost" size="sm" onPress={loadClaude} isDisabled={claudeLoading}>
+                {claudeLoading ? "Generating…" : claude ? "Regenerate" : "Generate"}
+              </Button>
+            </div>
+            {claude && (
+              <div className="relative">
+                <pre className="max-h-60 overflow-auto rounded-xl border border-separator bg-surface-secondary p-3 font-mono text-xs text-muted scroll-slim">
+                  {claude}
+                </pre>
+                <button
+                  type="button"
+                  onClick={() => copy(claude, "claude")}
+                  className="absolute right-2 top-2 rounded-lg p-1.5 text-muted transition-colors hover:bg-surface hover:text-foreground"
+                  title="Copy"
+                >
+                  {copied === "claude" ? <Check size={14} /> : <Copy size={14} />}
+                </button>
+              </div>
+            )}
+            <p className="text-[11px] text-muted">
+              Add to <span className="font-mono">claude_desktop_config.json</span>, or use{" "}
+              <span className="font-mono">claude mcp add-json</span>
+            </p>
+          </div>
         </div>
       </Panel>
     </div>

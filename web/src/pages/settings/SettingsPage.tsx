@@ -4,6 +4,7 @@ import {
   Cpu,
   Mic,
   MessageCircle,
+  Send,
   ShieldCheck,
   Server,
   Globe,
@@ -15,6 +16,7 @@ import { GeneralTab } from "./GeneralTab";
 import { LLMTab } from "./LLMTab";
 import { VoiceTab } from "./VoiceTab";
 import { WhatsAppTab } from "./WhatsAppTab";
+import { TelegramTab } from "./TelegramTab";
 import { ToolsTab } from "./ToolsTab";
 import { McpTab } from "./McpTab";
 import { ServerTab } from "./ServerTab";
@@ -25,6 +27,7 @@ const TABS = [
   { id: "llm", label: "LLM", icon: <Cpu size={15} /> },
   { id: "voice", label: "Voice", icon: <Mic size={15} /> },
   { id: "whatsapp", label: "WhatsApp", icon: <MessageCircle size={15} /> },
+  { id: "telegram", label: "Telegram", icon: <Send size={15} /> },
   { id: "tools", label: "Security & Tools", icon: <ShieldCheck size={15} /> },
   { id: "mcp", label: "MCP Servers", icon: <Server size={15} /> },
   { id: "server", label: "Web Server", icon: <Globe size={15} /> },
@@ -48,6 +51,7 @@ export function SettingsPage() {
             {active === "llm" && <LLMTab config={config} onSaved={refresh} />}
             {active === "voice" && <VoiceTab config={config} onSaved={refresh} />}
             {active === "whatsapp" && <WhatsAppTab config={config} onSaved={refresh} />}
+            {active === "telegram" && <TelegramTab config={config} onSaved={refresh} />}
             {active === "tools" && <ToolsTab config={config} onSaved={refresh} />}
             {active === "mcp" && <McpTab config={config} onSaved={refresh} />}
             {active === "server" && <ServerTab config={config} onSaved={refresh} />}

@@ -30,6 +30,7 @@ export interface VoiceConfig {
 export interface LLMConfig {
   default_provider: string;
   fallback_order: string[];
+  max_tools: number;
   ollama_model: string;
   ollama_base_url: string;
   ollama_timeout: number;
@@ -38,8 +39,11 @@ export interface LLMConfig {
   openai_model: string;
   openai_base_url: string;
   openai_configured: boolean;
+  openai_reasoning_effort: string;
   gemini_model: string;
   gemini_configured: boolean;
+  codex_binary: string;
+  codex_model: string;
 }
 
 export interface WebConfig {
@@ -57,6 +61,13 @@ export interface WhatsAppConfig {
   has_api_key: boolean;
 }
 
+export interface TelegramConfig {
+  enabled: boolean;
+  allowed_user_ids: number[];
+  respond_with_audio: boolean;
+  has_token: boolean;
+}
+
 export interface MCPServerConfig {
   command: string;
   args: string[];
@@ -65,6 +76,8 @@ export interface MCPServerConfig {
   url: string;
   headers: Record<string, string>;
   enabled: boolean;
+  export_codex: boolean;
+  export_claude: boolean;
 }
 
 export interface SecurityConfig {
@@ -90,6 +103,7 @@ export interface FullConfig {
   llm: LLMConfig;
   web: WebConfig;
   whatsapp: WhatsAppConfig;
+  telegram: TelegramConfig;
   security: SecurityConfig;
   tools: ToolsConfig;
   mcp: {

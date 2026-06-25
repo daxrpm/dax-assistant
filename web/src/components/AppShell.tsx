@@ -7,6 +7,7 @@ import {
   Settings as SettingsIcon,
   LogOut,
   Sparkles,
+  Server,
 } from "lucide-react";
 import { api } from "../api/client";
 import { ThemeToggle } from "./ThemeToggle";
@@ -22,12 +23,14 @@ interface NavItem {
 const NAV: NavItem[] = [
   { to: "/", label: "Chat", icon: <MessagesSquare size={18} />, end: true },
   { to: "/dashboard", label: "Dashboard", icon: <LayoutDashboard size={18} /> },
+  { to: "/mcp", label: "MCP", icon: <Server size={18} /> },
   { to: "/logs", label: "Logs", icon: <ScrollText size={18} /> },
   { to: "/settings", label: "Settings", icon: <SettingsIcon size={18} /> },
 ];
 
 const TITLES: Record<string, string> = {
   "/dashboard": "Dashboard",
+  "/mcp": "MCP Marketplace",
   "/logs": "Logs",
   "/settings": "Settings",
 };

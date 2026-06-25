@@ -75,6 +75,25 @@ export interface MemoryEntry {
   filename: string;
 }
 
+export interface MCPPreset {
+  id: string;
+  name: string;
+  category: string;
+  description: string;
+  transport: string;
+  command: string;
+  args: string[];
+  env: Record<string, string>;
+}
+
+export interface RegistryServer {
+  name: string;
+  description: string;
+  version: string;
+  packages: { registry_type: string; identifier: string; version: string }[];
+  remotes: { type: string; url: string }[];
+}
+
 export interface MCPServerStatus {
   name: string;
   connected: boolean;
@@ -227,8 +246,20 @@ export const api = {
   deleteMemory: (slug: string) =>
     fetch(`${BASE}/memory/${slug}`, { method: "DELETE", credentials: "same-origin" }),
 
-  // Codex config generator
+  // Codex / Claude config generators
   getCodexConfig: () => request<{ toml: string; server_count: number; note: string }>("/codex-config"),
+  getClaudeConfig: () => request<{ json: string; server_count: number; note: string }>("/claude-config"),
+
+  // MCP marketplace
+  getMCPPresets: () => request<MCPPreset[]>("/mcp/presets"),
+  searchMCPRegistry: (q: string, limit = 30) =>
+    request<{ servers: RegistryServer[]; count?: number; error?: string }>(
+      `/mcp/registry/search?q=${encodeURIComponent(q)}&limit=${limit}`,
+    ),
+
+  // Telegram
+  updateTelegram: (data: Record<string, unknown>) =>
+    request("/config/telegram", { method: "PATCH", body: JSON.stringify(data) }),
 
   updateWeb: (data: Record<string, unknown>) =>
     request("/config/web", {

@@ -12,6 +12,7 @@ import {
   Select,
   Badge,
   Modal,
+  Toggle,
   useToast,
 } from "../../components/ui";
 
@@ -279,6 +280,8 @@ function ServerFormModal({
   const [url, setUrl] = useState(initial?.url ?? "");
   const [env, setEnv] = useState(initial ? envToText(initial.env) : "");
   const [headers, setHeaders] = useState(initial ? headersToText(initial.headers) : "");
+  const [exportCodex, setExportCodex] = useState(initial?.export_codex ?? false);
+  const [exportClaude, setExportClaude] = useState(initial?.export_claude ?? false);
   const [saving, setSaving] = useState(false);
 
   // Re-sync when switching between edit targets
@@ -290,6 +293,8 @@ function ServerFormModal({
     setUrl(initial?.url ?? "");
     setEnv(initial ? envToText(initial.env) : "");
     setHeaders(initial ? headersToText(initial.headers) : "");
+    setExportCodex(initial?.export_codex ?? false);
+    setExportClaude(initial?.export_claude ?? false);
   }, [serverName, initial]);
 
   const buildPayload = () => ({
@@ -300,6 +305,8 @@ function ServerFormModal({
     env: parseEnv(env),
     headers: transport !== "stdio" ? parseHeaders(headers) : {},
     enabled: true,
+    export_codex: exportCodex,
+    export_claude: exportClaude,
   });
 
   const submit = async () => {
@@ -411,6 +418,21 @@ function ServerFormModal({
             placeholder={"NEXTCLOUD_HOST=https://cloud.example.com\nNEXTCLOUD_PASSWORD={env:NEXTCLOUD_PASSWORD}"}
           />
         </Field>
+
+        {/* Export this server to external AI clients */}
+        <div className="flex flex-col gap-2 rounded-xl border border-separator bg-background p-3">
+          <p className="text-xs font-medium text-muted">
+            Share this server with external AI clients
+          </p>
+          <label className="flex cursor-pointer items-center justify-between">
+            <span className="text-sm">Include in Codex config</span>
+            <Toggle checked={exportCodex} onChange={setExportCodex} label="Export to Codex" />
+          </label>
+          <label className="flex cursor-pointer items-center justify-between">
+            <span className="text-sm">Include in Claude config</span>
+            <Toggle checked={exportClaude} onChange={setExportClaude} label="Export to Claude" />
+          </label>
+        </div>
       </div>
     </Modal>
   );

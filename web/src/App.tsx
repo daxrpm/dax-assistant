@@ -6,6 +6,7 @@ import { ChatPage } from "./pages/Chat";
 import { DashboardPage } from "./pages/Dashboard";
 import { LogsPage } from "./pages/Logs";
 import { SettingsPage } from "./pages/settings/SettingsPage";
+import { McpMarketplacePage } from "./pages/McpMarketplace";
 
 export default function App() {
   return (
@@ -17,6 +18,7 @@ export default function App() {
               <Route element={<AppShell authEnabled={authEnabled} />}>
                 <Route index element={<ChatPage />} />
                 <Route path="dashboard" element={<DashboardPage />} />
+                <Route path="mcp" element={<McpMarketplacePage />} />
                 <Route path="logs" element={<LogsPage />} />
                 <Route path="settings" element={<SettingsPage />} />
               </Route>
