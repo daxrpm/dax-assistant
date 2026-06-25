@@ -130,6 +130,12 @@ export const api = {
       body: JSON.stringify({ password }),
     }),
 
+  setup: (password: string) =>
+    request<{ ok: boolean }>("/auth/setup", {
+      method: "POST",
+      body: JSON.stringify({ password }),
+    }),
+
   logout: () => request<{ ok: boolean }>("/auth/logout", { method: "POST" }),
 
   // Tools

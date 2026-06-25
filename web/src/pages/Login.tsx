@@ -1,9 +1,15 @@
 import { useState } from "react";
-import { Button } from "@heroui/react";
-import { Sparkles, Eye, EyeOff } from "lucide-react";
+import { Button, Input } from "@heroui/react";
+import { Sparkles, Eye, EyeOff, ShieldCheck } from "lucide-react";
 import { api } from "../api/client";
-import { TextInput } from "../components/ui";
 
+/**
+ * Single screen for both first-run onboarding and normal login.
+ *
+ * When `configured` is false there is no account yet, so we render the
+ * "create your account" flow (password + confirmation) which calls /auth/setup
+ * and signs the user straight in — no .env editing, everything from the UI.
+ */
 export function LoginPage({
   onLoggedIn,
   configured,
@@ -11,7 +17,9 @@ export function LoginPage({
   onLoggedIn: () => void;
   configured: boolean;
 }) {
+  const setup = !configured;
   const [password, setPassword] = useState("");
+  const [confirm, setConfirm] = useState("");
   const [show, setShow] = useState(false);
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
@@ -19,16 +27,28 @@ export function LoginPage({
   const submit = async (e: React.FormEvent) => {
     e.preventDefault();
     setError("");
+
+    if (setup) {
+      if (password.length < 8) {
+        setError("Password must be at least 8 characters");
+        return;
+      }
+      if (password !== confirm) {
+        setError("Passwords do not match");
+        return;
+      }
+    }
+
     setLoading(true);
     try {
-      const res = await api.login(password);
+      const res = setup ? await api.setup(password) : await api.login(password);
       if (res.ok) {
         onLoggedIn();
       } else {
-        setError("Incorrect password");
+        setError(setup ? "Could not create the account" : "Incorrect password");
       }
     } catch {
-      setError("Login failed");
+      setError(setup ? "Setup failed" : "Login failed");
     } finally {
       setLoading(false);
     }
@@ -39,28 +59,31 @@ export function LoginPage({
       <div className="w-full max-w-sm">
         <div className="mb-8 flex flex-col items-center text-center">
           <div className="mb-3 flex h-12 w-12 items-center justify-center rounded-2xl bg-accent text-accent-foreground">
-            <Sparkles size={22} />
+            {setup ? <ShieldCheck size={22} /> : <Sparkles size={22} />}
           </div>
-          <h1 className="text-xl font-semibold">Welcome to Dax</h1>
+          <h1 className="text-xl font-semibold">
+            {setup ? "Welcome to Dax" : "Welcome back"}
+          </h1>
           <p className="mt-1 text-sm text-muted">
-            {configured
-              ? "Enter your password to continue"
-              : "No password configured — set DAX_SECURITY__PASSWORD_HASH"}
+            {setup
+              ? "Create your password to set up your assistant"
+              : "Enter your password to continue"}
           </p>
         </div>
 
         <form
           onSubmit={submit}
-          className="rounded-2xl border border-separator bg-surface p-6 shadow-sm"
+          className="flex flex-col gap-3 rounded-2xl border border-separator bg-surface p-6 shadow-sm"
         >
           <div className="relative">
-            <TextInput
+            <Input
               type={show ? "text" : "password"}
-              placeholder="Password"
+              placeholder={setup ? "Create a password" : "Password"}
+              aria-label="Password"
               autoFocus
               value={password}
               onChange={(e) => setPassword(e.target.value)}
-              disabled={!configured}
+              fullWidth
               className="pr-10"
             />
             <button
@@ -68,21 +91,39 @@ export function LoginPage({
               onClick={() => setShow((s) => !s)}
               className="absolute right-3 top-1/2 -translate-y-1/2 text-muted hover:text-foreground"
               tabIndex={-1}
+              aria-label={show ? "Hide password" : "Show password"}
             >
               {show ? <EyeOff size={16} /> : <Eye size={16} />}
             </button>
           </div>
 
-          {error && <p className="mt-3 text-sm text-danger">{error}</p>}
+          {setup && (
+            <Input
+              type={show ? "text" : "password"}
+              placeholder="Confirm password"
+              aria-label="Confirm password"
+              value={confirm}
+              onChange={(e) => setConfirm(e.target.value)}
+              fullWidth
+            />
+          )}
+
+          {error && <p className="text-sm text-danger">{error}</p>}
 
           <Button
             type="submit"
             variant="primary"
             fullWidth
-            isDisabled={loading || !configured || !password}
-            className="mt-4"
+            isDisabled={loading || !password || (setup && !confirm)}
+            className="mt-1"
           >
-            {loading ? "Signing in…" : "Sign in"}
+            {loading
+              ? setup
+                ? "Creating…"
+                : "Signing in…"
+              : setup
+                ? "Create account"
+                : "Sign in"}
           </Button>
         </form>
       </div>
