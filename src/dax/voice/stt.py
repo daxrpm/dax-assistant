@@ -34,34 +34,72 @@ class SpeechToText:
     def __init__(
         self,
         model_size: str = "base",
-        compute_type: str = "int8",
+        compute_type: str = "auto",
         language: str = "auto",
+        device: str = "auto",
+        beam_size: int = 1,
     ) -> None:
         self._model_size = model_size
         self._compute_type = compute_type
         self._language = language
+        self._device = device
+        self._beam_size = max(1, beam_size)
         self._model: WhisperModel | None = None
 
     # ── Lifecycle ──────────────────────────────────────────────────────────
 
+    @staticmethod
+    def _resolve_device(device: str) -> str:
+        """Resolve "auto" to "cuda" when a GPU is available, else "cpu"."""
+        if device != "auto":
+            return device
+        try:
+            import ctranslate2  # type: ignore[import-untyped]
+
+            if ctranslate2.get_cuda_device_count() > 0:
+                return "cuda"
+        except Exception:  # pragma: no cover - depends on hardware
+            pass
+        return "cpu"
+
     def start(self) -> None:
-        """Download (if needed) and load the Whisper model."""
+        """Download (if needed) and load the Whisper model.
+
+        Auto-selects GPU + float16 when available (large latency win) and falls
+        back to CPU + int8 if the GPU path fails to initialise.
+        """
+        device = self._resolve_device(self._device)
+        compute = self._compute_type
+        if compute == "auto":
+            compute = "float16" if device == "cuda" else "int8"
+
         try:
             self._model = WhisperModel(
-                self._model_size,
-                device="cpu",
-                compute_type=self._compute_type,
-            )
-            logger.info(
-                "STT started (model=%s, compute=%s, lang=%s)",
-                self._model_size,
-                self._compute_type,
-                self._language,
+                self._model_size, device=device, compute_type=compute,
             )
         except Exception as exc:
-            raise STTError(
-                f"Failed to load Whisper model '{self._model_size}': {exc}"
-            ) from exc
+            if device == "cuda":
+                logger.warning(
+                    "GPU STT init failed (%s) — falling back to CPU int8", exc,
+                )
+                device, compute = "cpu", "int8"
+                try:
+                    self._model = WhisperModel(
+                        self._model_size, device=device, compute_type=compute,
+                    )
+                except Exception as exc2:
+                    raise STTError(
+                        f"Failed to load Whisper model '{self._model_size}': {exc2}"
+                    ) from exc2
+            else:
+                raise STTError(
+                    f"Failed to load Whisper model '{self._model_size}': {exc}"
+                ) from exc
+
+        logger.info(
+            "STT started (model=%s, device=%s, compute=%s, beam=%d, lang=%s)",
+            self._model_size, device, compute, self._beam_size, self._language,
+        )
 
     def stop(self) -> None:
         """Release model resources."""
@@ -87,7 +125,13 @@ class SpeechToText:
         if self._model is None:
             raise STTError("STT model not started")
 
-        kwargs: dict[str, object] = {"beam_size": 5, "vad_filter": True}
+        kwargs: dict[str, object] = {
+            "beam_size": self._beam_size,
+            "vad_filter": True,
+            # Short voice commands don't benefit from prior-text conditioning,
+            # and disabling it avoids context bleed + speeds up decoding.
+            "condition_on_previous_text": False,
+        }
         if self._language != "auto":
             kwargs["language"] = self._language
 
