@@ -17,6 +17,7 @@ const PROVIDERS = [
   { id: "anthropic", label: "Anthropic (Claude)" },
   { id: "openai", label: "OpenAI" },
   { id: "gemini", label: "Google Gemini" },
+  { id: "deepseek", label: "DeepSeek" },
   { id: "codex", label: "Codex (ChatGPT Pro)" },
 ];
 
@@ -43,6 +44,11 @@ export function LLMTab({
   const [openaiReasoning, setOpenaiReasoning] = useState(llm.openai_reasoning_effort ?? "low");
   const [geminiModel, setGeminiModel] = useState(llm.gemini_model);
   const [geminiKey, setGeminiKey] = useState("");
+  const [deepseekModel, setDeepseekModel] = useState(llm.deepseek_model ?? "deepseek-v4-flash");
+  const [deepseekBaseUrl, setDeepseekBaseUrl] = useState(
+    llm.deepseek_base_url ?? "https://api.deepseek.com",
+  );
+  const [deepseekKey, setDeepseekKey] = useState("");
   const [codexBinary, setCodexBinary] = useState(llm.codex_binary ?? "codex");
   const [codexModel, setCodexModel] = useState(llm.codex_model ?? "");
   const [models, setModels] = useState<string[]>([]);
@@ -75,12 +81,15 @@ export function LLMTab({
         openai_base_url: openaiBaseUrl,
         openai_reasoning_effort: openaiReasoning,
         gemini_model: geminiModel,
+        deepseek_model: deepseekModel,
+        deepseek_base_url: deepseekBaseUrl,
         codex_binary: codexBinary,
         codex_model: codexModel,
       };
       if (anthropicKey) payload.anthropic_api_key = anthropicKey;
       if (openaiKey) payload.openai_api_key = openaiKey;
       if (geminiKey) payload.gemini_api_key = geminiKey;
+      if (deepseekKey) payload.deepseek_api_key = deepseekKey;
       await api.updateLLM(payload);
       toast.show(`LLM updated — default: ${provider}`, "success");
       onSaved();
@@ -222,6 +231,19 @@ export function LLMTab({
         apiKey={geminiKey}
         onApiKey={setGeminiKey}
         keyEnvVar="GEMINI_API_KEY"
+      />
+
+      <ProviderPanel
+        title="DeepSeek"
+        configured={llm.deepseek_configured}
+        model={deepseekModel}
+        onModel={setDeepseekModel}
+        modelPlaceholder="deepseek-v4-flash"
+        apiKey={deepseekKey}
+        onApiKey={setDeepseekKey}
+        keyEnvVar="DEEPSEEK_API_KEY"
+        baseUrl={deepseekBaseUrl}
+        onBaseUrl={setDeepseekBaseUrl}
       />
 
       <Panel>

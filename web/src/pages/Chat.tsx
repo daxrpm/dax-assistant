@@ -258,7 +258,7 @@ function ActivityPanel({
 
 /* ── Model selector ───────────────────────────────────────────────────────── */
 
-const PROVIDERS = ["openai", "anthropic", "gemini", "ollama", "codex"] as const;
+const PROVIDERS = ["openai", "anthropic", "gemini", "deepseek", "ollama", "codex"] as const;
 
 function ModelSelector({
   provider,
@@ -408,7 +408,9 @@ export function ChatPage() {
               ? cfg.llm.openai_model
               : p === "gemini"
                 ? cfg.llm.gemini_model
-                : cfg.llm.ollama_model;
+                : p === "deepseek"
+                  ? cfg.llm.deepseek_model
+                  : cfg.llm.ollama_model;
         if (m) setModel(m);
       })
       .catch(() => {});
@@ -526,7 +528,9 @@ export function ChatPage() {
             ? "openai_model"
             : newProvider === "gemini"
               ? "gemini_model"
-              : "ollama_model";
+              : newProvider === "deepseek"
+                ? "deepseek_model"
+                : "ollama_model";
       await api.updateLLM({ default_provider: newProvider, [modelKey]: newModel });
     } catch {
       /* ignore */

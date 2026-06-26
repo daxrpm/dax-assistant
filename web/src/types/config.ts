@@ -49,6 +49,9 @@ export interface LLMConfig {
   openai_reasoning_effort: string;
   gemini_model: string;
   gemini_configured: boolean;
+  deepseek_model: string;
+  deepseek_base_url: string;
+  deepseek_configured: boolean;
   codex_binary: string;
   codex_model: string;
 }
