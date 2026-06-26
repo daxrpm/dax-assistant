@@ -15,7 +15,7 @@ import numpy as np
 import sounddevice as sd
 
 if TYPE_CHECKING:
-    from collections.abc import Iterable
+    from collections.abc import Callable, Iterable
 
 logger = logging.getLogger(__name__)
 
@@ -126,6 +126,40 @@ class AudioPlayer:
         """
         sd.play(audio, samplerate=sample_rate)
         sd.wait()
+
+    def play_blocks(
+        self,
+        audio: np.ndarray,
+        sample_rate: int = PLAYBACK_RATE,
+        should_stop: Callable[[], bool] | None = None,
+        block: int = 2_048,
+    ) -> bool:
+        """Play an int16 buffer in small blocks, stopping early on demand.
+
+        ``should_stop`` is polled between blocks; when it returns True playback
+        halts immediately. Enables barge-in (interrupting Dax mid-reply) and
+        low-latency streaming playback.
+
+        Returns:
+            True if playback was interrupted, False if it played to the end.
+        """
+        stream = sd.OutputStream(
+            samplerate=sample_rate,
+            channels=CHANNELS,
+            dtype=CAPTURE_DTYPE,
+        )
+        stream.start()
+        interrupted = False
+        try:
+            for offset in range(0, len(audio), block):
+                if should_stop is not None and should_stop():
+                    interrupted = True
+                    break
+                stream.write(audio[offset: offset + block])
+        finally:
+            stream.stop()
+            stream.close()
+        return interrupted
 
     def play_stream(
         self,

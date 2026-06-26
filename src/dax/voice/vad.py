@@ -7,6 +7,7 @@ min-silence logic internally — we just feed 32 ms chunks and read events.
 
 from __future__ import annotations
 
+import contextlib
 import logging
 
 import numpy as np
@@ -92,7 +93,30 @@ class VoiceActivityDetector:
         tensor = torch.from_numpy(audio_chunk.astype(np.float32))
         return self._iterator(tensor)
 
+    def speech_prob(self, audio_chunk: np.ndarray) -> float:
+        """Return the raw speech probability (0..1) for a VAD-sized chunk.
+
+        Used by the pipeline's adaptive endpointing, which tracks silence
+        duration itself so it can shorten the end-of-speech pause for quick
+        commands and lengthen it for long utterances (natural mid-sentence
+        pauses) — closer to how smart speakers behave.
+        """
+        if self._model is None:
+            raise VoiceError("VAD not started")
+        tensor = torch.from_numpy(audio_chunk.astype(np.float32))
+        with torch.no_grad():
+            return float(self._model(tensor, SAMPLE_RATE).item())
+
+    @property
+    def threshold(self) -> float:
+        return self._threshold
+
     def reset(self) -> None:
         """Reset the iterator state between utterances."""
         if self._iterator is not None:
             self._iterator.reset_states()
+        if self._model is not None:
+            # Silero keeps internal RNN state; clear it so probabilities don't
+            # bleed across utterances.
+            with contextlib.suppress(Exception):
+                self._model.reset_states()

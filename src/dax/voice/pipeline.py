@@ -24,6 +24,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import re
 import threading
 import time
 from enum import StrEnum
@@ -48,7 +49,30 @@ logger = logging.getLogger(__name__)
 
 # Safety limits
 _MAX_RECORDING_SECONDS = 30
-_CONVERSATION_TIMEOUT_SECONDS = 8  # How long to wait for follow-up speech
+
+
+# Split assistant text into sentence-ish chunks for incremental TTS playback.
+_SENTENCE_RE = re.compile(r"[^.!?\n]+[.!?\n]*")
+
+
+def _split_sentences(text: str) -> list[str]:
+    """Break *text* into sentence chunks, merging tiny fragments.
+
+    Sentence-at-a-time synthesis lets playback start almost immediately instead
+    of waiting for the whole reply to be synthesised — a big perceived-latency
+    win for longer answers.
+    """
+    text = text.strip()
+    if not text:
+        return []
+    parts = [p.strip() for p in _SENTENCE_RE.findall(text) if p.strip()]
+    merged: list[str] = []
+    for part in parts:
+        if merged and len(merged[-1]) < 40:
+            merged[-1] = f"{merged[-1]} {part}"
+        else:
+            merged.append(part)
+    return merged or [text]
 
 
 class PipelineState(StrEnum):
@@ -107,14 +131,26 @@ class VoicePipeline:
             model_size=config.stt_model,
             compute_type=config.stt_compute_type,
             language=config.stt_language,
+            device=getattr(config, "stt_device", "auto"),
+            beam_size=getattr(config, "stt_beam_size", 1),
         )
         self._tts = TextToSpeech(
             voice_es=config.tts_voice_es,
             voice_en=config.tts_voice_en,
         )
 
+        # Feature flags (best-practice defaults; see VoiceConfig).
+        self._denoise = getattr(config, "denoise", True)
+        self._barge_in = getattr(config, "barge_in", True)
+        self._earcon_enabled = getattr(config, "earcon", True)
+        self._adaptive = getattr(config, "adaptive_endpointing", True)
+        self._conv_timeout = getattr(config, "conversation_timeout_s", 8)
+
         self._speech_buffer: list[np.ndarray] = []
         self._conversation_start: float = 0.0
+        self._speech_started_at: float = 0.0
+        self._last_voice_at: float = 0.0
+        self._listen_started_at: float = 0.0
         self._last_language = Language.AUTO
 
     # -- Properties --
@@ -206,11 +242,18 @@ class VoicePipeline:
             # Immediate audible acknowledgement (like Alexa's tone) so the user
             # knows Dax is listening before they start speaking. Mic is muted
             # during the chime so the tone is never captured as speech.
-            self._play_earcon("wake")
+            if self._earcon_enabled:
+                self._play_earcon("wake")
             self._enter_listening()
 
     def _handle_listening(self) -> None:
-        """LISTENING — buffer audio and detect end-of-speech via VAD."""
+        """LISTENING — buffer audio and detect end-of-speech.
+
+        With adaptive endpointing we track silence ourselves from the raw VAD
+        probability so the end-of-speech pause shortens for quick commands and
+        lengthens for longer utterances (allowing natural mid-sentence pauses).
+        Falls back to Silero's VADIterator end-event when disabled.
+        """
         chunk = self._capture.read_chunk(timeout=0.5)
         if chunk is None:
             return
@@ -218,22 +261,68 @@ class VoicePipeline:
         self._speech_buffer.append(chunk)
         float_chunk = chunk.astype(np.float32) / 32768.0
 
-        for offset in range(0, len(float_chunk), VAD_CHUNK_SIZE):
-            sub = float_chunk[offset: offset + VAD_CHUNK_SIZE]
-            if len(sub) < VAD_CHUNK_SIZE:
-                sub = np.pad(sub, (0, VAD_CHUNK_SIZE - len(sub)))
-            result = self._vad.process_chunk(sub)
-            if result is not None and "end" in result:
-                logger.info("End of speech detected, transcribing...")
+        if self._adaptive:
+            if self._adaptive_endpoint(float_chunk):
+                logger.info("End of speech (adaptive), transcribing...")
                 self._state = PipelineState.PROCESSING
                 self._process_speech()
                 return
+            # If the user never started speaking, don't hang forever.
+            if (
+                self._speech_started_at == 0.0
+                and time.monotonic() - self._listen_started_at > 6.0
+            ):
+                logger.info("No speech after wake word — returning to IDLE")
+                self._state = PipelineState.IDLE
+                self._speech_buffer = []
+                return
+        else:
+            for offset in range(0, len(float_chunk), VAD_CHUNK_SIZE):
+                sub = float_chunk[offset: offset + VAD_CHUNK_SIZE]
+                if len(sub) < VAD_CHUNK_SIZE:
+                    sub = np.pad(sub, (0, VAD_CHUNK_SIZE - len(sub)))
+                result = self._vad.process_chunk(sub)
+                if result is not None and "end" in result:
+                    logger.info("End of speech detected, transcribing...")
+                    self._state = PipelineState.PROCESSING
+                    self._process_speech()
+                    return
 
         max_chunks = SAMPLE_RATE * _MAX_RECORDING_SECONDS // CHUNK_SIZE
         if len(self._speech_buffer) > max_chunks:
             logger.warning("Recording exceeded %d s", _MAX_RECORDING_SECONDS)
             self._state = PipelineState.PROCESSING
             self._process_speech()
+
+    def _adaptive_endpoint(self, float_chunk: np.ndarray) -> bool:
+        """Track speech/silence on *float_chunk*; return True at end-of-speech.
+
+        Endpoint pause scales with how long the user has been speaking:
+        ~450 ms for short commands, up to ~900 ms for longer utterances so
+        natural pauses don't cut them off prematurely.
+        """
+        now = time.monotonic()
+        voiced = False
+        for offset in range(0, len(float_chunk), VAD_CHUNK_SIZE):
+            sub = float_chunk[offset: offset + VAD_CHUNK_SIZE]
+            if len(sub) < VAD_CHUNK_SIZE:
+                sub = np.pad(sub, (0, VAD_CHUNK_SIZE - len(sub)))
+            if self._vad.speech_prob(sub) >= self._vad.threshold:
+                voiced = True
+
+        if voiced:
+            if self._speech_started_at == 0.0:
+                self._speech_started_at = now
+            self._last_voice_at = now
+            return False
+
+        if self._speech_started_at == 0.0:
+            return False  # still waiting for speech to begin
+
+        speech_len = self._last_voice_at - self._speech_started_at
+        # Adaptive pause: short for quick commands, longer for long utterances.
+        pause_s = 0.45 if speech_len < 1.2 else min(0.9, 0.45 + speech_len * 0.12)
+        return (now - self._last_voice_at) >= pause_s
 
     def _handle_conversing(self) -> None:
         """CONVERSING — wait for follow-up speech without wake word.
@@ -243,7 +332,7 @@ class VoicePipeline:
         If silence timeout, go back to IDLE.
         """
         elapsed = time.monotonic() - self._conversation_start
-        if elapsed > _CONVERSATION_TIMEOUT_SECONDS:
+        if elapsed > self._conv_timeout:
             logger.info(
                 "Conversation timeout (%.0fs), returning to IDLE", elapsed,
             )
@@ -254,17 +343,23 @@ class VoicePipeline:
         if chunk is None:
             return
 
-        # Check VAD for speech start
+        # Detect follow-up speech start (no wake word needed).
         float_chunk = chunk.astype(np.float32) / 32768.0
         for offset in range(0, len(float_chunk), VAD_CHUNK_SIZE):
             sub = float_chunk[offset: offset + VAD_CHUNK_SIZE]
             if len(sub) < VAD_CHUNK_SIZE:
                 sub = np.pad(sub, (0, VAD_CHUNK_SIZE - len(sub)))
-            result = self._vad.process_chunk(sub)
-            if result is not None and "start" in result:
+            speaking = (
+                self._vad.speech_prob(sub) >= self._vad.threshold
+                if self._adaptive
+                else (self._vad.process_chunk(sub) or {}).get("start") is not None
+            )
+            if speaking:
                 logger.info("Follow-up speech detected, continuing conversation")
+                self._enter_listening()
                 self._speech_buffer = [chunk]
-                self._state = PipelineState.LISTENING
+                self._speech_started_at = time.monotonic()
+                self._last_voice_at = self._speech_started_at
                 return
 
     # -- Speech processing --
@@ -278,6 +373,9 @@ class VoicePipeline:
         raw_audio = np.concatenate(self._speech_buffer)
         float_audio = raw_audio.astype(np.float32) / 32768.0
         self._speech_buffer = []
+
+        if self._denoise:
+            float_audio = self._denoise_audio(float_audio)
 
         try:
             text, detected_lang = self._stt.transcribe(float_audio)
@@ -315,10 +413,12 @@ class VoicePipeline:
         self._wait_and_speak(language)
 
     def _wait_and_speak(self, language: Language) -> None:
-        """Wait for the assistant's response and play it via TTS.
+        """Wait for the assistant's response and speak it.
 
-        CRITICAL: Mutes the microphone during TTS playback to prevent
-        the wake word detector from hearing Dax's own voice (echo).
+        Speaks sentence by sentence for low time-to-first-audio. When barge-in
+        is enabled the mic stays live during playback and the wake word
+        interrupts Dax mid-reply (so you can cut him off, like Alexa). When
+        disabled, the mic is muted during playback to avoid echo/feedback.
         After speaking, enters CONVERSING mode for follow-up.
         """
         self._state = PipelineState.SPEAKING
@@ -341,18 +441,13 @@ class VoicePipeline:
             if language == Language.SPANISH or response.language == Language.SPANISH:
                 tts_lang = "es"
 
-            # MUTE mic during TTS playback to prevent echo/feedback
-            self._capture.stop()
-            self._drain_mic_buffer()
+            interrupted = self._speak(response.content, tts_lang)
 
-            try:
-                audio = self._tts.synthesize(response.content, language=tts_lang)
-                self._player.play(audio, sample_rate=self._tts.sample_rate)
-            finally:
-                # UNMUTE mic after playback — small delay to avoid capturing
-                # speaker reverb/echo tail
-                time.sleep(0.3)
-                self._capture.start()
+            if interrupted:
+                logger.info("Barge-in detected — listening to the user")
+                self._drain_mic_buffer()
+                self._enter_listening()
+                return
 
             # Check if the response is a farewell — if so, end conversation
             if self._is_farewell(response.content):
@@ -368,6 +463,60 @@ class VoicePipeline:
             logger.exception("Error during speech playback")
             self._state = PipelineState.IDLE
 
+    def _speak(self, text: str, tts_lang: str) -> bool:
+        """Synthesise and play *text*. Returns True if interrupted (barge-in)."""
+        sentences = _split_sentences(text)
+
+        if not self._barge_in:
+            # Mute the mic during playback to prevent echo/feedback.
+            self._capture.stop()
+            self._drain_mic_buffer()
+            try:
+                for sentence in sentences:
+                    audio = self._tts.synthesize(sentence, language=tts_lang)
+                    self._player.play(audio, sample_rate=self._tts.sample_rate)
+            finally:
+                time.sleep(0.3)
+                self._capture.start()
+            return False
+
+        # Barge-in: keep the mic live and let the wake word interrupt playback.
+        self._drain_mic_buffer()
+        self._wakeword.reset()
+        interrupted = False
+        for sentence in sentences:
+            audio = self._tts.synthesize(sentence, language=tts_lang)
+            interrupted = self._player.play_blocks(
+                audio,
+                sample_rate=self._tts.sample_rate,
+                should_stop=self._bargein_detected,
+            )
+            if interrupted:
+                break
+        self._wakeword.reset()
+        return interrupted
+
+    def _bargein_detected(self) -> bool:
+        """True if the wake word is heard while Dax is speaking (interrupt)."""
+        for _ in range(4):
+            chunk = self._capture.read_chunk(timeout=0.0)
+            if chunk is None:
+                break
+            if self._wakeword.detect(chunk) is not None:
+                return True
+        return False
+
+    def _denoise_audio(self, audio: np.ndarray) -> np.ndarray:
+        """Reduce background noise before STT (best-effort; needs noisereduce)."""
+        try:
+            import noisereduce as nr  # type: ignore[import-not-found]
+
+            reduced = nr.reduce_noise(y=audio, sr=SAMPLE_RATE, stationary=False)
+            return np.asarray(reduced, dtype=np.float32)
+        except Exception:
+            logger.debug("Denoise unavailable/failed — using raw audio", exc_info=True)
+            return audio
+
     # -- State transitions --
 
     def _enter_listening(self) -> None:
@@ -375,15 +524,19 @@ class VoicePipeline:
         self._state = PipelineState.LISTENING
         self._vad.reset()
         self._speech_buffer = []
+        self._speech_started_at = 0.0
+        self._last_voice_at = 0.0
+        self._listen_started_at = time.monotonic()
 
     def _enter_conversing(self) -> None:
         """Transition to CONVERSING state (follow-up mode)."""
         self._state = PipelineState.CONVERSING
         self._conversation_start = time.monotonic()
         self._vad.reset()
+        self._drain_mic_buffer()  # discard any TTS tail before listening
         logger.info(
             "Conversation mode — listening for follow-up (%ds timeout)",
-            _CONVERSATION_TIMEOUT_SECONDS,
+            self._conv_timeout,
         )
 
     # -- Earcons --
