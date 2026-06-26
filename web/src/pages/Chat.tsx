@@ -1,6 +1,6 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate, useParams } from "react-router";
-import { Button } from "@heroui/react";
+import { Button, Spinner } from "@heroui/react";
 import {
   Send,
   Sparkles,
@@ -18,6 +18,7 @@ import {
   Wrench,
   Link2,
   Check,
+  Search,
 } from "lucide-react";
 import { useChatSocket, type ChatMessage, type AgentEvent } from "../hooks/useChatSocket";
 import { api, type ConversationSummary } from "../api/client";
@@ -46,79 +47,72 @@ function formatRelative(iso: string): string {
   return days < 7 ? `${days}d ago` : d.toLocaleDateString();
 }
 
-/* ── Thinking dots ────────────────────────────────────────────────────────── */
+/* ── Assistant avatar ─────────────────────────────────────────────────────── */
 
-function Dot({ delay = "0ms" }: { delay?: string }) {
+function AssistantAvatar() {
   return (
-    <span
-      className="inline-block h-1.5 w-1.5 animate-bounce rounded-full bg-current"
-      style={{ animationDelay: delay }}
-    />
+    <div className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-gradient-to-br from-accent to-accent/70 text-accent-foreground shadow-sm">
+      <Sparkles size={13} />
+    </div>
   );
 }
 
-/* ── Inline tool event line ───────────────────────────────────────────────── */
+/* ── Single tool step line (used in thinking trail + collapsed thought) ─────── */
 
-function ToolEventLine({ ev }: { ev: AgentEvent }) {
+function StepLine({ ev }: { ev: AgentEvent }) {
   if (ev.type === "tool_call") {
     const label = ev.server ? `${ev.server} · ${ev.tool}` : ev.tool ?? "";
     return (
-      <div className="flex items-center gap-1.5 text-xs text-muted">
-        <Loader2 size={11} className="animate-spin text-accent" />
-        <span>Calling <span className="font-mono">{label}</span>…</span>
+      <div className="flex items-center gap-2 text-xs text-muted">
+        <Wrench size={11} className="shrink-0 text-accent" />
+        <span className="truncate">
+          Using <span className="font-mono text-foreground/80">{label}</span>
+        </span>
       </div>
     );
   }
   if (ev.type === "tool_result") {
     return (
-      <div className="flex items-center gap-1.5 text-xs text-muted">
+      <div className="flex items-center gap-2 text-xs text-muted">
         {ev.error ? (
-          <AlertCircle size={11} className="text-danger-soft-foreground" />
+          <AlertCircle size={11} className="shrink-0 text-danger-soft-foreground" />
         ) : (
-          <CheckCircle2 size={11} className="text-success-soft-foreground" />
+          <CheckCircle2 size={11} className="shrink-0 text-success-soft-foreground" />
         )}
-        <span className="font-mono">{ev.tool}</span>
-        <span>{ev.error ? "error" : "done"}</span>
+        <span className="truncate font-mono text-foreground/60">{ev.tool}</span>
+        <span>{ev.error ? "failed" : "done"}</span>
       </div>
     );
   }
   return null;
 }
 
-/* ── Collapsible "Thought for Xs" section ─────────────────────────────────── */
+/* ── Collapsed "Thought for Ns" (after the turn completes) ─────────────────── */
 
-function ThoughtSummary({
-  events,
-  elapsed,
-}: {
-  events: AgentEvent[];
-  elapsed?: number;
-}) {
+function ThoughtToggle({ events, elapsed }: { events: AgentEvent[]; elapsed?: number }) {
   const [open, setOpen] = useState(false);
   const toolCalls = events.filter((e) => e.type === "tool_call");
-  if (toolCalls.length === 0 && !elapsed) return null;
+  if (toolCalls.length === 0 && elapsed == null) return null;
 
-  const label = elapsed != null ? `Thought for ${elapsed}s` : "Thinking";
+  const label = elapsed != null ? `Thought for ${elapsed}s` : "Reasoning";
 
   return (
-    <div className="mt-2">
+    <div className="mb-1.5">
       <button
         type="button"
         onClick={() => setOpen((v) => !v)}
-        className="flex items-center gap-1 text-xs text-muted transition-colors hover:text-foreground"
+        className="flex items-center gap-1 text-xs text-muted/80 transition-colors hover:text-foreground"
       >
         {open ? <ChevronDown size={12} /> : <ChevronRight size={12} />}
         <span>{label}</span>
         {toolCalls.length > 0 && (
-          <span className="ml-1 rounded-full bg-surface-secondary px-1.5 py-0.5 font-mono text-[10px]">
-            {toolCalls.length} tool{toolCalls.length !== 1 ? "s" : ""}
-          </span>
+          <span className="text-muted/60">· {toolCalls.length} tool{toolCalls.length !== 1 ? "s" : ""}</span>
         )}
       </button>
       {open && (
-        <div className="mt-1.5 flex flex-col gap-1 rounded-xl border border-separator bg-surface-secondary px-3 py-2">
+        <div className="mt-2 flex flex-col gap-1.5 border-l border-separator pl-3">
           {events.map((ev, i) => (
-            <ToolEventLine key={i} ev={ev} />
+            <StepLine key={i} ev={ev} />
           ))}
         </div>
       )}
@@ -126,33 +120,26 @@ function ThoughtSummary({
   );
 }
 
-/* ── Live thinking (in-flight) ────────────────────────────────────────────── */
+/* ── Live thinking trail (in-flight, ChatGPT-style) ───────────────────────── */
 
-function LiveThinking({ events }: { events: AgentEvent[] }) {
-  // Most recent activity drives the headline label.
+function ThinkingTrail({ events }: { events: AgentEvent[] }) {
   const lastCall = [...events].reverse().find((e) => e.type === "tool_call");
   const headline = lastCall
     ? `Using ${lastCall.server ? `${lastCall.server} · ` : ""}${lastCall.tool}`
     : "Thinking";
+  const steps = events.filter((e) => e.type === "tool_call" || e.type === "tool_result");
 
   return (
     <div className="flex gap-3">
-      <div className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-accent text-accent-foreground">
-        <Sparkles size={13} />
-      </div>
+      <AssistantAvatar />
       <div className="min-w-0 flex-1 pt-0.5">
-        <div className="flex items-center gap-2 text-sm text-muted">
-          <span className="bg-gradient-to-r from-muted via-foreground to-muted bg-[length:200%_100%] bg-clip-text text-transparent animate-[shimmer_2s_linear_infinite]">
-            {headline}
-          </span>
-          <span className="flex items-center gap-0.5">
-            <Dot /> <Dot delay="150ms" /> <Dot delay="300ms" />
-          </span>
-        </div>
-        {events.length > 0 && (
-          <div className="mt-2 flex flex-col gap-1 rounded-xl border border-separator bg-surface-secondary px-3 py-2">
-            {events.map((ev, i) => (
-              <ToolEventLine key={i} ev={ev} />
+        <span className="bg-gradient-to-r from-muted via-foreground to-muted bg-[length:200%_100%] bg-clip-text text-sm font-medium text-transparent animate-[shimmer_2.5s_linear_infinite]">
+          {headline}
+        </span>
+        {steps.length > 0 && (
+          <div className="mt-2 flex flex-col gap-1.5 border-l border-separator pl-3">
+            {steps.map((ev, i) => (
+              <StepLine key={i} ev={ev} />
             ))}
           </div>
         )}
@@ -167,7 +154,7 @@ function MessageBubble({ message }: { message: ChatMessage }) {
   if (message.role === "user") {
     return (
       <div className="flex justify-end">
-        <div className="max-w-[78%] rounded-2xl rounded-br-md bg-surface-secondary px-4 py-2.5 text-sm">
+        <div className="max-w-[80%] whitespace-pre-wrap break-words rounded-3xl rounded-br-lg bg-surface-secondary px-4 py-2.5 text-sm leading-relaxed">
           {message.content}
         </div>
       </div>
@@ -176,16 +163,14 @@ function MessageBubble({ message }: { message: ChatMessage }) {
 
   return (
     <div className="flex gap-3">
-      <div className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-accent text-accent-foreground">
-        <Sparkles size={13} />
-      </div>
+      <AssistantAvatar />
       <div className="min-w-0 flex-1 pt-0.5">
+        {message.agentEvents && message.agentEvents.length > 0 && (
+          <ThoughtToggle events={message.agentEvents} elapsed={message.thinkingElapsed} />
+        )}
         <div className="prose prose-sm dark:prose-invert max-w-none text-sm">
           <Markdown content={message.content} />
         </div>
-        {message.agentEvents && message.agentEvents.length > 0 && (
-          <ThoughtSummary events={message.agentEvents} elapsed={message.thinkingElapsed} />
-        )}
       </div>
     </div>
   );
@@ -212,10 +197,8 @@ function ActivityPanel({
         <div className="flex items-center gap-2 text-sm font-semibold">
           <Activity size={15} />
           Activity
-          {live && <Loader2 size={12} className="animate-spin text-accent" />}
-          {elapsed != null && (
-            <span className="text-xs font-normal text-muted">· {elapsed}s</span>
-          )}
+          {live && <Spinner size="sm" />}
+          {elapsed != null && <span className="text-xs font-normal text-muted">· {elapsed}s</span>}
         </div>
         <button
           type="button"
@@ -238,9 +221,7 @@ function ActivityPanel({
                       <Wrench size={11} className="text-accent" />
                       <span className="font-mono">{ev.tool}</span>
                     </div>
-                    {ev.server && (
-                      <span className="ml-4 text-[10px] text-muted">{ev.server}</span>
-                    )}
+                    {ev.server && <span className="ml-4 text-[10px] text-muted">{ev.server}</span>}
                     {ev.args && Object.keys(ev.args).length > 0 && (
                       <pre className="ml-4 overflow-x-auto rounded-lg bg-surface-secondary p-1.5 font-mono text-[10px] text-muted scroll-slim">
                         {JSON.stringify(ev.args, null, 2)}
@@ -249,26 +230,23 @@ function ActivityPanel({
                   </div>
                 );
               }
-              if (ev.type === "tool_result") {
-                return (
-                  <div key={i} className="flex flex-col gap-1">
-                    <div className="flex items-center gap-1.5 text-xs">
-                      {ev.error ? (
-                        <AlertCircle size={11} className="text-danger-soft-foreground" />
-                      ) : (
-                        <CheckCircle2 size={11} className="text-success-soft-foreground" />
-                      )}
-                      <span className="text-muted">{ev.error ? "Error" : "Result"}</span>
-                    </div>
-                    {ev.preview && (
-                      <pre className="ml-4 overflow-x-auto rounded-lg bg-surface-secondary p-1.5 font-mono text-[10px] text-muted scroll-slim">
-                        {ev.preview}
-                      </pre>
+              return (
+                <div key={i} className="flex flex-col gap-1">
+                  <div className="flex items-center gap-1.5 text-xs">
+                    {ev.error ? (
+                      <AlertCircle size={11} className="text-danger-soft-foreground" />
+                    ) : (
+                      <CheckCircle2 size={11} className="text-success-soft-foreground" />
                     )}
+                    <span className="text-muted">{ev.error ? "Error" : "Result"}</span>
                   </div>
-                );
-              }
-              return null;
+                  {ev.preview && (
+                    <pre className="ml-4 overflow-x-auto rounded-lg bg-surface-secondary p-1.5 font-mono text-[10px] text-muted scroll-slim">
+                      {ev.preview}
+                    </pre>
+                  )}
+                </div>
+              );
             })}
           </div>
         )}
@@ -307,26 +285,28 @@ function ModelSelector({
     if (Object.keys(models).length > 0) return;
     setLoading(true);
     try {
-      const data = await api.listLLMModels();
-      setModels(data);
+      setModels(await api.listLLMModels());
     } catch {
-      // ignore
+      /* ignore */
     } finally {
       setLoading(false);
     }
   };
 
-  const shortModel = model.length > 18 ? model.slice(0, 16) + "…" : model;
+  const shortModel = model.length > 22 ? model.slice(0, 20) + "…" : model;
 
   return (
     <div ref={ref} className="relative">
       <button
         type="button"
-        onClick={() => { setOpen((v) => !v); if (!open) loadModels(); }}
-        className="flex items-center gap-1.5 rounded-full border border-separator bg-surface px-3 py-1 text-xs text-muted transition-colors hover:border-accent/50 hover:text-foreground"
+        onClick={() => {
+          setOpen((v) => !v);
+          if (!open) loadModels();
+        }}
+        className="flex items-center gap-1.5 rounded-full px-2.5 py-1 text-xs text-muted transition-colors hover:bg-surface-secondary hover:text-foreground"
       >
         <span className="capitalize">{provider}</span>
-        <span className="text-muted/50">·</span>
+        <span className="text-muted/40">·</span>
         <span className="font-mono">{shortModel}</span>
         <ChevronDown size={11} />
       </button>
@@ -352,11 +332,14 @@ function ModelSelector({
                       <button
                         key={m}
                         type="button"
-                        onClick={() => { onChange(prov, m); setOpen(false); }}
+                        onClick={() => {
+                          onChange(prov, m);
+                          setOpen(false);
+                        }}
                         className={cn(
                           "flex w-full items-center px-3 py-1.5 text-left text-xs transition-colors hover:bg-surface-secondary",
                           prov === provider && m === model
-                            ? "text-accent font-medium"
+                            ? "font-medium text-accent"
                             : "text-foreground",
                         )}
                       >
@@ -386,6 +369,7 @@ export function ChatPage() {
   const [deletingId, setDeletingId] = useState<string | null>(null);
   const [activityOpen, setActivityOpen] = useState(false);
   const [linkCopied, setLinkCopied] = useState(false);
+  const [search, setSearch] = useState("");
   const [provider, setProvider] = useState("openai");
   const [model, setModel] = useState("gpt-4o");
 
@@ -396,28 +380,37 @@ export function ChatPage() {
   const scrollRef = useRef<HTMLDivElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
 
-  // Last message for activity panel
   const lastAssistant = [...messages].reverse().find((m) => m.role === "assistant");
-  // Events shown in the activity panel: live ones while thinking, otherwise the
-  // last completed assistant turn's recorded events.
   const panelEvents: AgentEvent[] =
-    thinking && liveEvents.length > 0
-      ? liveEvents
-      : lastAssistant?.agentEvents ?? [];
+    thinking && liveEvents.length > 0 ? liveEvents : lastAssistant?.agentEvents ?? [];
   const panelElapsed = thinking ? undefined : lastAssistant?.thinkingElapsed;
+
+  // Each chat has a unique URL (/c/:sessionId). If we land on "/" without one,
+  // redirect to a stable link so the conversation is always shareable — just
+  // like ChatGPT.
+  useEffect(() => {
+    if (!urlSessionId) navigate(`/c/${sessionId}`, { replace: true });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [urlSessionId]);
 
   // Load current provider/model from config
   useEffect(() => {
-    api.getConfig().then((cfg) => {
-      setProvider(cfg.llm.default_provider);
-      const p = cfg.llm.default_provider;
-      const m =
-        p === "anthropic" ? cfg.llm.anthropic_model :
-        p === "openai" ? cfg.llm.openai_model :
-        p === "gemini" ? cfg.llm.gemini_model :
-        cfg.llm.ollama_model;
-      if (m) setModel(m);
-    }).catch(() => {});
+    api
+      .getConfig()
+      .then((cfg) => {
+        setProvider(cfg.llm.default_provider);
+        const p = cfg.llm.default_provider;
+        const m =
+          p === "anthropic"
+            ? cfg.llm.anthropic_model
+            : p === "openai"
+              ? cfg.llm.openai_model
+              : p === "gemini"
+                ? cfg.llm.gemini_model
+                : cfg.llm.ollama_model;
+        if (m) setModel(m);
+      })
+      .catch(() => {});
   }, []);
 
   useEffect(() => {
@@ -432,14 +425,16 @@ export function ChatPage() {
     const ta = textareaRef.current;
     if (!ta) return;
     ta.style.height = "auto";
-    ta.style.height = `${Math.min(ta.scrollHeight, 160)}px`;
+    ta.style.height = `${Math.min(ta.scrollHeight, 200)}px`;
   }, [input]);
 
   const loadConversations = useCallback(() => {
     api.listConversations(50).then(setConversations).catch(() => setConversations([]));
   }, []);
 
-  useEffect(() => { loadConversations(); }, [loadConversations]);
+  useEffect(() => {
+    loadConversations();
+  }, [loadConversations]);
 
   const lastMessageCount = useRef(messages.length);
   useEffect(() => {
@@ -450,31 +445,12 @@ export function ChatPage() {
     }
   }, [messages.length, loadConversations]);
 
-  const submit = (e: React.FormEvent) => {
-    e.preventDefault();
-    const text = input.trim();
-    if (!text || status !== "open") return;
-    send(text);
-    setInput("");
-  };
-
-  const startNewChat = () => {
-    navigate(`/c/${newSessionId()}`);
-  };
-
-  // Open a conversation by navigating to its unique URL; the deep-link effect
-  // below does the actual loading so URL and state never diverge.
-  const openConversation = (conv: ConversationSummary) => {
-    navigate(`/c/${conv.session_key}`);
-  };
-
-  // Drive the active conversation entirely from the URL (/c/:sessionId), so
-  // every chat has a stable, shareable link and back/forward just works.
+  // Drive the active conversation entirely from the URL so deep links and
+  // back/forward navigation always reflect the right chat.
   const loadSession = useCallback(
     async (sk: string) => {
       const conv = conversations.find((c) => c.session_key === sk);
       if (!conv) {
-        // Unknown/new session — start a fresh, empty conversation.
         setSessionId(sk);
         setInitialMessages([]);
         setActiveConvId(null);
@@ -483,17 +459,18 @@ export function ChatPage() {
       if (conv.id === activeConvId && sk === sessionId) return;
       try {
         const detail = await api.getConversation(conv.id);
-        const msgs: ChatMessage[] = detail.messages.map((m) => ({
-          id: m.id,
-          role: m.role as "user" | "assistant",
-          content: m.content,
-          timestamp: m.timestamp,
-        }));
-        setInitialMessages(msgs);
+        setInitialMessages(
+          detail.messages.map((m) => ({
+            id: m.id,
+            role: m.role as "user" | "assistant",
+            content: m.content,
+            timestamp: m.timestamp,
+          })),
+        );
         setSessionId(conv.session_key);
         setActiveConvId(conv.id);
       } catch {
-        // silently ignore
+        /* ignore */
       }
     },
     [conversations, activeConvId, sessionId],
@@ -503,13 +480,24 @@ export function ChatPage() {
     if (urlSessionId) loadSession(urlSessionId);
   }, [urlSessionId, loadSession]);
 
+  const submit = (e: React.FormEvent) => {
+    e.preventDefault();
+    const text = input.trim();
+    if (!text || status !== "open") return;
+    send(text);
+    setInput("");
+  };
+
+  const startNewChat = () => navigate(`/c/${newSessionId()}`);
+  const openConversation = (conv: ConversationSummary) => navigate(`/c/${conv.session_key}`);
+
   const copyLink = async () => {
     try {
       await navigator.clipboard.writeText(`${window.location.origin}/c/${sessionId}`);
       setLinkCopied(true);
       setTimeout(() => setLinkCopied(false), 1500);
     } catch {
-      // ignore
+      /* ignore */
     }
   };
 
@@ -531,48 +519,73 @@ export function ChatPage() {
     setModel(newModel);
     try {
       const modelKey =
-        newProvider === "anthropic" ? "anthropic_model" :
-        newProvider === "openai" ? "openai_model" :
-        newProvider === "gemini" ? "gemini_model" :
-        "ollama_model";
+        newProvider === "anthropic"
+          ? "anthropic_model"
+          : newProvider === "openai"
+            ? "openai_model"
+            : newProvider === "gemini"
+              ? "gemini_model"
+              : "ollama_model";
       await api.updateLLM({ default_provider: newProvider, [modelKey]: newModel });
     } catch {
-      // ignore — will take effect on next reload anyway
+      /* ignore */
     }
   };
 
-  const currentTitle =
-    activeConvId
-      ? (conversations.find((c) => c.id === activeConvId)?.title ?? "Chat")
-      : messages.length > 0 ? "New conversation" : "Chat";
+  const filteredConversations = useMemo(() => {
+    const q = search.trim().toLowerCase();
+    if (!q) return conversations;
+    return conversations.filter(
+      (c) => c.title.toLowerCase().includes(q) || c.preview?.toLowerCase().includes(q),
+    );
+  }, [conversations, search]);
+
+  const currentTitle = activeConvId
+    ? conversations.find((c) => c.id === activeConvId)?.title ?? "Chat"
+    : messages.length > 0
+      ? "New conversation"
+      : "New chat";
 
   return (
     <div className="flex h-full">
       {/* ── Conversation sidebar ───────────────────────────────────────────── */}
-      <aside className="flex w-60 shrink-0 flex-col border-r border-separator bg-surface">
-        {/* New chat */}
+      <aside className="flex w-64 shrink-0 flex-col border-r border-separator bg-surface">
         <div className="p-3">
-          <Button variant="ghost" size="sm" className="w-full justify-start gap-2" onPress={startNewChat}>
+          <Button variant="primary" size="sm" className="w-full justify-center gap-2" onPress={startNewChat}>
             <Plus size={15} />
             New chat
           </Button>
         </div>
 
-        <div className="mx-3 mb-2 border-t border-separator" />
+        <div className="px-3 pb-2">
+          <div className="relative">
+            <Search size={14} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-muted" />
+            <input
+              value={search}
+              onChange={(e) => setSearch(e.target.value)}
+              placeholder="Search chats"
+              className="w-full rounded-lg border border-separator bg-background py-1.5 pl-8 pr-2 text-xs outline-none transition-colors placeholder:text-muted focus:border-accent/60"
+            />
+          </div>
+        </div>
 
-        {/* Conversation list */}
+        <p className="px-4 pb-1 pt-2 text-[10px] font-semibold uppercase tracking-wider text-muted">
+          Recent
+        </p>
         <div className="flex-1 overflow-y-auto scroll-slim px-2 pb-3">
-          {conversations.length === 0 && (
-            <p className="px-3 py-4 text-center text-xs text-muted">No conversations yet</p>
+          {filteredConversations.length === 0 && (
+            <p className="px-3 py-4 text-center text-xs text-muted">
+              {search ? "No matches" : "No conversations yet"}
+            </p>
           )}
-          {conversations.map((conv) => {
+          {filteredConversations.map((conv) => {
             const isActive = conv.session_key === sessionId;
             return (
               <button
                 key={conv.id}
                 onClick={() => openConversation(conv)}
                 className={cn(
-                  "group relative flex w-full items-center gap-2.5 rounded-xl px-3 py-2 text-left transition-colors",
+                  "group relative flex w-full items-center gap-2.5 rounded-lg px-3 py-2 text-left transition-colors",
                   isActive
                     ? "bg-accent-soft text-accent-soft-foreground"
                     : "text-foreground hover:bg-surface-secondary",
@@ -583,18 +596,18 @@ export function ChatPage() {
                   className={cn("shrink-0", isActive ? "text-accent" : "text-muted")}
                 />
                 <div className="min-w-0 flex-1">
-                  <p className="truncate text-xs font-medium">
-                    {conv.title || "New conversation"}
-                  </p>
+                  <p className="truncate text-xs font-medium">{conv.title || "New conversation"}</p>
                   <p className="text-[10px] text-muted">{formatRelative(conv.updated_at)}</p>
                 </div>
-                <button
+                <span
+                  role="button"
+                  tabIndex={-1}
                   onClick={(e) => deleteConv(e, conv.id)}
-                  disabled={deletingId === conv.id}
                   className="hidden rounded-md p-0.5 text-muted hover:text-danger group-hover:flex"
+                  aria-disabled={deletingId === conv.id}
                 >
                   <Trash2 size={12} />
-                </button>
+                </span>
               </button>
             );
           })}
@@ -603,70 +616,68 @@ export function ChatPage() {
 
       {/* ── Chat main + optional activity panel ───────────────────────────── */}
       <div className="flex min-w-0 flex-1">
-        {/* Chat column */}
         <div className="flex min-w-0 flex-1 flex-col">
           {/* Header */}
           <div className="flex h-12 shrink-0 items-center justify-between border-b border-separator px-5">
             <h2 className="truncate text-sm font-semibold">{currentTitle}</h2>
             <div className="flex items-center gap-1">
-            <button
-              type="button"
-              onClick={copyLink}
-              title="Copy link to this chat"
-              className="flex items-center gap-1.5 rounded-lg px-2 py-1 text-xs text-muted transition-colors hover:bg-surface-secondary hover:text-foreground"
-            >
-              {linkCopied ? <Check size={13} /> : <Link2 size={13} />}
-              {linkCopied ? "Copied" : "Share"}
-            </button>
-            {panelEvents.length > 0 && (
               <button
                 type="button"
-                onClick={() => setActivityOpen((v) => !v)}
-                className={cn(
-                  "flex items-center gap-1.5 rounded-lg px-2 py-1 text-xs transition-colors",
-                  activityOpen
-                    ? "bg-accent-soft text-accent-soft-foreground"
-                    : "text-muted hover:bg-surface-secondary hover:text-foreground",
-                )}
+                onClick={copyLink}
+                title="Copy link to this chat"
+                className="flex items-center gap-1.5 rounded-lg px-2 py-1 text-xs text-muted transition-colors hover:bg-surface-secondary hover:text-foreground"
               >
-                <Activity size={13} />
-                Activity
-                {thinking && <Loader2 size={11} className="animate-spin" />}
-                {panelElapsed != null && (
-                  <span className="text-muted">· {panelElapsed}s</span>
-                )}
+                {linkCopied ? <Check size={13} /> : <Link2 size={13} />}
+                {linkCopied ? "Copied" : "Share"}
               </button>
-            )}
+              {panelEvents.length > 0 && (
+                <button
+                  type="button"
+                  onClick={() => setActivityOpen((v) => !v)}
+                  className={cn(
+                    "flex items-center gap-1.5 rounded-lg px-2 py-1 text-xs transition-colors",
+                    activityOpen
+                      ? "bg-accent-soft text-accent-soft-foreground"
+                      : "text-muted hover:bg-surface-secondary hover:text-foreground",
+                  )}
+                >
+                  <Activity size={13} />
+                  Activity
+                  {thinking && <Loader2 size={11} className="animate-spin" />}
+                  {panelElapsed != null && <span className="text-muted">· {panelElapsed}s</span>}
+                </button>
+              )}
             </div>
           </div>
 
           {/* Messages */}
           <div ref={scrollRef} className="min-h-0 flex-1 overflow-y-auto scroll-slim">
-            <div className="mx-auto flex max-w-2xl flex-col gap-5 px-6 py-6">
+            <div className="mx-auto flex max-w-3xl flex-col gap-6 px-6 py-8">
               {messages.length === 0 && !thinking && (
-                <div className="mt-20 flex flex-col items-center text-center text-muted">
-                  <div className="mb-4 flex h-14 w-14 items-center justify-center rounded-2xl bg-accent-soft text-accent">
+                <div className="mt-24 flex flex-col items-center text-center text-muted">
+                  <div className="mb-4 flex h-14 w-14 items-center justify-center rounded-2xl bg-gradient-to-br from-accent to-accent/70 text-accent-foreground shadow">
                     <Sparkles size={24} />
                   </div>
-                  <p className="text-lg font-semibold text-foreground">How can I help?</p>
-                  <p className="mt-1 max-w-sm text-sm">
+                  <p className="text-xl font-semibold text-foreground">How can I help?</p>
+                  <p className="mt-1.5 max-w-sm text-sm">
                     Ask anything — I can access your Nextcloud, run commands on your PC, and more.
                   </p>
                 </div>
               )}
 
-              {messages.map((m) => <MessageBubble key={m.id} message={m} />)}
+              {messages.map((m) => (
+                <MessageBubble key={m.id} message={m} />
+              ))}
 
-              {/* Live thinking — shows tools executing in real time */}
-              {thinking && <LiveThinking events={liveEvents} />}
+              {thinking && <ThinkingTrail events={liveEvents} />}
             </div>
           </div>
 
           {/* Composer */}
-          <div className="border-t border-separator px-5 py-4">
+          <div className="px-5 pb-5">
             <form
               onSubmit={submit}
-              className="mx-auto flex max-w-2xl flex-col gap-2 rounded-2xl border border-separator bg-surface p-3 shadow-sm transition-colors focus-within:border-accent/60"
+              className="mx-auto flex max-w-3xl flex-col gap-2 rounded-3xl border border-separator bg-surface p-3 shadow-sm transition-colors focus-within:border-accent/60"
             >
               <textarea
                 ref={textareaRef}
@@ -681,36 +692,30 @@ export function ChatPage() {
                 rows={1}
                 placeholder={status === "open" ? "Ask anything…" : "Connecting…"}
                 disabled={status !== "open"}
-                className="w-full resize-none bg-transparent text-sm outline-none placeholder:text-muted scroll-slim"
+                className="w-full resize-none bg-transparent px-2 pt-1 text-sm outline-none placeholder:text-muted scroll-slim"
               />
               <div className="flex items-center justify-between">
-                <ModelSelector
-                  provider={provider}
-                  model={model}
-                  onChange={changeModel}
-                />
+                <ModelSelector provider={provider} model={model} onChange={changeModel} />
                 <Button
                   type="submit"
                   variant="primary"
                   isIconOnly
                   isDisabled={status !== "open" || !input.trim()}
-                  className="h-8 w-8 shrink-0 rounded-full"
+                  className="h-9 w-9 shrink-0 rounded-full"
                   aria-label="Send"
                 >
-                  <Send size={14} />
+                  <Send size={15} />
                 </Button>
               </div>
             </form>
-
             {status !== "open" && (
-              <p className="mx-auto mt-1.5 max-w-2xl text-center text-xs text-warning">
+              <p className="mx-auto mt-1.5 max-w-3xl text-center text-xs text-warning">
                 Reconnecting to Dax…
               </p>
             )}
           </div>
         </div>
 
-        {/* Activity panel — live while thinking, recorded otherwise */}
         {activityOpen && panelEvents.length > 0 && (
           <ActivityPanel
             events={panelEvents}
