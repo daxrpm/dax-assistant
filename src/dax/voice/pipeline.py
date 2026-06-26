@@ -203,6 +203,10 @@ class VoicePipeline:
         detected = self._wakeword.detect(chunk)
         if detected is not None:
             logger.info("Wake word detected: %s", detected)
+            # Immediate audible acknowledgement (like Alexa's tone) so the user
+            # knows Dax is listening before they start speaking. Mic is muted
+            # during the chime so the tone is never captured as speech.
+            self._play_earcon("wake")
             self._enter_listening()
 
     def _handle_listening(self) -> None:
@@ -381,6 +385,47 @@ class VoicePipeline:
             "Conversation mode — listening for follow-up (%ds timeout)",
             _CONVERSATION_TIMEOUT_SECONDS,
         )
+
+    # -- Earcons --
+
+    def _play_earcon(self, kind: str = "wake") -> None:
+        """Play a short confirmation tone with the mic muted.
+
+        A wake earcon gives instant feedback (Alexa-style) the moment the wake
+        word fires, so the user knows to start speaking. Best-effort: any audio
+        error is swallowed so it never blocks the conversation.
+        """
+        try:
+            tone = self._earcon_samples(kind)
+            self._capture.stop()
+            self._drain_mic_buffer()
+            try:
+                self._player.play(tone, sample_rate=22_050)
+            finally:
+                time.sleep(0.05)
+                self._capture.start()
+                self._drain_mic_buffer()
+        except Exception:
+            logger.debug("Earcon playback failed", exc_info=True)
+
+    @staticmethod
+    def _earcon_samples(kind: str) -> np.ndarray:
+        """Synthesise a short two-note chime as int16 PCM at 22.05 kHz."""
+        sr = 22_050
+        # (frequency_hz, duration_s) — a rising pair for "wake", soft for "end".
+        notes = [(880.0, 0.09), (1320.0, 0.11)] if kind == "wake" else [(660.0, 0.12)]
+        segments: list[np.ndarray] = []
+        for freq, dur in notes:
+            t = np.linspace(0, dur, int(sr * dur), endpoint=False)
+            wave = np.sin(2 * np.pi * freq * t)
+            # Short fade in/out to avoid clicks.
+            fade = max(1, int(sr * 0.01))
+            env = np.ones_like(wave)
+            env[:fade] = np.linspace(0, 1, fade)
+            env[-fade:] = np.linspace(1, 0, fade)
+            segments.append(wave * env * 0.3)
+        audio = np.concatenate(segments)
+        return (audio * 32767).astype(np.int16)
 
     # -- Helpers --
 
