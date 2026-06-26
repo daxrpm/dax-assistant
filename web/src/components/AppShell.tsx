@@ -121,11 +121,6 @@ export function AppShell({ authEnabled }: { authEnabled: boolean }) {
             <ThemeToggle />
           </header>
         )}
-        {isChat && (
-          <div className="absolute right-4 top-3 z-10">
-            <ThemeToggle />
-          </div>
-        )}
         <main className="min-h-0 flex-1 overflow-hidden">
           <Outlet />
         </main>

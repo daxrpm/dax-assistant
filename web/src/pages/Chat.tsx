@@ -24,6 +24,7 @@ import { useChatSocket, type ChatMessage, type AgentEvent } from "../hooks/useCh
 import { api, type ConversationSummary } from "../api/client";
 import { Markdown } from "../components/Markdown";
 import { Modal, Badge } from "../components/ui";
+import { ThemeToggle } from "../components/ThemeToggle";
 import { cn } from "../lib/cn";
 
 /* ── Helpers ──────────────────────────────────────────────────────────────── */
@@ -647,6 +648,7 @@ export function ChatPage() {
                   {panelElapsed != null && <span className="text-muted">· {panelElapsed}s</span>}
                 </button>
               )}
+              <ThemeToggle />
             </div>
           </div>
 
