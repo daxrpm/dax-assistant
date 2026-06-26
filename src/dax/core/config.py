@@ -25,12 +25,29 @@ class VoiceConfig(BaseModel):
     wake_word_model: str = "models/wakeword/hey_jarvis.onnx"
     wake_word_threshold: float = 0.7
     stt_model: str = "base"
-    stt_compute_type: str = "int8"
+    # "auto" picks float16 on CUDA, int8 on CPU. Explicit values still honoured.
+    stt_compute_type: str = "auto"
+    # "auto" uses the GPU when available, else CPU — big latency win on GPU.
+    stt_device: str = "auto"
+    # Greedy decoding (beam_size=1) is markedly faster; bump for accuracy.
+    stt_beam_size: int = 1
     stt_language: str = "auto"
     tts_voice_es: str = "es_ES-davefx-medium"
     tts_voice_en: str = "en_US-lessac-medium"
     vad_threshold: float = 0.5
-    silence_duration_ms: int = 800
+    silence_duration_ms: int = 600
+    # Adaptive endpointing: shorten the end-of-speech pause for short commands
+    # and lengthen it for longer utterances (natural pauses), Alexa-style.
+    adaptive_endpointing: bool = True
+    # Suppress background noise before transcription (needs the `noisereduce`
+    # extra; silently skipped if unavailable).
+    denoise: bool = True
+    # Let the user interrupt Dax mid-reply by saying the wake word again.
+    barge_in: bool = True
+    # Short confirmation tone the instant the wake word fires (Alexa-style).
+    earcon: bool = True
+    # Seconds to keep listening for a follow-up after speaking (follow-up mode).
+    conversation_timeout_s: int = 8
 
 
 class OllamaProviderConfig(BaseModel):

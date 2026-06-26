@@ -42,6 +42,9 @@ voice = [
     "sounddevice>=0.5",
     "numpy>=1.26",
     "onnxruntime>=1.16",
+    # Pre-STT background-noise suppression (best-effort; pipeline degrades
+    # gracefully if absent).
+    "noisereduce>=3.0",
 ]
 dev = [
     "ruff>=0.11",

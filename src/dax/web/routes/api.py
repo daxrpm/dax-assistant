@@ -82,11 +82,18 @@ class VoiceConfigUpdate(BaseModel):
     wake_word_threshold: float | None = None
     stt_model: str | None = None
     stt_compute_type: str | None = None
+    stt_device: str | None = None
+    stt_beam_size: int | None = None
     stt_language: str | None = None
     tts_voice_es: str | None = None
     tts_voice_en: str | None = None
     vad_threshold: float | None = None
     silence_duration_ms: int | None = None
+    adaptive_endpointing: bool | None = None
+    denoise: bool | None = None
+    barge_in: bool | None = None
+    earcon: bool | None = None
+    conversation_timeout_s: int | None = None
 
 
 class WhatsAppConfigUpdate(BaseModel):
@@ -283,11 +290,18 @@ async def get_config(request: Request) -> dict[str, Any]:
             "wake_word_threshold": config.voice.wake_word_threshold,
             "stt_model": config.voice.stt_model,
             "stt_compute_type": config.voice.stt_compute_type,
+            "stt_device": getattr(config.voice, "stt_device", "auto"),
+            "stt_beam_size": getattr(config.voice, "stt_beam_size", 1),
             "stt_language": config.voice.stt_language,
             "tts_voice_es": config.voice.tts_voice_es,
             "tts_voice_en": config.voice.tts_voice_en,
             "vad_threshold": config.voice.vad_threshold,
             "silence_duration_ms": config.voice.silence_duration_ms,
+            "adaptive_endpointing": getattr(config.voice, "adaptive_endpointing", True),
+            "denoise": getattr(config.voice, "denoise", True),
+            "barge_in": getattr(config.voice, "barge_in", True),
+            "earcon": getattr(config.voice, "earcon", True),
+            "conversation_timeout_s": getattr(config.voice, "conversation_timeout_s", 8),
         },
         "llm": {
             "default_provider": config.llm.default_provider,
@@ -861,12 +875,23 @@ def _save_config_to_toml(request: Request) -> None:
     )
     lines.append(f'stt_model = "{config.voice.stt_model}"')
     lines.append(f'stt_compute_type = "{config.voice.stt_compute_type}"')
+    lines.append(f'stt_device = "{getattr(config.voice, "stt_device", "auto")}"')
+    lines.append(f"stt_beam_size = {getattr(config.voice, 'stt_beam_size', 1)}")
     lines.append(f'stt_language = "{config.voice.stt_language}"')
     lines.append(f'tts_voice_es = "{config.voice.tts_voice_es}"')
     lines.append(f'tts_voice_en = "{config.voice.tts_voice_en}"')
     lines.append(f"vad_threshold = {config.voice.vad_threshold}")
     lines.append(
         f"silence_duration_ms = {config.voice.silence_duration_ms}"
+    )
+    lines.append(
+        f"adaptive_endpointing = {_toml_bool(getattr(config.voice, 'adaptive_endpointing', True))}"
+    )
+    lines.append(f"denoise = {_toml_bool(getattr(config.voice, 'denoise', True))}")
+    lines.append(f"barge_in = {_toml_bool(getattr(config.voice, 'barge_in', True))}")
+    lines.append(f"earcon = {_toml_bool(getattr(config.voice, 'earcon', True))}")
+    lines.append(
+        f"conversation_timeout_s = {getattr(config.voice, 'conversation_timeout_s', 8)}"
     )
     lines.append("")
 

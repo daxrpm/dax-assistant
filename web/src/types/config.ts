@@ -20,11 +20,18 @@ export interface VoiceConfig {
   wake_word_threshold: number;
   stt_model: string;
   stt_compute_type: string;
+  stt_device: string;
+  stt_beam_size: number;
   stt_language: string;
   tts_voice_es: string;
   tts_voice_en: string;
   vad_threshold: number;
   silence_duration_ms: number;
+  adaptive_endpointing: boolean;
+  denoise: boolean;
+  barge_in: boolean;
+  earcon: boolean;
+  conversation_timeout_s: number;
 }
 
 export interface LLMConfig {
