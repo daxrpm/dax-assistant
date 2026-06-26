@@ -66,7 +66,26 @@ class VoiceChannel:
         await self._response_queue.put(message)
         logger.debug("Voice response queued: %.50s", message.content)
 
-    async def get_response(self, timeout: float = 30.0) -> Message | None:
+    async def drain(self) -> None:
+        """Discard any queued responses left over from a previous turn.
+
+        The pipeline calls this before publishing a new request so a late reply
+        from a prior (e.g. timed-out) turn can't be mistakenly spoken as the
+        answer to the new question.
+        """
+        discarded = 0
+        while not self._response_queue.empty():
+            try:
+                self._response_queue.get_nowait()
+                discarded += 1
+            except asyncio.QueueEmpty:
+                break
+        if discarded:
+            logger.info("Discarded %d stale voice response(s)", discarded)
+
+    async def get_response(
+        self, timeout: float = 30.0, expected_turn: str | None = None,
+    ) -> Message | None:
         """Wait for the next outbound message from the dispatcher.
 
         Called by the voice pipeline thread (via
@@ -74,15 +93,26 @@ class VoiceChannel:
 
         Args:
             timeout: Maximum seconds to wait before returning ``None``.
+            expected_turn: When set, responses whose ``voice_turn`` metadata
+                doesn't match are discarded (a late reply from a previous,
+                timed-out turn) and we keep waiting for the right one.
 
         Returns:
             The assistant's :class:`Message`, or ``None`` on timeout.
         """
-        try:
-            return await asyncio.wait_for(
-                self._response_queue.get(),
-                timeout=timeout,
-            )
-        except TimeoutError:
-            logger.warning("Voice response queue timed out after %.1f s", timeout)
-            return None
+        deadline = asyncio.get_event_loop().time() + timeout
+        while True:
+            remaining = deadline - asyncio.get_event_loop().time()
+            if remaining <= 0:
+                logger.warning("Voice response queue timed out after %.1f s", timeout)
+                return None
+            try:
+                msg = await asyncio.wait_for(self._response_queue.get(), timeout=remaining)
+            except TimeoutError:
+                logger.warning("Voice response queue timed out after %.1f s", timeout)
+                return None
+            turn = str(msg.metadata.get("voice_turn", ""))
+            if expected_turn is not None and turn != expected_turn:
+                logger.info("Discarding stale voice response (turn mismatch)")
+                continue
+            return msg

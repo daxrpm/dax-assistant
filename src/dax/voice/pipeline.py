@@ -56,6 +56,24 @@ _MAX_RECORDING_SECONDS = 30
 _SENTENCE_RE = re.compile(r"[^.!?\n]+[.!?\n]*")
 
 
+def _clean_for_speech(text: str) -> str:
+    """Strip markdown so the TTS doesn't read symbols like '**' aloud.
+
+    Belt-and-suspenders alongside the voice system prompt: even if the model
+    emits markdown, the synthesizer should speak clean prose.
+    """
+    # Links/images: [label](url) -> label, ![alt](url) -> alt
+    text = re.sub(r"!?\[([^\]]+)\]\([^)]*\)", r"\1", text)
+    # Inline emphasis / code markers
+    text = re.sub(r"(\*\*|\*|__|_|`|~~)", "", text)
+    # Line-start markers: headings, quotes, bullets, numbered lists
+    text = re.sub(r"(?m)^\s{0,3}(#{1,6}\s+|>\s+|[-*+]\s+|\d+[.)]\s+)", "", text)
+    # Table pipes and stray markdown punctuation
+    text = text.replace("|", " ")
+    text = re.sub(r"[ \t]{2,}", " ", text)
+    return text.strip()
+
+
 def _split_sentences(text: str) -> list[str]:
     """Break *text* into sentence chunks, merging tiny fragments.
 
@@ -155,6 +173,10 @@ class VoicePipeline:
         self._last_voice_at: float = 0.0
         self._listen_started_at: float = 0.0
         self._last_language = Language.AUTO
+        self._last_user_text = ""
+        # Monotonic per-utterance id used to correlate responses and drop stale
+        # ones that arrive late from a previous (timed-out) turn.
+        self._turn = 0
 
     # -- Properties --
 
@@ -395,13 +417,25 @@ class VoicePipeline:
         logger.info("Transcribed (%s): %s", detected_lang, text)
         language = self._map_language(detected_lang)
         self._last_language = language
+        self._last_user_text = text
 
+        self._turn += 1
         message = Message(
             role=MessageRole.USER,
             content=text,
             channel=ChannelType.VOICE,
             language=language,
+            metadata={"voice_turn": str(self._turn)},
         )
+
+        # Discard any response left over from a previous (e.g. timed-out) turn
+        # so we never speak a stale answer to this new question.
+        try:
+            asyncio.run_coroutine_threadsafe(
+                self._voice_channel.drain(), self._loop,
+            ).result(timeout=2)
+        except Exception:
+            logger.debug("Voice queue drain failed", exc_info=True)
 
         try:
             future = asyncio.run_coroutine_threadsafe(
@@ -428,10 +462,12 @@ class VoicePipeline:
 
         try:
             future = asyncio.run_coroutine_threadsafe(
-                self._voice_channel.get_response(timeout=30.0),
+                self._voice_channel.get_response(
+                    timeout=60.0, expected_turn=str(self._turn),
+                ),
                 self._loop,
             )
-            response: Message | None = future.result(timeout=35)
+            response: Message | None = future.result(timeout=65)
 
             if response is None:
                 logger.warning("Timed out waiting for assistant response")
@@ -452,8 +488,9 @@ class VoicePipeline:
                 self._enter_listening()
                 return
 
-            # Check if the response is a farewell — if so, end conversation
-            if self._is_farewell(response.content):
+            # End the conversation only when the USER said goodbye — not when
+            # Dax's reply happens to contain filler like "listo".
+            if self._is_farewell(self._last_user_text):
                 logger.info("Farewell detected, ending conversation")
                 self._state = PipelineState.IDLE
             else:
@@ -468,7 +505,7 @@ class VoicePipeline:
 
     def _speak(self, text: str, tts_lang: str) -> bool:
         """Synthesise and play *text*. Returns True if interrupted (barge-in)."""
-        sentences = _split_sentences(text)
+        sentences = _split_sentences(_clean_for_speech(text))
 
         if not self._barge_in:
             # Mute the mic during playback to prevent echo/feedback.
@@ -614,8 +651,9 @@ class VoicePipeline:
             # English
             "bye", "goodbye", "good bye", "see you", "see ya",
             "take care", "good night", "that's all", "thats all",
-            # Universal
-            "listo", "gracias", "thanks", "thank you",
+            # Polite closers (user-side only; "listo" removed — Dax says it
+            # constantly as filler and it must not end the conversation).
+            "gracias", "thanks", "thank you", "eso es todo",
         }
         lower = text.lower().strip()
         # Check if the response is short AND contains a farewell

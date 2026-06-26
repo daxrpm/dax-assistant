@@ -13,7 +13,7 @@ import time
 from typing import TYPE_CHECKING, Any, Callable, Coroutine
 
 from dax.core.exceptions import LLMError, ToolError
-from dax.core.models import Message, MessageRole, ToolCall, ToolResult
+from dax.core.models import ChannelType, Message, MessageRole, ToolCall, ToolResult
 from dax.core.policy import Decision
 from dax.core.shell_allow import shell_binary
 from dax.llm.client import SYSTEM_PROMPT, build_messages_for_llm
@@ -35,6 +35,40 @@ _SHELL_TOOL_NAME = "shell_run"
 logger = logging.getLogger(__name__)
 
 MAX_TOOL_ITERATIONS = 5
+
+# Appended to the system prompt for voice turns: the reply is read aloud by TTS,
+# so it must be plain spoken language — no markdown the synthesizer would dictate.
+VOICE_STYLE_PROMPT = """
+
+## Voice reply style (this turn is spoken aloud)
+Your answer will be read by a text-to-speech voice. Reply in plain, natural \
+spoken Spanish/English:
+- NO markdown whatsoever — no asterisks, **bold**, _italics_, `code`, #headings, \
+bullet lists, tables or emoji. They get dictated literally and sound terrible.
+- Be brief and conversational, like a smart speaker. One or two short sentences \
+when possible; for lists, say them as a natural sentence ("tienes tres eventos: …").
+- Spell things out the way you'd say them, not write them."""
+
+# How many recent user turns to fold into the tool-relevance query so that
+# follow-ups ("ponla", "play it") still surface the right server's tools even
+# when the latest message names no keywords.
+_RELEVANCE_CONTEXT_TURNS = 3
+
+
+def _relevance_query(content: str, history: list[Message]) -> str:
+    """Build the query used to pick relevant tools, with recent context.
+
+    The relevance filter scores tools against this string. Using only the
+    latest message means a context-free follow-up (e.g. "ponla") loses the
+    server it referred to a turn ago (e.g. Spotify) and its tools drop out of
+    the budget. Prepending the last few user turns keeps that intent in scope.
+    """
+    recent = [
+        m.content
+        for m in history
+        if m.role is MessageRole.USER and m.content
+    ][-_RELEVANCE_CONTEXT_TURNS:]
+    return " ".join([*recent, content])
 
 
 def _build_system_prompt(available_tools: list[dict[str, Any]]) -> str:
@@ -244,7 +278,8 @@ class Agent:
         if available_tools:
             if registry:
                 relevant = registry.get_relevant_tools(
-                    message.content, max_tools=self._max_tools
+                    _relevance_query(message.content, history),
+                    max_tools=self._max_tools,
                 )
             else:
                 relevant = available_tools[: self._max_tools]
@@ -255,6 +290,8 @@ class Agent:
         # the prompt stays small (listing all ~150 tools is slow and pointless).
         system_prompt = _build_system_prompt(relevant or available_tools)
         system_prompt += self._memory_block()
+        if message.channel == ChannelType.VOICE:
+            system_prompt += VOICE_STYLE_PROMPT
         llm_messages = build_messages_for_llm(
             message, conversation_history=history, system_prompt=system_prompt
         )
@@ -291,6 +328,7 @@ class Agent:
                         content=response.content,
                         channel=message.channel,
                         language=message.language,
+                        metadata=dict(message.metadata),
                     ),
                 )
 
@@ -336,6 +374,7 @@ class Agent:
                 content=response.content or "I completed the requested actions.",
                 channel=message.channel,
                 language=message.language,
+                metadata=dict(message.metadata),
             ),
         )
 
