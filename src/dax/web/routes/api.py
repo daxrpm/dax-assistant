@@ -351,7 +351,10 @@ async def get_config(request: Request) -> dict[str, Any]:
                     "env": srv.env,
                     "transport": srv.transport,
                     "url": srv.url,
+                    "headers": srv.headers,
                     "enabled": srv.enabled,
+                    "export_codex": getattr(srv, "export_codex", False),
+                    "export_claude": getattr(srv, "export_claude", False),
                 }
                 for name, srv in config.mcp.servers.items()
             },
