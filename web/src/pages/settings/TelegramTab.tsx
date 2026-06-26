@@ -41,7 +41,8 @@ export function TelegramTab({
       };
       if (token) payload.bot_token = token;
       await api.updateTelegram(payload);
-      toast.show("Telegram settings saved — restart to apply", "success");
+      setToken("");
+      toast.show("Telegram settings saved and applied", "success");
       onSaved();
     } catch (e) {
       toast.show(e instanceof Error ? e.message : "Save failed", "danger");
