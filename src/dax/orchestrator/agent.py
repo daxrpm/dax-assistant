@@ -82,11 +82,15 @@ class Agent:
         policy: ToolPolicy | None = None,
         approval: ApprovalManager | None = None,
         max_tools: int = 45,
+        memory_path: str | None = None,
     ) -> None:
         self._bus = bus
         self._llm = llm
         self._tools = tools
         self._storage = storage
+        # Long-term memory: user-curated facts in <memory_path>/*.md, injected
+        # into the system prompt so the assistant actually "remembers" them.
+        self._memory_path = memory_path
         # When no policy/approval is wired, tools run unrestricted (used in
         # tests). In the app both are provided so destructive actions are gated.
         self._policy = policy
@@ -96,6 +100,51 @@ class Agent:
         self._max_tools = max_tools
         self._task: asyncio.Task[None] | None = None
         self._event_broadcaster: Callable[[dict[str, Any]], Coroutine[Any, Any, None]] | None = None
+
+    def _memory_block(self) -> str:
+        """Read user-curated memory files and format them for the system prompt.
+
+        Each ``<memory_path>/*.md`` file (except the MEMORY.md index) is a single
+        fact with optional frontmatter (name/description/type). We surface the
+        title and body so the model can use them — this is what makes the
+        memories saved in the UI actually take effect in conversations.
+        """
+        if not self._memory_path:
+            return ""
+        from pathlib import Path
+
+        mem_dir = Path(self._memory_path).expanduser()
+        if not mem_dir.is_dir():
+            return ""
+
+        facts: list[str] = []
+        for path in sorted(mem_dir.glob("*.md")):
+            if path.name == "MEMORY.md":
+                continue
+            try:
+                text = path.read_text(encoding="utf-8")
+            except OSError:
+                continue
+            name = path.stem.replace("-", " ")
+            body = text
+            if text.startswith("---"):
+                parts = text.split("---", 2)
+                if len(parts) >= 3:
+                    body = parts[2].strip()
+                    for line in parts[1].splitlines():
+                        if line.startswith("name:"):
+                            name = line.split(":", 1)[1].strip() or name
+            body = body.strip()
+            if body:
+                facts.append(f"- **{name}**: {body}")
+
+        if not facts:
+            return ""
+        return (
+            "\n\n## What you remember about the user\n"
+            "These are durable facts the user saved. Treat them as true and "
+            "apply them without asking again:\n" + "\n".join(facts)
+        )
 
     def set_event_broadcaster(
         self,
@@ -195,6 +244,7 @@ class Agent:
         # the system prompt. List only the tools actually passed this turn so
         # the prompt stays small (listing all ~150 tools is slow and pointless).
         system_prompt = _build_system_prompt(relevant or available_tools)
+        system_prompt += self._memory_block()
         llm_messages = build_messages_for_llm(
             message, conversation_history=history, system_prompt=system_prompt
         )

@@ -204,6 +204,7 @@ class DaxApp:
             policy=self._policy,
             approval=self._approval,
             max_tools=self._config.llm.max_tools,
+            memory_path=self._config.memory_path,
         )
         await self._agent.start()
 
