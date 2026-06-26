@@ -323,7 +323,13 @@ def _bootstrap_secrets(overrides: dict[str, Any], config_path: Path | None) -> N
 
     from dax.storage.secrets import SecretStore
 
-    db_path = (overrides.get("storage") or {}).get("database_path", "data/dax.db")
+    # Resolve the DB path the same way DaxConfig will: env > TOML > default, so
+    # the secret store always points at the same database the app opens.
+    db_path = (
+        os.environ.get("DAX_STORAGE__DATABASE_PATH")
+        or (overrides.get("storage") or {}).get("database_path")
+        or "data/dax.db"
+    )
     store = SecretStore(db_path)
 
     # One-time migration of any legacy .env next to the config file.
