@@ -73,6 +73,9 @@ class LLMConfigUpdate(BaseModel):
     openai_reasoning_effort: str | None = None
     gemini_model: str | None = None
     gemini_api_key: str | None = None
+    deepseek_model: str | None = None
+    deepseek_api_key: str | None = None
+    deepseek_base_url: str | None = None
     codex_binary: str | None = None
     codex_model: str | None = None
 
@@ -320,6 +323,9 @@ async def get_config(request: Request) -> dict[str, Any]:
             ),
             "gemini_model": config.llm.gemini.model,
             "gemini_configured": bool(config.llm.gemini.api_key),
+            "deepseek_model": getattr(config.llm, "deepseek", None) and config.llm.deepseek.model,
+            "deepseek_base_url": getattr(config.llm, "deepseek", None) and config.llm.deepseek.base_url,
+            "deepseek_configured": bool(getattr(config.llm, "deepseek", None) and config.llm.deepseek.api_key),
             "codex_binary": getattr(config.llm.codex, "binary", "codex"),
             "codex_model": getattr(config.llm.codex, "model", ""),
         },
@@ -419,6 +425,9 @@ async def update_llm(
         "openai_reasoning_effort": ("llm.openai", "reasoning_effort"),
         "gemini_model": ("llm.gemini", "model"),
         "gemini_api_key": ("llm.gemini", "api_key"),
+        "deepseek_model": ("llm.deepseek", "model"),
+        "deepseek_api_key": ("llm.deepseek", "api_key"),
+        "deepseek_base_url": ("llm.deepseek", "base_url"),
         "codex_binary": ("llm.codex", "binary"),
         "codex_model": ("llm.codex", "model"),
     }
@@ -1006,6 +1015,16 @@ def write_config_toml(config: Any, store: SecretStore, config_path: Path) -> Non
         ref = _env_ref_for_secret(store, "GEMINI_API_KEY", config.llm.gemini.api_key)
         lines.append(f'api_key = "{ref}"')
     lines.append("")
+    deepseek = getattr(config.llm, "deepseek", None)
+    if deepseek is not None:
+        lines.append("[llm.deepseek]")
+        lines.append(f'model = "{deepseek.model}"')
+        lines.append(f'base_url = "{deepseek.base_url}"')
+        if deepseek.api_key:
+            ref = _env_ref_for_secret(store, "DEEPSEEK_API_KEY", deepseek.api_key)
+            lines.append(f'api_key = "{ref}"')
+        lines.append(f"timeout = {deepseek.timeout}")
+        lines.append("")
     codex = getattr(config.llm, "codex", None)
     if codex is not None:
         lines.append("[llm.codex]")
@@ -1267,7 +1286,37 @@ async def list_llm_models(request: Request, provider: str = "") -> dict[str, lis
         except Exception:
             return []
 
-    targets = {"openai": _openai, "anthropic": _anthropic, "gemini": _gemini, "ollama": _ollama}
+    async def _deepseek() -> list[str]:
+        from dax.llm.factory import _resolve_env
+
+        ds = getattr(config.llm, "deepseek", None)
+        if ds is None:
+            return []
+        key = _resolve_env(ds.api_key) or ds.api_key
+        base = (ds.base_url or "https://api.deepseek.com").rstrip("/")
+        if not key:
+            return []
+        try:
+            async with aiohttp.ClientSession() as session:
+                async with session.get(
+                    f"{base}/models",
+                    headers={"Authorization": f"Bearer {key}"},
+                    timeout=aiohttp.ClientTimeout(total=10),
+                ) as r:
+                    if r.status != 200:
+                        return []
+                    data = await r.json()
+            return sorted(m["id"] for m in data.get("data", []))
+        except Exception:
+            return []
+
+    targets = {
+        "openai": _openai,
+        "anthropic": _anthropic,
+        "gemini": _gemini,
+        "ollama": _ollama,
+        "deepseek": _deepseek,
+    }
     chosen = {provider: targets[provider]} if provider in targets else targets
 
     import asyncio as _asyncio

@@ -64,6 +64,20 @@ def build_provider(name: str, config: LLMConfig) -> LLMProvider | None:
                 timeout=config.openai.timeout,
                 reasoning_effort=config.openai.reasoning_effort,
             )
+        if name == "deepseek":
+            # DeepSeek is OpenAI-compatible — reuse the OpenAI adapter pointed at
+            # its endpoint. base_url puts it in "compatible" mode (sends
+            # temperature/max_tokens, never reasoning_effort).
+            key = _resolve_env(config.deepseek.api_key)
+            if not key:
+                raise ValueError("DeepSeek API key not configured")
+            return OpenAIProvider(
+                name="deepseek",
+                model=config.deepseek.model,
+                api_key=key,
+                base_url=config.deepseek.base_url or "https://api.deepseek.com",
+                timeout=config.deepseek.timeout,
+            )
         if name == "codex":
             from dax.llm.providers.codex_provider import CodexProvider
 

@@ -20,7 +20,7 @@ silence_duration_ms = 500
 
 [llm]
 # Recommended: Anthropic claude for reliable tool use. Set ANTHROPIC_API_KEY in .env.
-# Alternatives: ollama (local, no key needed) | openai | gemini
+# Alternatives: ollama (local, no key needed) | openai | gemini | deepseek
 default_provider = "anthropic"
 # Providers tried (in order) if the default fails.
 fallback_order = ["ollama"]
@@ -42,6 +42,12 @@ model = "gpt-5.5"
 [llm.gemini]
 model = "gemini-3.5-flash"
 # api_key -> GEMINI_API_KEY env var
+
+[llm.deepseek]
+# OpenAI-compatible. Models: deepseek-v4-flash (fast, 1M ctx) | deepseek-v4-pro
+model = "deepseek-v4-flash"
+base_url = "https://api.deepseek.com"
+# api_key -> DEEPSEEK_API_KEY env var
 
 [web]
 host = "127.0.0.1"

@@ -91,6 +91,21 @@ class GeminiProviderConfig(BaseModel):
     timeout: int = 60
 
 
+class DeepSeekProviderConfig(BaseModel):
+    """DeepSeek provider — OpenAI-compatible API (served via the OpenAI SDK).
+
+    Models (2026): ``deepseek-v4-flash`` (fast, cheap, 1M context — default) and
+    ``deepseek-v4-pro`` (more capable). The legacy ``deepseek-chat`` /
+    ``deepseek-reasoner`` aliases still work for now. Key read from
+    ``DEEPSEEK_API_KEY`` if left blank.
+    """
+
+    model: str = "deepseek-v4-flash"
+    api_key: str = ""
+    base_url: str = "https://api.deepseek.com"
+    timeout: int = 60
+
+
 class CodexProviderConfig(BaseModel):
     """OpenAI Codex CLI provider — runs `codex exec --json` as a subprocess.
 
@@ -127,6 +142,7 @@ class LLMConfig(BaseModel):
     anthropic: AnthropicProviderConfig = Field(default_factory=AnthropicProviderConfig)
     openai: OpenAIProviderConfig = Field(default_factory=OpenAIProviderConfig)
     gemini: GeminiProviderConfig = Field(default_factory=GeminiProviderConfig)
+    deepseek: DeepSeekProviderConfig = Field(default_factory=DeepSeekProviderConfig)
     codex: CodexProviderConfig = Field(default_factory=CodexProviderConfig)
 
 
