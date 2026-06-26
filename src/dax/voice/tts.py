@@ -8,6 +8,7 @@ output modes.
 from __future__ import annotations
 
 import logging
+from pathlib import Path
 from typing import TYPE_CHECKING
 
 import numpy as np
@@ -29,9 +30,15 @@ class TextToSpeech:
         voice_en: Filesystem path to the English ``.onnx`` voice model.
     """
 
-    def __init__(self, voice_es: str = "", voice_en: str = "") -> None:
+    def __init__(
+        self,
+        voice_es: str = "",
+        voice_en: str = "",
+        download_dir: str = "models/piper",
+    ) -> None:
         self._voice_es_path = voice_es
         self._voice_en_path = voice_en
+        self._download_dir = Path(download_dir).expanduser()
         self._voices: dict[str, PiperVoice] = {}
         self._sample_rate: int = 22_050
 
@@ -126,17 +133,53 @@ class TextToSpeech:
     # ── Internal ───────────────────────────────────────────────────────────
 
     def _load_voice(self, language: str, path: str) -> None:
-        """Attempt to load a single voice model."""
+        """Load a voice by file path or by name (auto-downloading if needed)."""
         if not path:
             return
         try:
-            self._voices[language] = PiperVoice.load(path)
-            logger.info("Loaded TTS voice for '%s' from %s", language, path)
+            resolved = self._resolve_voice_path(path)
+            if resolved is None:
+                logger.warning(
+                    "Could not resolve/download TTS voice for '%s' (%s)",
+                    language, path,
+                )
+                return
+            self._voices[language] = PiperVoice.load(str(resolved))
+            logger.info("Loaded TTS voice for '%s' from %s", language, resolved)
         except Exception:
             logger.warning(
                 "Failed to load TTS voice for '%s' from %s", language, path,
                 exc_info=True,
             )
+
+    def _resolve_voice_path(self, value: str) -> Path | None:
+        """Resolve *value* to a local ``.onnx`` file.
+
+        Accepts either a path to an existing model file, or a Piper voice name
+        (e.g. ``es_ES-davefx-medium``) which is downloaded from the official
+        rhasspy/piper-voices repo into the models dir on first use — so voices
+        "just work" out of the box, like the auto-downloaded Whisper model.
+        """
+        candidate = Path(value).expanduser()
+        if candidate.is_file():
+            return candidate
+
+        # Treat it as a voice name and ensure it's downloaded.
+        target = self._download_dir / f"{value}.onnx"
+        if target.is_file():
+            return target
+
+        try:
+            from piper.download_voices import download_voice
+
+            self._download_dir.mkdir(parents=True, exist_ok=True)
+            logger.info("Downloading Piper voice '%s' → %s", value, self._download_dir)
+            download_voice(value, self._download_dir)
+        except Exception:
+            logger.warning("Failed to download Piper voice '%s'", value, exc_info=True)
+            return None
+
+        return target if target.is_file() else None
 
     def _resolve_voice(self, language: str) -> PiperVoice:
         """Return the best available voice for *language*."""

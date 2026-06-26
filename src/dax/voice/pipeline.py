@@ -28,6 +28,7 @@ import re
 import threading
 import time
 from enum import StrEnum
+from pathlib import Path
 from typing import TYPE_CHECKING
 
 import numpy as np
@@ -105,6 +106,7 @@ class VoicePipeline:
         bus: MessageBus,
         voice_channel: VoiceChannel,
         loop: asyncio.AbstractEventLoop,
+        models_path: str = "models/",
     ) -> None:
         self._config = config
         self._bus = bus
@@ -137,6 +139,7 @@ class VoicePipeline:
         self._tts = TextToSpeech(
             voice_es=config.tts_voice_es,
             voice_en=config.tts_voice_en,
+            download_dir=str(Path(models_path) / "piper"),
         )
 
         # Feature flags (best-practice defaults; see VoiceConfig).
