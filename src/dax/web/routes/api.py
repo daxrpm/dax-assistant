@@ -350,6 +350,7 @@ async def get_config(request: Request) -> dict[str, Any]:
         },
         "tools": {
             "confirm_timeout_seconds": config.tools.confirm_timeout_seconds,
+            "shell_allow": getattr(config.tools, "shell_allow", []),
             "policy": {
                 "default": config.tools.policy.default,
                 "allow": config.tools.policy.allow,
@@ -778,6 +779,74 @@ async def delete_mcp_server(
     return {"status": "ok"}
 
 
+# --- Shell command allowlist ---
+#
+# The binaries the assistant may run on this PC via the dax-system `shell_run`
+# tool. This is the single source of truth: the agent runs allowlisted commands
+# without asking and prompts for the rest. Editing here updates the live
+# allowlist the agent consults and persists to TOML — no restart, no MCP env.
+
+
+def _shell_allow_runtime(request: Request) -> Any | None:
+    return getattr(request.app.state, "shell_allow", None)
+
+
+@router.get("/config/system/shell-allow")
+async def get_system_shell_allow(request: Request) -> dict[str, Any]:
+    """Return the current shell-command allowlist and the built-in defaults."""
+    from dax.core.shell_allow import DEFAULT_SHELL_ALLOW
+
+    runtime = _shell_allow_runtime(request)
+    if runtime is not None:
+        commands = runtime.items()
+    else:
+        commands = list(getattr(request.app.state.config.tools, "shell_allow", []))
+    return {"commands": commands, "default": list(DEFAULT_SHELL_ALLOW)}
+
+
+class ShellAllowUpdate(BaseModel):
+    commands: list[str] = Field(default_factory=list)
+
+
+@router.put("/config/system/shell-allow")
+async def update_system_shell_allow(
+    request: Request, body: ShellAllowUpdate,
+) -> dict[str, Any]:
+    """Replace the shell allowlist. Applies live and persists to TOML."""
+    from dax.mcp_servers.system.server import _SHELL_METACHARS
+
+    # Normalise: trim, drop blanks, de-dupe (order preserved). Each entry must be
+    # a bare binary name — no whitespace, commas or shell metacharacters.
+    seen: set[str] = set()
+    commands: list[str] = []
+    for raw in body.commands:
+        cmd = raw.strip()
+        if not cmd or cmd in seen:
+            continue
+        if (
+            "," in cmd
+            or any(ch.isspace() for ch in cmd)
+            or any(ch in _SHELL_METACHARS for ch in cmd)
+        ):
+            raise HTTPException(
+                422, f"Invalid command '{cmd}': use a bare binary name (e.g. 'git')"
+            )
+        seen.add(cmd)
+        commands.append(cmd)
+
+    config = request.app.state.config
+    object.__setattr__(config.tools, "shell_allow", commands)
+
+    runtime = _shell_allow_runtime(request)
+    if runtime is not None:
+        # replace() fires the persistence hook; avoid double-writing the TOML.
+        runtime.replace(commands)
+    else:
+        _save_config_to_toml(request)
+
+    return {"status": "ok", "commands": commands}
+
+
 # --- Config persistence ---
 
 
@@ -843,18 +912,25 @@ def _secure_headers_for_toml(
 
 
 def _save_config_to_toml(request: Request) -> None:
-    """Write the current config state back to the TOML file.
-
-    Reconstructs the TOML structure from the in-memory config
-    and writes it to the config file path. API keys and secrets are
-    written to .env (never to TOML) and referenced as {env:VAR}.
-    """
+    """Persist the current in-memory config to TOML (request-scoped wrapper)."""
     config = request.app.state.config
     config_path = getattr(
         request.app.state, "config_path", Path("config/dax.toml"),
     )
     store = _secret_store(request)
+    write_config_toml(config, store, config_path)
 
+
+def write_config_toml(config: Any, store: SecretStore, config_path: Path) -> None:
+    """Write the given config state back to the TOML file.
+
+    Reconstructs the TOML structure from the in-memory config
+    and writes it to the config file path. API keys and secrets are
+    written to .env (never to TOML) and referenced as {env:VAR}.
+
+    Standalone (no Request) so the app can persist outside an HTTP handler —
+    e.g. when the agent saves a newly approved shell command.
+    """
     lines: list[str] = []
 
     # [general]
@@ -991,6 +1067,8 @@ def _save_config_to_toml(request: Request) -> None:
     lines.append(
         f"confirm_timeout_seconds = {config.tools.confirm_timeout_seconds}"
     )
+    shell_allow = ", ".join(f'"{c}"' for c in getattr(config.tools, "shell_allow", []))
+    lines.append(f"shell_allow = [{shell_allow}]")
     lines.append("")
     lines.append("[tools.policy]")
     lines.append(f'default = "{config.tools.policy.default}"')

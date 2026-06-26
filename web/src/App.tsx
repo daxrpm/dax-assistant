@@ -6,6 +6,7 @@ import { ChatPage } from "./pages/Chat";
 import { DashboardPage } from "./pages/Dashboard";
 import { LogsPage } from "./pages/Logs";
 import { McpPage } from "./pages/Mcp";
+import { ShellPage } from "./pages/Shell";
 import { SettingsPage } from "./pages/settings/SettingsPage";
 
 export default function App() {
@@ -21,6 +22,7 @@ export default function App() {
                 <Route path="c/:sessionId" element={<ChatPage />} />
                 <Route path="dashboard" element={<DashboardPage />} />
                 <Route path="mcp" element={<McpPage />} />
+                <Route path="shell" element={<ShellPage />} />
                 <Route path="logs" element={<LogsPage />} />
                 <Route path="settings" element={<SettingsPage />} />
               </Route>

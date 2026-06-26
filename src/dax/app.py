@@ -9,6 +9,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import signal
+from pathlib import Path
 from typing import TYPE_CHECKING
 
 import structlog
@@ -21,6 +22,7 @@ from dax.channels.whatsapp_channel import WhatsAppChannel
 from dax.core.config import DaxConfig, load_config
 from dax.core.logbuffer import LogBuffer
 from dax.core.policy import ToolPolicy
+from dax.core.shell_allow import ShellAllowlist
 from dax.llm.factory import build_router
 from dax.mcp.manager import MCPManager
 from dax.orchestrator.agent import Agent
@@ -33,8 +35,6 @@ from dax.storage.secrets import SecretStore
 from dax.web.server import create_app
 
 if TYPE_CHECKING:
-    from pathlib import Path
-
     from dax.voice.pipeline import VoicePipeline
 
 logger = structlog.get_logger(__name__)
@@ -66,8 +66,11 @@ class DaxApp:
         await app.run()
     """
 
-    def __init__(self, config: DaxConfig) -> None:
+    def __init__(
+        self, config: DaxConfig, config_path: Path | None = None
+    ) -> None:
         self._config = config
+        self._config_path = config_path or Path("config/dax.toml")
         self._shutdown_event = asyncio.Event()
 
         # Capture stdlib logs into a ring buffer for the web Logs viewer.
@@ -96,6 +99,11 @@ class DaxApp:
             timeout_seconds=config.tools.confirm_timeout_seconds
         )
 
+        # Authoritative shell-command allowlist. Mutations (UI edits or the agent
+        # saving an approved command) update config + rewrite the TOML in place.
+        self._shell_allow = ShellAllowlist(config.tools.shell_allow)
+        self._shell_allow.set_on_change(self._persist_shell_allow)
+
         # Channels
         self._channels: dict[
             str, VoiceChannel | WebChannel | WhatsAppChannel | TelegramChannel
@@ -116,11 +124,21 @@ class DaxApp:
         """Create a DaxApp instance from a config file path."""
         config = load_config(config_path)
         _configure_logging(config.log_level)
-        return cls(config)
+        return cls(config, config_path=config_path)
 
     @property
     def config(self) -> DaxConfig:
         return self._config
+
+    def _persist_shell_allow(self, commands: list[str]) -> None:
+        """Mirror the live shell allowlist into config and rewrite the TOML."""
+        from dax.web.routes.api import write_config_toml
+
+        object.__setattr__(self._config.tools, "shell_allow", list(commands))
+        try:
+            write_config_toml(self._config, self._secrets, self._config_path)
+        except Exception:
+            logger.exception("Failed to persist shell allowlist")
 
     @property
     def web_app(self) -> object:
@@ -141,6 +159,10 @@ class DaxApp:
         if hasattr(self._web_app, "state"):
             self._web_app.state.log_buffer = self._log_buffer  # type: ignore[union-attr]
             self._web_app.state.tool_policy = self._policy  # type: ignore[union-attr]
+            # The live shell allowlist the agent consults, so the Commands page
+            # can read/edit it, and config_path for standalone TOML persistence.
+            self._web_app.state.shell_allow = self._shell_allow
+            self._web_app.state.config_path = self._config_path
             # Expose the secret store + the app itself so settings endpoints can
             # persist secrets to SQLite and reload live channels (Telegram).
             self._web_app.state.secret_store = self._secrets
@@ -203,6 +225,7 @@ class DaxApp:
             storage=self._repository,  # type: ignore[arg-type]
             policy=self._policy,
             approval=self._approval,
+            shell_allow=self._shell_allow,
             max_tools=self._config.llm.max_tools,
             memory_path=self._config.memory_path,
         )

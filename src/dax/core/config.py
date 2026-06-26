@@ -243,12 +243,22 @@ class ToolPolicyConfig(BaseModel):
     deny: list[str] = Field(default_factory=list)
 
 
+def _default_shell_allow() -> list[str]:
+    from dax.core.shell_allow import DEFAULT_SHELL_ALLOW
+
+    return list(DEFAULT_SHELL_ALLOW)
+
+
 class ToolsConfig(BaseModel):
     """Tool execution settings, including the confirmation gate."""
 
     # Seconds to wait for the user to confirm a gated action before declining.
     confirm_timeout_seconds: int = 120
     policy: ToolPolicyConfig = Field(default_factory=ToolPolicyConfig)
+    # Binaries the dax-system shell tool may run on this PC. The agent runs
+    # allowlisted commands without asking; unknown ones prompt for confirmation
+    # and can be saved here on approval. Editable from the UI's "Commands" page.
+    shell_allow: list[str] = Field(default_factory=_default_shell_allow)
 
 
 class DaxConfig(BaseSettings):

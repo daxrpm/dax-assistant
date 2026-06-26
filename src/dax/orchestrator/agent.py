@@ -15,6 +15,7 @@ from typing import TYPE_CHECKING, Any, Callable, Coroutine
 from dax.core.exceptions import LLMError, ToolError
 from dax.core.models import Message, MessageRole, ToolCall, ToolResult
 from dax.core.policy import Decision
+from dax.core.shell_allow import shell_binary
 from dax.llm.client import SYSTEM_PROMPT, build_messages_for_llm
 from dax.llm.tool_mapper import mcp_tools_to_openai
 
@@ -22,9 +23,14 @@ if TYPE_CHECKING:
     from dax.core.models import Conversation
     from dax.core.policy import ToolPolicy
     from dax.core.ports import LLMProvider, Storage, ToolProvider
+    from dax.core.shell_allow import ShellAllowlist
     from dax.mcp.registry import ToolRegistry
     from dax.orchestrator.approval import ApprovalManager
     from dax.orchestrator.bus import MessageBus
+
+# The dax-system tool that runs shell commands — gated by the shell allowlist
+# rather than the generic name-pattern policy.
+_SHELL_TOOL_NAME = "shell_run"
 
 logger = logging.getLogger(__name__)
 
@@ -81,6 +87,7 @@ class Agent:
         storage: Storage,
         policy: ToolPolicy | None = None,
         approval: ApprovalManager | None = None,
+        shell_allow: ShellAllowlist | None = None,
         max_tools: int = 45,
         memory_path: str | None = None,
     ) -> None:
@@ -95,6 +102,9 @@ class Agent:
         # tests). In the app both are provided so destructive actions are gated.
         self._policy = policy
         self._approval = approval
+        # Authoritative allowlist for the dax-system shell tool. The agent runs
+        # allowlisted binaries without asking and prompts for the rest.
+        self._shell_allow = shell_allow
         # Cap on tool schemas sent per LLM request — keeps prompts small and
         # responses fast. The relevance filter picks the best within this.
         self._max_tools = max_tools
@@ -385,8 +395,6 @@ class Agent:
         if self._policy is None:
             return None
         decision = self._policy.decide(call.tool_name)
-        if decision is Decision.ALLOW:
-            return None
         if decision is Decision.DENY:
             logger.warning("Tool '%s' denied by policy", call.tool_name)
             await self._audit(call, "denied")
@@ -395,6 +403,12 @@ class Agent:
                 content=f"Error: tool '{call.tool_name}' is not permitted.",
                 is_error=True,
             )
+        # The shell tool is gated by the user-managed binary allowlist, not the
+        # name-pattern policy: known binaries run freely, unknown ones prompt.
+        if call.tool_name == _SHELL_TOOL_NAME and self._shell_allow is not None:
+            return await self._gate_shell(call)
+        if decision is Decision.ALLOW:
+            return None
         # ASK — require confirmation.
         if self._approval is None:
             await self._audit(call, "denied")
@@ -406,11 +420,12 @@ class Agent:
                 ),
                 is_error=True,
             )
-        approved = await self._approval.request(
+        result = await self._approval.request(
             tool_name=call.tool_name,
             server_name=call.server_name,
             arguments=dict(call.arguments),
         )
+        approved = result != "deny"
         await self._audit(call, "approved" if approved else "declined")
         if not approved:
             return ToolResult(
@@ -418,6 +433,51 @@ class Agent:
                 content=f"Error: the user declined to run '{call.tool_name}'.",
                 is_error=True,
             )
+        return None
+
+    async def _gate_shell(self, call: ToolCall) -> ToolResult | None:
+        """Gate a shell_run call against the user-managed command allowlist.
+
+        Allowlisted binaries run with no prompt. Unknown ones ask the user, who
+        can *approve once* (run, don't remember) or *approve & save* (run and add
+        the binary to the allowlist permanently). Denials block the call.
+        """
+        assert self._shell_allow is not None
+        command = str(call.arguments.get("command", ""))
+        binary = shell_binary(command)
+
+        if self._shell_allow.is_allowed(binary):
+            await self._audit(call, "executed")
+            return None
+
+        if self._approval is None:
+            await self._audit(call, "denied")
+            return ToolResult(
+                call_id=call.id,
+                content=(
+                    f"Error: command '{binary or command}' is not in the shell "
+                    "allowlist and no approval channel is available to ask."
+                ),
+                is_error=True,
+            )
+
+        decision = await self._approval.request(
+            tool_name=call.tool_name,
+            server_name=call.server_name,
+            arguments=dict(call.arguments),
+            options=["once", "save"],
+        )
+        if decision == "deny":
+            await self._audit(call, "declined")
+            return ToolResult(
+                call_id=call.id,
+                content=f"Error: the user declined to run '{binary or command}'.",
+                is_error=True,
+            )
+        if decision == "save" and binary:
+            self._shell_allow.add(binary)
+            logger.info("Added '%s' to the shell allowlist", binary)
+        await self._audit(call, "approved")
         return None
 
     async def _audit(self, call: ToolCall, status: str) -> None:

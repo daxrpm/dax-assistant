@@ -366,7 +366,7 @@ class TestAgentPolicyGate:
         approval = ApprovalManager(timeout_seconds=5)
 
         async def auto_approve(payload: dict[str, Any]) -> None:
-            approval.resolve(payload["approval_id"], True)
+            approval.resolve(payload["approval_id"], "approve")
 
         approval.set_notifier(auto_approve)
         tools = _MockTools()
@@ -393,7 +393,7 @@ class TestAgentPolicyGate:
         approval = ApprovalManager(timeout_seconds=5)
 
         async def auto_deny(payload: dict[str, Any]) -> None:
-            approval.resolve(payload["approval_id"], False)
+            approval.resolve(payload["approval_id"], "deny")
 
         approval.set_notifier(auto_deny)
         tools = _MockTools()
@@ -409,6 +409,155 @@ class TestAgentPolicyGate:
         await bus.publish_inbound(Message(content="write a file"))
         await asyncio.wait_for(bus.consume_outbound(), timeout=2.0)
         assert tools.executed_calls == []  # user declined
+        await agent.stop()
+
+
+def _shell_then_text(command: str) -> _MockLLM:
+    return _MockLLM(responses=[
+        Message(
+            role=MessageRole.ASSISTANT,
+            content="",
+            tool_calls=(
+                ToolCall(
+                    id="c1",
+                    server_name="dax-system",
+                    tool_name="shell_run",
+                    arguments={"command": command},
+                ),
+            ),
+        ),
+        Message(role=MessageRole.ASSISTANT, content="all done"),
+    ])
+
+
+class TestAgentShellGate:
+    async def test_allowlisted_runs_without_asking(self):
+        from dax.core.policy import ToolPolicy
+        from dax.core.shell_allow import ShellAllowlist
+        from dax.orchestrator.approval import ApprovalManager
+
+        bus = MessageBus()
+        bus.start()
+        approval = ApprovalManager(timeout_seconds=5)
+        asked = False
+
+        async def notifier(payload: dict[str, Any]) -> None:
+            nonlocal asked
+            asked = True
+            approval.resolve(payload["approval_id"], "deny")
+
+        approval.set_notifier(notifier)
+        tools = _MockTools()
+        agent = Agent(
+            bus=bus,
+            llm=_shell_then_text("git status"),  # type: ignore[arg-type]
+            tools=tools,  # type: ignore[arg-type]
+            storage=_MockStorage(),  # type: ignore[arg-type]
+            policy=ToolPolicy(),
+            approval=approval,
+            shell_allow=ShellAllowlist(["git"]),
+        )
+        await agent.start()
+        await bus.publish_inbound(Message(content="run git"))
+        await asyncio.wait_for(bus.consume_outbound(), timeout=2.0)
+        assert asked is False  # never prompted
+        assert len(tools.executed_calls) == 1
+        await agent.stop()
+
+    async def test_unknown_approve_once_runs_without_saving(self):
+        from dax.core.policy import ToolPolicy
+        from dax.core.shell_allow import ShellAllowlist
+        from dax.orchestrator.approval import ApprovalManager
+
+        bus = MessageBus()
+        bus.start()
+        approval = ApprovalManager(timeout_seconds=5)
+
+        async def notifier(payload: dict[str, Any]) -> None:
+            assert payload["options"] == ["once", "save"]
+            approval.resolve(payload["approval_id"], "once")
+
+        approval.set_notifier(notifier)
+        tools = _MockTools()
+        allow = ShellAllowlist(["git"])
+        agent = Agent(
+            bus=bus,
+            llm=_shell_then_text("flatpak run spotify"),  # type: ignore[arg-type]
+            tools=tools,  # type: ignore[arg-type]
+            storage=_MockStorage(),  # type: ignore[arg-type]
+            policy=ToolPolicy(),
+            approval=approval,
+            shell_allow=allow,
+        )
+        await agent.start()
+        await bus.publish_inbound(Message(content="open spotify"))
+        await asyncio.wait_for(bus.consume_outbound(), timeout=2.0)
+        assert len(tools.executed_calls) == 1
+        assert "flatpak" not in allow.items()  # ran but not remembered
+        await agent.stop()
+
+    async def test_unknown_approve_save_persists(self):
+        from dax.core.policy import ToolPolicy
+        from dax.core.shell_allow import ShellAllowlist
+        from dax.orchestrator.approval import ApprovalManager
+
+        bus = MessageBus()
+        bus.start()
+        approval = ApprovalManager(timeout_seconds=5)
+        saved: list[str] = []
+
+        async def notifier(payload: dict[str, Any]) -> None:
+            approval.resolve(payload["approval_id"], "save")
+
+        approval.set_notifier(notifier)
+        tools = _MockTools()
+        allow = ShellAllowlist(["git"], on_change=lambda cmds: saved.append(cmds[-1]))
+        agent = Agent(
+            bus=bus,
+            llm=_shell_then_text("flatpak run spotify"),  # type: ignore[arg-type]
+            tools=tools,  # type: ignore[arg-type]
+            storage=_MockStorage(),  # type: ignore[arg-type]
+            policy=ToolPolicy(),
+            approval=approval,
+            shell_allow=allow,
+        )
+        await agent.start()
+        await bus.publish_inbound(Message(content="open spotify"))
+        await asyncio.wait_for(bus.consume_outbound(), timeout=2.0)
+        assert len(tools.executed_calls) == 1
+        assert "flatpak" in allow.items()  # remembered
+        assert saved == ["flatpak"]  # persistence hook fired
+        await agent.stop()
+
+    async def test_unknown_denied_blocks(self):
+        from dax.core.policy import ToolPolicy
+        from dax.core.shell_allow import ShellAllowlist
+        from dax.orchestrator.approval import ApprovalManager
+
+        bus = MessageBus()
+        bus.start()
+        approval = ApprovalManager(timeout_seconds=5)
+
+        async def notifier(payload: dict[str, Any]) -> None:
+            approval.resolve(payload["approval_id"], "deny")
+
+        approval.set_notifier(notifier)
+        tools = _MockTools()
+        allow = ShellAllowlist(["git"])
+        agent = Agent(
+            bus=bus,
+            llm=_shell_then_text("rm -rf /"),  # type: ignore[arg-type]
+            tools=tools,  # type: ignore[arg-type]
+            storage=_MockStorage(),  # type: ignore[arg-type]
+            policy=ToolPolicy(),
+            approval=approval,
+            shell_allow=allow,
+        )
+        await agent.start()
+        await bus.publish_inbound(Message(content="delete everything"))
+        await asyncio.wait_for(bus.consume_outbound(), timeout=2.0)
+        assert tools.executed_calls == []  # blocked
+        assert "rm" not in allow.items()
         await agent.stop()
 
 

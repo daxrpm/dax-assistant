@@ -24,6 +24,7 @@ export interface ConfirmationRequest {
   tool_name: string;
   server_name: string;
   arguments: Record<string, unknown>;
+  options: string[];
   timeout_seconds: number;
 }
 
@@ -162,10 +163,10 @@ export function useChatSocket(sessionId: string, initialMessages: ChatMessage[] 
     );
   }, []);
 
-  const respondConfirmation = useCallback((approvalId: string, approved: boolean) => {
+  const respondConfirmation = useCallback((approvalId: string, decision: string) => {
     const ws = socketRef.current;
     ws?.send(
-      JSON.stringify({ type: "tool_confirmation", approval_id: approvalId, approved }),
+      JSON.stringify({ type: "tool_confirmation", approval_id: approvalId, decision }),
     );
     setConfirmation(null);
   }, []);

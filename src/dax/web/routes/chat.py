@@ -95,9 +95,14 @@ async def websocket_chat(websocket: WebSocket) -> None:
             if data.get("type") == "tool_confirmation":
                 approval = getattr(websocket.app.state, "approval", None)
                 approval_id = data.get("approval_id", "")
-                approved = bool(data.get("approved", False))
+                # Newer clients send a decision string ("approve"/"once"/"save"/
+                # "deny"); older ones send the boolean "approved".
+                if "decision" in data:
+                    decision = str(data["decision"])
+                else:
+                    decision = "approve" if data.get("approved") else "deny"
                 if approval is not None and approval_id:
-                    approval.resolve(approval_id, approved)
+                    approval.resolve(approval_id, decision)
                 continue
 
             content = data.get("content", "").strip()

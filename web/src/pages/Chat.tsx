@@ -739,14 +739,28 @@ export function ChatPage() {
             </span>
           }
           footer={
-            <>
-              <Button variant="ghost" onPress={() => respondConfirmation(confirmation.approval_id, false)}>
-                Deny
-              </Button>
-              <Button variant="primary" onPress={() => respondConfirmation(confirmation.approval_id, true)}>
-                Allow
-              </Button>
-            </>
+            confirmation.options?.includes("save") ? (
+              <>
+                <Button variant="ghost" onPress={() => respondConfirmation(confirmation.approval_id, "deny")}>
+                  Deny
+                </Button>
+                <Button variant="ghost" onPress={() => respondConfirmation(confirmation.approval_id, "once")}>
+                  Approve once
+                </Button>
+                <Button variant="primary" onPress={() => respondConfirmation(confirmation.approval_id, "save")}>
+                  Approve &amp; save
+                </Button>
+              </>
+            ) : (
+              <>
+                <Button variant="ghost" onPress={() => respondConfirmation(confirmation.approval_id, "deny")}>
+                  Deny
+                </Button>
+                <Button variant="primary" onPress={() => respondConfirmation(confirmation.approval_id, "approve")}>
+                  Allow
+                </Button>
+              </>
+            )
           }
         >
           <div className="flex flex-col gap-2">
@@ -758,6 +772,13 @@ export function ChatPage() {
               <pre className="overflow-x-auto rounded-xl bg-surface-secondary p-3 font-mono text-xs text-muted scroll-slim">
                 {JSON.stringify(confirmation.arguments, null, 2)}
               </pre>
+            )}
+            {confirmation.options?.includes("save") && (
+              <p className="text-xs text-muted">
+                <strong>Approve &amp; save</strong> adds this command to your allowlist
+                so it runs without asking next time. <strong>Approve once</strong> runs
+                it just this time. Manage the list under <em>Commands</em>.
+              </p>
             )}
             <p className="text-xs text-muted">
               Auto-deny in {confirmation.timeout_seconds}s if not answered.

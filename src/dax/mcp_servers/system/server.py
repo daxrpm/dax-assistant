@@ -65,18 +65,25 @@ def safe_path(path: str, roots: list[Path] | None = None) -> Path:
 
 
 def validate_command(command: str, allowlist: set[str] | None = None) -> list[str]:
-    """Parse ``command`` into argv, enforcing the allowlist and no metachars.
+    """Parse ``command`` into argv, rejecting shell metacharacters.
+
+    The injection-safety guarantees (no shell, argv-only, no metacharacters) are
+    always enforced. The binary allowlist is only applied when ``allowlist`` is
+    given: in the running app the *host* (the agent) is the authority on which
+    binaries may run — it gates every ``shell_run`` against the user-managed
+    allowlist before the call reaches this subprocess — so the subprocess itself
+    stays permissive. Pass an explicit ``allowlist`` to restrict (e.g. tests or
+    standalone use).
 
     Raises ValueError on rejection. Returns the argv list for subprocess.run.
     """
-    allowlist = allowlist if allowlist is not None else shell_allowlist()
     if any(ch in _SHELL_METACHARS for ch in command):
         raise ValueError("Command contains disallowed shell metacharacters")
     argv = shlex.split(command)
     if not argv:
         raise ValueError("Empty command")
     binary = Path(argv[0]).name
-    if binary not in allowlist:
+    if allowlist is not None and binary not in allowlist:
         raise ValueError(
             f"Command '{binary}' is not in the allowlist. "
             f"Allowed: {', '.join(sorted(allowlist))}"

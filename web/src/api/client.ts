@@ -111,6 +111,11 @@ export interface ToolPolicyResponse {
   confirm_timeout_seconds: number;
 }
 
+export interface ShellAllowResponse {
+  commands: string[];
+  default: string[];
+}
+
 interface OllamaModel {
   name: string;
   size_gb: number;
@@ -220,6 +225,15 @@ export const api = {
     request<{ status: string; tools: number }>(
       `/config/mcp/servers/${name}/reconnect`,
       { method: "POST" },
+    ),
+
+  // dax-system shell allowlist
+  getShellAllow: () => request<ShellAllowResponse>("/config/system/shell-allow"),
+
+  updateShellAllow: (commands: string[]) =>
+    request<{ status: string; commands: string[] }>(
+      "/config/system/shell-allow",
+      { method: "PUT", body: JSON.stringify({ commands }) },
     ),
 
   // OAuth

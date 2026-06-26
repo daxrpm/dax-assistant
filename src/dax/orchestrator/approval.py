@@ -24,7 +24,7 @@ class ApprovalManager:
 
     def __init__(self, timeout_seconds: int = 120) -> None:
         self._timeout = timeout_seconds
-        self._pending: dict[str, asyncio.Future[bool]] = {}
+        self._pending: dict[str, asyncio.Future[str]] = {}
         self._notifier: Callable[[dict[str, Any]], Awaitable[None]] | None = None
 
     def set_notifier(self, notifier: Callable[[dict[str, Any]], Awaitable[None]]) -> None:
@@ -37,19 +37,26 @@ class ApprovalManager:
         tool_name: str,
         server_name: str,
         arguments: dict[str, Any],
-    ) -> bool:
-        """Ask the user to confirm a tool call. Returns True if approved."""
+        options: list[str] | None = None,
+    ) -> str:
+        """Ask the user to confirm a tool call.
+
+        Returns the chosen decision string. For a plain yes/no gate (``options``
+        omitted) the result is ``"approve"`` or ``"deny"``. Callers that offer
+        richer choices (e.g. the shell gate's ``["once", "save"]``) get back the
+        chosen option, or ``"deny"``. Always fails safe to ``"deny"``.
+        """
         if self._notifier is None:
             # No UI to ask — fail safe (deny) rather than run unconfirmed.
             logger.warning(
                 "Tool '%s' needs confirmation but no UI is connected — denying",
                 tool_name,
             )
-            return False
+            return "deny"
 
         approval_id = uuid.uuid4().hex
         loop = asyncio.get_running_loop()
-        future: asyncio.Future[bool] = loop.create_future()
+        future: asyncio.Future[str] = loop.create_future()
         self._pending[approval_id] = future
 
         payload = {
@@ -58,6 +65,7 @@ class ApprovalManager:
             "tool_name": tool_name,
             "server_name": server_name,
             "arguments": arguments,
+            "options": options or ["approve"],
             "timeout_seconds": self._timeout,
         }
         try:
@@ -65,18 +73,18 @@ class ApprovalManager:
             return await asyncio.wait_for(future, timeout=self._timeout)
         except TimeoutError:
             logger.info("Confirmation for '%s' timed out — denying", tool_name)
-            return False
+            return "deny"
         except Exception:
             logger.exception("Failed to request confirmation for '%s'", tool_name)
-            return False
+            return "deny"
         finally:
             self._pending.pop(approval_id, None)
 
-    def resolve(self, approval_id: str, approved: bool) -> bool:
+    def resolve(self, approval_id: str, decision: str) -> bool:
         """Resolve a pending request. Returns True if it matched a pending one."""
         future = self._pending.get(approval_id)
         if future is not None and not future.done():
-            future.set_result(approved)
+            future.set_result(decision)
             return True
         return False
 
