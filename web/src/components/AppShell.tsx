@@ -37,7 +37,8 @@ const TITLES: Record<string, string> = {
 
 export function AppShell({ authEnabled }: { authEnabled: boolean }) {
   const location = useLocation();
-  const isChat = location.pathname === "/";
+  const isChat =
+    location.pathname === "/" || location.pathname.startsWith("/c/");
   const title = TITLES[location.pathname] ?? "Dax";
 
   const logout = async () => {

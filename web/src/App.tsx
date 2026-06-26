@@ -17,6 +17,8 @@ export default function App() {
             <Routes>
               <Route element={<AppShell authEnabled={authEnabled} />}>
                 <Route index element={<ChatPage />} />
+                {/* Each conversation has its own shareable URL. */}
+                <Route path="c/:sessionId" element={<ChatPage />} />
                 <Route path="dashboard" element={<DashboardPage />} />
                 <Route path="mcp" element={<McpPage />} />
                 <Route path="logs" element={<LogsPage />} />

@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
+import { useNavigate, useParams } from "react-router";
 import { Button } from "@heroui/react";
 import {
   Send,
@@ -15,6 +16,8 @@ import {
   CheckCircle2,
   AlertCircle,
   Wrench,
+  Link2,
+  Check,
 } from "lucide-react";
 import { useChatSocket, type ChatMessage, type AgentEvent } from "../hooks/useChatSocket";
 import { api, type ConversationSummary } from "../api/client";
@@ -374,12 +377,15 @@ function ModelSelector({
 /* ── Main ChatPage ────────────────────────────────────────────────────────── */
 
 export function ChatPage() {
+  const { sessionId: urlSessionId } = useParams();
+  const navigate = useNavigate();
   const [sessionId, setSessionId] = useState<string>(getStoredSessionId);
   const [initialMessages, setInitialMessages] = useState<ChatMessage[]>([]);
   const [conversations, setConversations] = useState<ConversationSummary[]>([]);
   const [activeConvId, setActiveConvId] = useState<string | null>(null);
   const [deletingId, setDeletingId] = useState<string | null>(null);
   const [activityOpen, setActivityOpen] = useState(false);
+  const [linkCopied, setLinkCopied] = useState(false);
   const [provider, setProvider] = useState("openai");
   const [model, setModel] = useState("gpt-4o");
 
@@ -453,27 +459,57 @@ export function ChatPage() {
   };
 
   const startNewChat = () => {
-    const id = newSessionId();
-    setSessionId(id);
-    setInitialMessages([]);
-    setActiveConvId(null);
+    navigate(`/c/${newSessionId()}`);
   };
 
-  const openConversation = async (conv: ConversationSummary) => {
-    if (conv.session_key === sessionId) return;
+  // Open a conversation by navigating to its unique URL; the deep-link effect
+  // below does the actual loading so URL and state never diverge.
+  const openConversation = (conv: ConversationSummary) => {
+    navigate(`/c/${conv.session_key}`);
+  };
+
+  // Drive the active conversation entirely from the URL (/c/:sessionId), so
+  // every chat has a stable, shareable link and back/forward just works.
+  const loadSession = useCallback(
+    async (sk: string) => {
+      const conv = conversations.find((c) => c.session_key === sk);
+      if (!conv) {
+        // Unknown/new session — start a fresh, empty conversation.
+        setSessionId(sk);
+        setInitialMessages([]);
+        setActiveConvId(null);
+        return;
+      }
+      if (conv.id === activeConvId && sk === sessionId) return;
+      try {
+        const detail = await api.getConversation(conv.id);
+        const msgs: ChatMessage[] = detail.messages.map((m) => ({
+          id: m.id,
+          role: m.role as "user" | "assistant",
+          content: m.content,
+          timestamp: m.timestamp,
+        }));
+        setInitialMessages(msgs);
+        setSessionId(conv.session_key);
+        setActiveConvId(conv.id);
+      } catch {
+        // silently ignore
+      }
+    },
+    [conversations, activeConvId, sessionId],
+  );
+
+  useEffect(() => {
+    if (urlSessionId) loadSession(urlSessionId);
+  }, [urlSessionId, loadSession]);
+
+  const copyLink = async () => {
     try {
-      const detail = await api.getConversation(conv.id);
-      const msgs: ChatMessage[] = detail.messages.map((m) => ({
-        id: m.id,
-        role: m.role as "user" | "assistant",
-        content: m.content,
-        timestamp: m.timestamp,
-      }));
-      setInitialMessages(msgs);
-      setSessionId(conv.session_key);
-      setActiveConvId(conv.id);
+      await navigator.clipboard.writeText(`${window.location.origin}/c/${sessionId}`);
+      setLinkCopied(true);
+      setTimeout(() => setLinkCopied(false), 1500);
     } catch {
-      // silently ignore
+      // ignore
     }
   };
 
@@ -572,6 +608,16 @@ export function ChatPage() {
           {/* Header */}
           <div className="flex h-12 shrink-0 items-center justify-between border-b border-separator px-5">
             <h2 className="truncate text-sm font-semibold">{currentTitle}</h2>
+            <div className="flex items-center gap-1">
+            <button
+              type="button"
+              onClick={copyLink}
+              title="Copy link to this chat"
+              className="flex items-center gap-1.5 rounded-lg px-2 py-1 text-xs text-muted transition-colors hover:bg-surface-secondary hover:text-foreground"
+            >
+              {linkCopied ? <Check size={13} /> : <Link2 size={13} />}
+              {linkCopied ? "Copied" : "Share"}
+            </button>
             {panelEvents.length > 0 && (
               <button
                 type="button"
@@ -591,6 +637,7 @@ export function ChatPage() {
                 )}
               </button>
             )}
+            </div>
           </div>
 
           {/* Messages */}
