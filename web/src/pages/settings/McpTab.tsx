@@ -4,6 +4,7 @@ import {
   RefreshCw,
   Trash2,
   Plus,
+  Check,
   CheckCircle2,
   XCircle,
   Pencil,
@@ -323,26 +324,28 @@ export function McpTab({
                   ? `${srv.command} ${srv.args.join(" ")}`
                   : srv.url}
               </p>
-              <div className="mt-3 flex flex-wrap items-center gap-3 pl-6">
+              <div className="mt-3 flex flex-wrap items-center gap-2 pl-6">
                 <span className="text-xs font-medium text-muted">Export to</span>
-                <label className="flex items-center gap-2 rounded-lg border border-separator bg-surface px-2 py-1">
-                  <Toggle
-                    checked={srv.export_codex}
-                    disabled={busy === `${name}:export_codex`}
-                    onChange={(value) => setExportFlag(name, srv, "export_codex", value)}
-                    label={`Export ${name} to Codex`}
-                  />
-                  <span className="text-xs">Codex</span>
-                </label>
-                <label className="flex items-center gap-2 rounded-lg border border-separator bg-surface px-2 py-1">
-                  <Toggle
-                    checked={srv.export_claude}
-                    disabled={busy === `${name}:export_claude`}
-                    onChange={(value) => setExportFlag(name, srv, "export_claude", value)}
-                    label={`Export ${name} to Claude`}
-                  />
-                  <span className="text-xs">Claude</span>
-                </label>
+                <Button
+                  size="sm"
+                  variant={srv.export_codex ? "primary" : "tertiary"}
+                  isDisabled={busy === `${name}:export_codex`}
+                  onPress={() => setExportFlag(name, srv, "export_codex", !srv.export_codex)}
+                  aria-label={`Toggle Codex export for ${name}`}
+                >
+                  {srv.export_codex ? <Check size={13} /> : <Plus size={13} />}
+                  Codex
+                </Button>
+                <Button
+                  size="sm"
+                  variant={srv.export_claude ? "primary" : "tertiary"}
+                  isDisabled={busy === `${name}:export_claude`}
+                  onPress={() => setExportFlag(name, srv, "export_claude", !srv.export_claude)}
+                  aria-label={`Toggle Claude export for ${name}`}
+                >
+                  {srv.export_claude ? <Check size={13} /> : <Plus size={13} />}
+                  Claude
+                </Button>
               </div>
               {isExpanded && tools.length > 0 && (
                 <div className="mt-2 pl-6">
