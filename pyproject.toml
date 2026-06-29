@@ -15,6 +15,7 @@ classifiers = [
 dependencies = [
     "pydantic>=2.11",
     "pydantic-settings>=2.9",
+    "tomli-w>=1.0",
     "aiosqlite>=0.21",
     "mcp>=1.9",
     "httpx>=0.28",

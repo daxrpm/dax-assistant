@@ -132,7 +132,7 @@ class DaxApp:
 
     def _persist_shell_allow(self, commands: list[str]) -> None:
         """Mirror the live shell allowlist into config and rewrite the TOML."""
-        from dax.web.routes.api import write_config_toml
+        from dax.core.config_io import write_config_toml
 
         object.__setattr__(self._config.tools, "shell_allow", list(commands))
         try:
