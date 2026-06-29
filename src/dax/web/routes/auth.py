@@ -9,13 +9,11 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from typing import TYPE_CHECKING
 
 from fastapi import APIRouter, Request, Response
 from pydantic import BaseModel
 
-if TYPE_CHECKING:
-    from dax.web.auth import AuthManager
+from dax.web.dependencies import AuthDep, ConfigDep, SecretStoreDep
 
 router = APIRouter(tags=["auth"])
 
@@ -40,13 +38,8 @@ class AuthStatus(BaseModel):
     authenticated: bool
 
 
-def _auth(request: Request) -> AuthManager:
-    return request.app.state.auth
-
-
 @router.get("/auth/status", response_model=AuthStatus)
-async def auth_status(request: Request) -> AuthStatus:
-    auth = _auth(request)
+async def auth_status(request: Request, auth: AuthDep) -> AuthStatus:
     return AuthStatus(
         auth_enabled=auth.enabled,
         configured=auth.configured,
@@ -55,7 +48,13 @@ async def auth_status(request: Request) -> AuthStatus:
 
 
 @router.post("/auth/setup", response_model=LoginResponse)
-async def setup(request: Request, body: SetupRequest, response: Response) -> LoginResponse:
+async def setup(
+    body: SetupRequest,
+    response: Response,
+    auth: AuthDep,
+    store: SecretStoreDep,
+    config: ConfigDep,
+) -> LoginResponse:
     """First-run account creation — set the login password and sign in.
 
     Public on purpose, but only usable while no password exists yet (i.e. the
@@ -65,7 +64,6 @@ async def setup(request: Request, body: SetupRequest, response: Response) -> Log
     """
     from dax.web.auth import hash_password
 
-    auth = _auth(request)
     if auth.configured:
         response.status_code = 409
         return LoginResponse(ok=False)
@@ -77,14 +75,8 @@ async def setup(request: Request, body: SetupRequest, response: Response) -> Log
     new_hash = hash_password(body.password)
 
     # Persist encrypted, then update the live config + auth manager in place.
-    store = getattr(request.app.state, "secret_store", None)
-    if store is None:
-        from dax.storage.secrets import SecretStore
-
-        store = SecretStore(request.app.state.config.storage.database_path)
     store.set("DAX_SECURITY__PASSWORD_HASH", new_hash)
 
-    config = request.app.state.config
     object.__setattr__(config.security, "password_hash", new_hash)
     object.__setattr__(config.security, "auth_enabled", True)
     auth._password_hash = new_hash
@@ -97,8 +89,9 @@ async def setup(request: Request, body: SetupRequest, response: Response) -> Log
 
 
 @router.post("/auth/login", response_model=LoginResponse)
-async def login(request: Request, body: LoginRequest, response: Response) -> LoginResponse:
-    auth = _auth(request)
+async def login(
+    request: Request, body: LoginRequest, response: Response, auth: AuthDep
+) -> LoginResponse:
     if not auth.enabled:
         return LoginResponse(ok=True)
 
@@ -116,6 +109,6 @@ async def login(request: Request, body: LoginRequest, response: Response) -> Log
 
 
 @router.post("/auth/logout", response_model=LoginResponse)
-async def logout(request: Request, response: Response) -> LoginResponse:
-    _auth(request).clear_cookie(response)
+async def logout(response: Response, auth: AuthDep) -> LoginResponse:
+    auth.clear_cookie(response)
     return LoginResponse(ok=True)

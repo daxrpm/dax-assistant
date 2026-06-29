@@ -29,6 +29,8 @@ import httpx
 from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import HTMLResponse
 
+from dax.web.dependencies import ConfigDep
+
 router = APIRouter(tags=["oauth"])
 
 logger = logging.getLogger(__name__)
@@ -49,7 +51,7 @@ class _AuthStartResponse:
 
 
 @router.post("/mcp/{name}/auth/start")
-async def start_auth(name: str, request: Request) -> dict[str, str]:
+async def start_auth(name: str, request: Request, config: ConfigDep) -> dict[str, str]:
     """Start the OAuth flow for a remote MCP server.
 
     1. Hits the MCP server to get the WWW-Authenticate header
@@ -58,7 +60,6 @@ async def start_auth(name: str, request: Request) -> dict[str, str]:
     4. Generates PKCE parameters
     5. Returns the authorization URL for the frontend to open
     """
-    config = request.app.state.config
     server_config = config.mcp.servers.get(name)
 
     if not server_config:

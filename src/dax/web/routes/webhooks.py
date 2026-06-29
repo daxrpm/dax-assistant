@@ -23,6 +23,7 @@ from fastapi import APIRouter, Request, Response, status
 from pydantic import BaseModel
 
 from dax.core.models import ChannelType, Language, Message, MessageRole
+from dax.web.dependencies import BusDep, ConfigDep
 
 router = APIRouter(tags=["webhooks"])
 
@@ -45,6 +46,8 @@ class WebhookEnvelope(BaseModel):
 async def whatsapp_webhook(
     request: Request,
     payload: WebhookEnvelope,
+    config: ConfigDep,
+    bus: BusDep,
 ) -> Response:
     """Receive and process WhatsApp messages from Evolution API v2.
 
@@ -56,15 +59,12 @@ async def whatsapp_webhook(
     """
     # Reject unauthenticated callers when a shared secret is configured.
     # Evolution sends the instance API key in the `apikey` header.
-    config = request.app.state.config
     expected = config.whatsapp.webhook_secret or config.whatsapp.evolution_api_key
     if expected:
         provided = request.headers.get("apikey") or payload.apikey
         if not provided or not secrets.compare_digest(provided, expected):
             logger.warning("Rejected WhatsApp webhook with invalid/missing secret")
             return Response(status_code=status.HTTP_401_UNAUTHORIZED)
-
-    bus = request.app.state.bus
 
     # Only process message events
     if payload.event != "messages.upsert":

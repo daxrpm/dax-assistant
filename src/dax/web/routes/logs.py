@@ -7,6 +7,8 @@ import logging
 
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect
 
+from dax.web.dependencies import auth_from_app, log_buffer_from_app
+
 router = APIRouter(tags=["logs"])
 
 logger = logging.getLogger(__name__)
@@ -15,12 +17,12 @@ logger = logging.getLogger(__name__)
 @router.websocket("/logs")
 async def websocket_logs(websocket: WebSocket) -> None:
     """Stream log records as JSON. Authenticated like the chat socket."""
-    auth = websocket.app.state.auth
-    if not auth.authenticate_websocket(websocket):
+    auth = auth_from_app(websocket.app)
+    if auth is None or not auth.authenticate_websocket(websocket):
         await websocket.close(code=1008)
         return
 
-    log_buffer = getattr(websocket.app.state, "log_buffer", None)
+    log_buffer = log_buffer_from_app(websocket.app)
     if log_buffer is None:
         await websocket.close(code=1011)
         return

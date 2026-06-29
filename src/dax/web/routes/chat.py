@@ -6,13 +6,14 @@ is handled by the Dispatcher → WebChannel → WebSocketManager path.
 
 from __future__ import annotations
 
-import logging
 import asyncio
+import logging
 from typing import Any
 
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect
 
 from dax.core.models import ChannelType, Language, Message, MessageRole
+from dax.web.dependencies import approval_from_app, auth_from_app, bus_from_app
 
 router = APIRouter(tags=["chat"])
 
@@ -78,13 +79,16 @@ async def websocket_chat(websocket: WebSocket) -> None:
     Inbound messages are published to the bus here.
     Outbound delivery goes through: Dispatcher → WebChannel → ws_manager.broadcast()
     """
-    auth = websocket.app.state.auth
-    if not auth.authenticate_websocket(websocket):
+    auth = auth_from_app(websocket.app)
+    if auth is None or not auth.authenticate_websocket(websocket):
         await websocket.close(code=1008)  # policy violation
         logger.warning("Rejected unauthenticated WebSocket connection")
         return
 
-    bus = websocket.app.state.bus
+    bus = bus_from_app(websocket.app)
+    if bus is None:
+        await websocket.close(code=1011)  # internal error — not wired
+        return
     await ws_manager.connect(websocket)
 
     try:
@@ -93,7 +97,7 @@ async def websocket_chat(websocket: WebSocket) -> None:
 
             # Tool-confirmation responses from the UI resolve a pending gate.
             if data.get("type") == "tool_confirmation":
-                approval = getattr(websocket.app.state, "approval", None)
+                approval = approval_from_app(websocket.app)
                 approval_id = data.get("approval_id", "")
                 # Newer clients send a decision string ("approve"/"once"/"save"/
                 # "deny"); older ones send the boolean "approved".
