@@ -24,7 +24,6 @@ if TYPE_CHECKING:
     from dax.core.policy import ToolPolicy
     from dax.core.ports import LLMProvider, Storage, ToolProvider
     from dax.core.shell_allow import ShellAllowlist
-    from dax.mcp.registry import ToolRegistry
     from dax.orchestrator.approval import ApprovalManager
     from dax.orchestrator.bus import MessageBus
 
@@ -271,18 +270,14 @@ class Agent:
         # Gather tools BEFORE building messages so the system prompt can
         # include a concrete inventory of what is available right now.
         available_tools = await self._tools.list_tools()
-        registry = self._get_registry()
 
         relevant: list[dict[str, Any]] = []
         openai_tools: list[dict[str, Any]] | None = None
         if available_tools:
-            if registry:
-                relevant = registry.get_relevant_tools(
-                    _relevance_query(message.content, history),
-                    max_tools=self._max_tools,
-                )
-            else:
-                relevant = available_tools[: self._max_tools]
+            relevant = self._tools.get_relevant_tools(
+                _relevance_query(message.content, history),
+                max_tools=self._max_tools,
+            )
             openai_tools = mcp_tools_to_openai(relevant) or None
 
         # Build conversation context with a dynamic inventory injected into
@@ -350,7 +345,7 @@ class Agent:
                     "server": tool_call.server_name or "",
                     "args": dict(tool_call.arguments),
                 })
-                result = await self._execute_tool_safe(tool_call, registry)
+                result = await self._execute_tool_safe(tool_call)
                 await self._emit({
                     "type": "tool_result",
                     "tool": tool_call.tool_name,
@@ -387,16 +382,13 @@ class Agent:
             logger.exception("Failed to persist conversation %s", conversation.id)
         return assistant
 
-    async def _execute_tool_safe(
-        self,
-        tool_call: ToolCall,
-        registry: ToolRegistry | None,
-    ) -> ToolResult:
+    async def _execute_tool_safe(self, tool_call: ToolCall) -> ToolResult:
         """Execute a tool call, applying the policy + confirmation gate."""
-        # Resolve server name from registry
+        # Resolve the owning server up front so the policy gate and audit log
+        # record it (the tool provider also resolves it at execution time).
         resolved_call = tool_call
-        if registry and (not tool_call.server_name or tool_call.server_name == ""):
-            server = registry.get_server_for_tool(tool_call.tool_name)
+        if not tool_call.server_name:
+            server = self._tools.get_server_for_tool(tool_call.tool_name)
             if server:
                 resolved_call = ToolCall(
                     id=tool_call.id,
@@ -533,12 +525,6 @@ class Agent:
             )
         except Exception:
             logger.exception("Failed to write tool audit log")
-
-    def _get_registry(self) -> ToolRegistry | None:
-        """Get the tool registry if the tool provider is an MCPManager."""
-        if hasattr(self._tools, "registry"):
-            return self._tools.registry  # type: ignore[union-attr]
-        return None
 
     def _format_assistant_tool_calls(self, response: Message) -> dict[str, Any]:
         """Format an assistant message with tool calls for the LLM context."""

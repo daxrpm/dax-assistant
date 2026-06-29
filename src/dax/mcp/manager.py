@@ -46,6 +46,37 @@ def _resolve_env_dict(d: dict[str, str]) -> dict[str, str]:
     return {k: _resolve_env_vars(v) for k, v in d.items()}
 
 
+# Desktop/session variables a *local* stdio server (the bundled dax-system)
+# needs to actually drive the user's machine: launch GUI apps, open files via
+# xdg-open, send notify-send notifications. The MCP SDK otherwise strips a
+# spawned subprocess down to a minimal env (HOME/PATH/SHELL/…), so a GUI app
+# would start with no display/bus to attach to — the classic "process is
+# running but no window appears". We pass these through from the dax process's
+# own environment when present (harmless for non-GUI servers).
+_SESSION_PASSTHROUGH_VARS = (
+    "DISPLAY",
+    "WAYLAND_DISPLAY",
+    "XAUTHORITY",
+    "XDG_RUNTIME_DIR",
+    "XDG_SESSION_TYPE",
+    "XDG_SESSION_CLASS",
+    "XDG_CURRENT_DESKTOP",
+    "XDG_DATA_DIRS",
+    "XDG_CONFIG_DIRS",
+    "DBUS_SESSION_BUS_ADDRESS",
+    "DESKTOP_SESSION",
+)
+
+
+def _session_passthrough_env() -> dict[str, str]:
+    """Snapshot desktop-session vars present in the current environment."""
+    return {
+        var: os.environ[var]
+        for var in _SESSION_PASSTHROUGH_VARS
+        if os.environ.get(var)
+    }
+
+
 def _get_oauth_token(server_name: str) -> str | None:
     """Get stored OAuth access token for an MCP server, if available."""
     try:
@@ -88,11 +119,15 @@ class MCPManager:
             if not server_config.command:
                 logger.warning("MCP server '%s' (stdio) has no command, skipping", name)
                 return None
+            # Session vars first so an explicitly configured server env wins.
             return MCPClient(
                 server_name=name,
                 command=server_config.command,
                 args=server_config.args,
-                env=_resolve_env_dict(server_config.env),
+                env={
+                    **_session_passthrough_env(),
+                    **_resolve_env_dict(server_config.env),
+                },
             )
 
         if transport in ("streamable_http", "sse", "http"):
@@ -288,6 +323,21 @@ class MCPManager:
     async def list_tools(self) -> list[dict[str, Any]]:
         """Return all available tool schemas across all servers."""
         return self._registry.all_tools
+
+    def get_relevant_tools(
+        self, query: str, max_tools: int
+    ) -> list[dict[str, Any]]:
+        """Return the tools most relevant to ``query`` (ToolProvider port).
+
+        Delegates to the registry's keyword-relevance filter; ``dax-system``
+        tools are always included there. Keeps the agent decoupled from the
+        registry implementation.
+        """
+        return self._registry.get_relevant_tools(query, max_tools=max_tools)
+
+    def get_server_for_tool(self, tool_name: str) -> str | None:
+        """Return which server owns ``tool_name`` (ToolProvider port)."""
+        return self._registry.get_server_for_tool(tool_name)
 
     async def execute(self, tool_call: ToolCall) -> ToolResult:
         """Execute a tool call on the appropriate MCP server."""

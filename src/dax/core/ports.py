@@ -111,6 +111,18 @@ class ToolProvider(Protocol):
         """Return all available tool schemas across all servers."""
         ...
 
+    def get_relevant_tools(
+        self, query: str, max_tools: int
+    ) -> list[dict[str, object]]:
+        """Return the tool schemas most relevant to ``query``, capped at
+        ``max_tools``. Lets the core trim the tool budget without knowing how
+        relevance is scored or which server owns what."""
+        ...
+
+    def get_server_for_tool(self, tool_name: str) -> str | None:
+        """Return the server that owns ``tool_name``, or None if unknown."""
+        ...
+
     async def execute(self, tool_call: ToolCall) -> ToolResult:
         """Execute a tool call on the appropriate MCP server."""
         ...

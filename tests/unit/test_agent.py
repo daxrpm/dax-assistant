@@ -74,6 +74,17 @@ class _MockTools:
     async def list_tools(self) -> list[dict[str, Any]]:
         return self._tools
 
+    def get_relevant_tools(
+        self, query: str, max_tools: int
+    ) -> list[dict[str, Any]]:
+        return self._tools[:max_tools]
+
+    def get_server_for_tool(self, tool_name: str) -> str | None:
+        return next(
+            (t.get("server_name") for t in self._tools if t.get("name") == tool_name),
+            None,
+        )
+
     async def execute(self, tool_call: ToolCall) -> ToolResult:
         self.executed_calls.append(tool_call)
         if tool_call.tool_name in self._results:
