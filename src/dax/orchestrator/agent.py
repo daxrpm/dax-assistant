@@ -243,7 +243,9 @@ class Agent:
                 iteration,
             )
             llm_messages.append(self._format_assistant_tool_calls(response))
-            await self._run_tool_calls(response.tool_calls, llm_messages)
+            await self._run_tool_calls(
+                response.tool_calls, llm_messages, channel=message.channel.value
+            )
 
         # If we exhausted iterations, return whatever we have.
         logger.warning("Max tool iterations (%d) reached", MAX_TOOL_ITERATIONS)
@@ -256,7 +258,11 @@ class Agent:
         )
 
     async def _run_tool_calls(
-        self, tool_calls: Sequence[ToolCall], llm_messages: list[dict[str, Any]]
+        self,
+        tool_calls: Sequence[ToolCall],
+        llm_messages: list[dict[str, Any]],
+        *,
+        channel: str | None = None,
     ) -> None:
         """Execute each tool call via the gate, emitting UI events + feeding
         results back into the LLM message list."""
@@ -267,7 +273,7 @@ class Agent:
                 "server": tool_call.server_name or "",
                 "args": dict(tool_call.arguments),
             })
-            result = await self._gate.execute(tool_call)
+            result = await self._gate.execute(tool_call, channel=channel)
             await self._emit({
                 "type": "tool_result",
                 "tool": tool_call.tool_name,

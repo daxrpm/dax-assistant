@@ -22,18 +22,35 @@ class VoiceConfig(BaseModel):
     """Voice pipeline configuration."""
 
     enabled: bool = True
-    wake_word_model: str = "models/wakeword/hey_jarvis.onnx"
+    # OpenWakeWord built-in model name (e.g. "hey_jarvis", "alexa") or a path to
+    # a custom ``.onnx`` model. The detector resolves both.
+    wake_word_model: str = "hey_jarvis"
     wake_word_threshold: float = 0.7
-    stt_model: str = "base"
+    # faster-whisper model. "large-v3-turbo" is near-large accuracy at a fraction
+    # of the cost — the sweet spot for accurate Spanish on CPU (int8).
+    stt_model: str = "large-v3-turbo"
     # "auto" picks float16 on CUDA, int8 on CPU. Explicit values still honoured.
     stt_compute_type: str = "auto"
     # "auto" uses the GPU when available, else CPU — big latency win on GPU.
     stt_device: str = "auto"
-    # Greedy decoding (beam_size=1) is markedly faster; bump for accuracy.
-    stt_beam_size: int = 1
-    stt_language: str = "auto"
+    # beam_size=2 is a good accuracy/speed balance for turbo; 1 is fastest.
+    stt_beam_size: int = 2
+    # ISO code ("es"/"en") to PIN the language, or "auto" to detect. Pinning the
+    # language is strongly recommended: short/noisy commands otherwise get
+    # mis-detected (Whisper guessing "ru"/etc.). The installer sets this.
+    stt_language: str = "es"
+
+    # -- Text-to-speech -----------------------------------------------------
+    # "kokoro" = natural neural voice (recommended); "piper" = faster, robotic.
+    tts_engine: str = "kokoro"
+    # Piper voice names/paths (fallback engine).
     tts_voice_es: str = "es_ES-davefx-medium"
     tts_voice_en: str = "en_US-lessac-medium"
+    # Kokoro voice ids (see VOICES.md). ES: ef_dora/em_alex; EN: af_heart/am_michael.
+    tts_kokoro_voice_es: str = "ef_dora"
+    tts_kokoro_voice_en: str = "af_heart"
+    tts_kokoro_speed: float = 1.0
+
     vad_threshold: float = 0.5
     silence_duration_ms: int = 600
     # Adaptive endpointing: shorten the end-of-speech pause for short commands
@@ -48,6 +65,24 @@ class VoiceConfig(BaseModel):
     earcon: bool = True
     # Seconds to keep listening for a follow-up after speaking (follow-up mode).
     conversation_timeout_s: int = 8
+
+    # -- Reliability & UX ---------------------------------------------------
+    # Max seconds to wait for the assistant's reply (incl. long tool chains)
+    # before giving up on a voice turn. Generous so multi-tool actions finish.
+    response_timeout_s: int = 180
+    # Ask for tool confirmations BY VOICE ("¿lo ejecuto? sí/no") instead of the
+    # web modal, so voice-only use isn't blocked waiting for a click.
+    voice_confirm: bool = True
+    # Require the wake word before every turn (no hands-free follow-up). Useful
+    # in noisy/shared rooms where follow-up mode picks up other people.
+    require_wake_word_each_turn: bool = False
+
+    # -- Speaker verification (Voice ID) ------------------------------------
+    # When enabled AND a voice profile is enrolled, ignore commands that don't
+    # match the owner's voice — so other people talking can't drive the agent.
+    speaker_verification: bool = False
+    # Cosine-similarity threshold (0..1) for accepting a speaker as the owner.
+    speaker_threshold: float = 0.65
 
 
 class OllamaProviderConfig(BaseModel):

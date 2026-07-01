@@ -9,14 +9,29 @@ memory_path = "~/.dax/memory"
 
 [voice]
 enabled = true
+# Wake word: built-in openWakeWord name (hey_jarvis, alexa, …) or path to a .onnx
+wake_word_model = "hey_jarvis"
 wake_word_threshold = 0.7
-stt_model = "base"
-stt_compute_type = "int8"
-stt_language = "auto"
-tts_voice_es = "models/piper/es_ES-davefx-medium.onnx"
-tts_voice_en = "models/piper/en_US-lessac-medium.onnx"
+# STT: large-v3-turbo is accurate and CPU-friendly (int8). small/base are faster.
+stt_model = "large-v3-turbo"
+stt_compute_type = "auto"        # auto -> float16 on GPU, int8 on CPU
+stt_language = "es"              # PIN to es/en (recommended) or "auto" to detect
+stt_beam_size = 2
+# TTS: kokoro (natural neural voice) with Piper as fast fallback.
+tts_engine = "kokoro"
+tts_kokoro_voice_es = "ef_dora"
+tts_kokoro_voice_en = "af_heart"
+tts_voice_es = "es_ES-davefx-medium"
+tts_voice_en = "en_US-lessac-medium"
 vad_threshold = 0.5
-silence_duration_ms = 500
+silence_duration_ms = 600
+# Reliability / UX
+response_timeout_s = 180          # wait this long for long tool chains to finish
+voice_confirm = true              # confirm gated tools by voice (not the web modal)
+require_wake_word_each_turn = false
+# Voice ID (enroll first: scripts/enroll_voice.py)
+speaker_verification = false
+speaker_threshold = 0.65
 
 [llm]
 # Recommended: Anthropic claude for reliable tool use. Set ANTHROPIC_API_KEY in .env.

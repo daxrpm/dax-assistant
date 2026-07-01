@@ -38,12 +38,15 @@ class SpeechToText:
         language: str = "auto",
         device: str = "auto",
         beam_size: int = 1,
+        fallback_language: str = "es",
     ) -> None:
         self._model_size = model_size
         self._compute_type = compute_type
         self._language = language
         self._device = device
         self._beam_size = max(1, beam_size)
+        # Used in "auto" mode when detection is low-confidence or implausible.
+        self._fallback_language = fallback_language if fallback_language in {"es", "en"} else "es"
         self._model: WhisperModel | None = None
 
     # ── Lifecycle ──────────────────────────────────────────────────────────
@@ -54,7 +57,7 @@ class SpeechToText:
         if device != "auto":
             return device
         try:
-            import ctranslate2  # type: ignore[import-untyped]
+            import ctranslate2
 
             if ctranslate2.get_cuda_device_count() > 0:
                 return "cuda"
@@ -127,12 +130,16 @@ class SpeechToText:
 
         kwargs: dict[str, object] = {
             "beam_size": self._beam_size,
-            "vad_filter": True,
+            # The pipeline already does Silero endpointing before calling us;
+            # a second VAD here clips short commands, so keep it off.
+            "vad_filter": False,
             # Short voice commands don't benefit from prior-text conditioning,
             # and disabling it avoids context bleed + speeds up decoding.
             "condition_on_previous_text": False,
         }
         if self._language != "auto":
+            # Pinning the language stops Whisper from mis-guessing "ru"/etc. on
+            # short or noisy clips — the single biggest accuracy win on CPU.
             kwargs["language"] = self._language
 
         try:
@@ -141,5 +148,22 @@ class SpeechToText:
         except Exception as exc:
             raise STTError(f"Transcription failed: {exc}") from exc
 
-        logger.debug("Transcribed (%s): %s", info.language, text)
-        return text, info.language
+        detected = self._resolve_language(info)
+        logger.debug("Transcribed (%s): %s", detected, text)
+        return text, detected
+
+    def _resolve_language(self, info: object) -> str:
+        """Pick a trustworthy language code from Whisper's transcription info.
+
+        When the language is pinned we honour it. In ``auto`` mode Whisper can
+        report an implausible language with low confidence on short clips; we
+        only trust a detected es/en above ~50% probability and otherwise fall
+        back to the fallback language, never surfacing a spurious "ru".
+        """
+        if self._language != "auto":
+            return self._language
+        lang = str(getattr(info, "language", "") or "")
+        prob = float(getattr(info, "language_probability", 0.0) or 0.0)
+        if lang in {"es", "en"} and prob >= 0.5:
+            return lang
+        return self._fallback_language

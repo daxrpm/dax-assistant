@@ -40,12 +40,16 @@ voice = [
     "faster-whisper>=1.2",
     "silero-vad>=6.2",
     "piper-tts>=1.4",
+    # Natural neural TTS (default engine); Piper stays as the fast fallback.
+    "kokoro-onnx>=0.4",
     "sounddevice>=0.5",
     "numpy>=1.26",
     "onnxruntime>=1.16",
     # Pre-STT background-noise suppression (best-effort; pipeline degrades
     # gracefully if absent).
     "noisereduce>=3.0",
+    # Speaker verification (Voice ID) — lightweight, optional at runtime.
+    "resemblyzer>=0.1.4",
 ]
 dev = [
     "ruff>=0.11",
@@ -118,3 +122,19 @@ python_version = "3.11"
 strict = true
 warn_return_any = true
 warn_unused_configs = true
+
+# Third-party voice/ML libraries ship no type stubs; don't fail strict mode on
+# their untyped imports (our own wrappers are still fully typed).
+[[tool.mypy.overrides]]
+module = [
+    "faster_whisper.*",
+    "piper.*",
+    "silero_vad.*",
+    "openwakeword.*",
+    "kokoro_onnx.*",
+    "resemblyzer.*",
+    "noisereduce.*",
+    "sounddevice.*",
+    "ctranslate2.*",
+]
+ignore_missing_imports = true

@@ -91,7 +91,8 @@ class VoiceActivityDetector:
             raise VoiceError("VAD not started")
 
         tensor = torch.from_numpy(audio_chunk.astype(np.float32))
-        return self._iterator(tensor)
+        result: dict[str, float] | None = self._iterator(tensor)
+        return result
 
     def speech_prob(self, audio_chunk: np.ndarray) -> float:
         """Return the raw speech probability (0..1) for a VAD-sized chunk.

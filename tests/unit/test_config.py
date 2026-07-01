@@ -17,8 +17,10 @@ class TestDaxConfig:
     def test_voice_defaults(self):
         config = DaxConfig()
         assert config.voice.enabled is True
-        assert config.voice.stt_model == "base"
-        assert config.voice.stt_language == "auto"
+        assert config.voice.stt_model == "large-v3-turbo"
+        assert config.voice.stt_language == "es"
+        assert config.voice.tts_engine == "kokoro"
+        assert config.voice.wake_word_model == "hey_jarvis"
 
     def test_llm_defaults(self):
         config = DaxConfig()

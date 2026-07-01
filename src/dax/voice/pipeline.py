@@ -27,6 +27,7 @@ import logging
 import re
 import threading
 import time
+import uuid
 from enum import StrEnum
 from pathlib import Path
 from typing import TYPE_CHECKING
@@ -36,14 +37,16 @@ import numpy as np
 from dax.core.exceptions import STTError, TTSError, VoiceError
 from dax.core.models import ChannelType, Language, Message, MessageRole
 from dax.voice.audio_io import CHUNK_SIZE, SAMPLE_RATE, AudioCapture, AudioPlayer
+from dax.voice.speaker import SpeakerVerifier
 from dax.voice.stt import SpeechToText
-from dax.voice.tts import TextToSpeech
+from dax.voice.tts import build_tts
 from dax.voice.vad import VAD_CHUNK_SIZE, VoiceActivityDetector
 from dax.voice.wakeword import WakeWordDetector
 
 if TYPE_CHECKING:
     from dax.channels.voice_channel import VoiceChannel
     from dax.core.config import VoiceConfig
+    from dax.orchestrator.approval import ApprovalManager
     from dax.orchestrator.bus import MessageBus
 
 logger = logging.getLogger(__name__)
@@ -125,11 +128,13 @@ class VoicePipeline:
         voice_channel: VoiceChannel,
         loop: asyncio.AbstractEventLoop,
         models_path: str = "models/",
+        approval: ApprovalManager | None = None,
     ) -> None:
         self._config = config
         self._bus = bus
         self._voice_channel = voice_channel
         self._loop = loop
+        self._approval = approval
 
         self._state = PipelineState.IDLE
         self._running = False
@@ -142,22 +147,39 @@ class VoicePipeline:
             chunk_size=CHUNK_SIZE,
         )
         self._player = AudioPlayer()
-        self._wakeword = WakeWordDetector(threshold=config.wake_word_threshold)
+        self._wakeword = WakeWordDetector(
+            model_names=[config.wake_word_model] if config.wake_word_model else None,
+            threshold=config.wake_word_threshold,
+        )
         self._vad = VoiceActivityDetector(
             threshold=config.vad_threshold,
             silence_duration_ms=config.silence_duration_ms,
         )
+        # In "auto" language mode, fall back to the user's primary language
+        # rather than ever surfacing a mis-detected one (e.g. "ru").
+        fallback_lang = config.stt_language if config.stt_language in {"es", "en"} else "es"
         self._stt = SpeechToText(
             model_size=config.stt_model,
             compute_type=config.stt_compute_type,
             language=config.stt_language,
             device=getattr(config, "stt_device", "auto"),
             beam_size=getattr(config, "stt_beam_size", 1),
+            fallback_language=fallback_lang,
         )
-        self._tts = TextToSpeech(
-            voice_es=config.tts_voice_es,
-            voice_en=config.tts_voice_en,
-            download_dir=str(Path(models_path) / "piper"),
+        self._tts = build_tts(config, models_path)
+
+        # Speaker verification (Voice ID) — only constructed when enabled. Fails
+        # open at runtime if the model/profile is missing.
+        self._speaker: SpeakerVerifier | None = None
+        if getattr(config, "speaker_verification", False):
+            self._speaker = SpeakerVerifier(
+                profile_path=str(Path(models_path) / "voice_profile.npy"),
+                threshold=getattr(config, "speaker_threshold", 0.65),
+            )
+        # In noisy/shared rooms, require the wake word for every turn instead of
+        # hands-free follow-up (which can pick up other people).
+        self._require_wake_each_turn = getattr(
+            config, "require_wake_word_each_turn", False,
         )
 
         # Feature flags (best-practice defaults; see VoiceConfig).
@@ -166,6 +188,15 @@ class VoicePipeline:
         self._earcon_enabled = getattr(config, "earcon", True)
         self._adaptive = getattr(config, "adaptive_endpointing", True)
         self._conv_timeout = getattr(config, "conversation_timeout_s", 8)
+        # Generous reply window so long multi-tool actions finish before we
+        # give up on the turn (was a hard 60s → "se agotó el tiempo de espera").
+        self._response_timeout = getattr(config, "response_timeout_s", 180)
+        # Ask for tool confirmations out loud on voice turns.
+        self._voice_confirm = getattr(config, "voice_confirm", True)
+        # Register the spoken-confirmation handler with the approval manager so
+        # gated tools prompt by voice instead of the (unseen) web modal.
+        if self._approval is not None and self._voice_confirm:
+            self._approval.set_voice_approver(self._voice_approve)
 
         self._speech_buffer: list[np.ndarray] = []
         self._conversation_start: float = 0.0
@@ -177,6 +208,11 @@ class VoicePipeline:
         # Monotonic per-utterance id used to correlate responses and drop stale
         # ones that arrive late from a previous (timed-out) turn.
         self._turn = 0
+        # One ephemeral conversation id per wake-word activation. It scopes the
+        # persisted history so each "Hey Jarvis…" starts fresh (no bleed from
+        # past conversations), while follow-up turns within the same activation
+        # share context. Reset to None when we return to IDLE.
+        self._conversation_id: str | None = None
 
     # -- Properties --
 
@@ -204,6 +240,8 @@ class VoicePipeline:
             self._vad.start()
             self._stt.start()
             self._tts.start()
+            if self._speaker is not None:
+                self._speaker.start()
             self._capture.start()
         except VoiceError:
             raise
@@ -228,6 +266,8 @@ class VoicePipeline:
         self._vad.stop()
         self._stt.stop()
         self._tts.stop()
+        if self._speaker is not None:
+            self._speaker.stop()
         logger.info("Voice pipeline stopped")
 
     # -- Main loop --
@@ -258,12 +298,18 @@ class VoicePipeline:
 
     def _handle_idle(self) -> None:
         """IDLE — listen for wake word activation."""
+        # Returning to IDLE ends the conversation: drop its id so the next
+        # activation starts a brand-new (history-free) session.
+        self._conversation_id = None
+
         chunk = self._capture.read_chunk(timeout=0.5)
         if chunk is None:
             return
         detected = self._wakeword.detect(chunk)
         if detected is not None:
             logger.info("Wake word detected: %s", detected)
+            # New activation → new conversation scope.
+            self._conversation_id = uuid.uuid4().hex
             # Immediate audible acknowledgement (like Alexa's tone) so the user
             # knows Dax is listening before they start speaking. Mic is muted
             # during the chime so the tone is never captured as speech.
@@ -402,6 +448,13 @@ class VoicePipeline:
         if self._denoise:
             float_audio = self._denoise_audio(float_audio)
 
+        # Voice ID: drop the utterance if it isn't the enrolled owner (so other
+        # people talking can't drive the assistant). Fails open if not enrolled.
+        if self._speaker is not None and not self._speaker.verify(float_audio):
+            logger.info("Utterance rejected by speaker verification")
+            self._state = PipelineState.IDLE
+            return
+
         try:
             text, detected_lang = self._stt.transcribe(float_audio)
         except STTError:
@@ -420,12 +473,18 @@ class VoicePipeline:
         self._last_user_text = text
 
         self._turn += 1
+        # Ensure a conversation scope exists (defensive — wake sets it).
+        if self._conversation_id is None:
+            self._conversation_id = uuid.uuid4().hex
         message = Message(
             role=MessageRole.USER,
             content=text,
             channel=ChannelType.VOICE,
             language=language,
-            metadata={"voice_turn": str(self._turn)},
+            metadata={
+                "voice_turn": str(self._turn),
+                "session_id": self._conversation_id,
+            },
         )
 
         # Discard any response left over from a previous (e.g. timed-out) turn
@@ -463,11 +522,12 @@ class VoicePipeline:
         try:
             future = asyncio.run_coroutine_threadsafe(
                 self._voice_channel.get_response(
-                    timeout=60.0, expected_turn=str(self._turn),
+                    timeout=float(self._response_timeout),
+                    expected_turn=str(self._turn),
                 ),
                 self._loop,
             )
-            response: Message | None = future.result(timeout=65)
+            response: Message | None = future.result(timeout=self._response_timeout + 10)
 
             if response is None:
                 logger.warning("Timed out waiting for assistant response")
@@ -492,6 +552,9 @@ class VoicePipeline:
             # Dax's reply happens to contain filler like "listo".
             if self._is_farewell(self._last_user_text):
                 logger.info("Farewell detected, ending conversation")
+                self._state = PipelineState.IDLE
+            elif self._require_wake_each_turn:
+                # No hands-free follow-up: wait for the wake word again.
                 self._state = PipelineState.IDLE
             else:
                 self._enter_conversing()
@@ -546,10 +609,125 @@ class VoicePipeline:
                 return True
         return False
 
+    # -- Spoken confirmation (voice approval) --
+
+    async def _voice_approve(
+        self,
+        *,
+        tool_name: str,
+        server_name: str | None = None,
+        arguments: dict[str, object] | None = None,
+        options: list[str] | None = None,
+    ) -> str:
+        """Ask the user to confirm a tool by voice; return the decision.
+
+        Runs the blocking speak+listen cycle in a worker thread so the event
+        loop (and the rest of the agent) isn't stalled. Called by the
+        ApprovalManager when a gated tool originates from the voice channel.
+        """
+        return await self._loop.run_in_executor(
+            None, self._confirm_blocking, tool_name, options or [],
+        )
+
+    def _confirm_blocking(self, tool_name: str, options: list[str]) -> str:
+        """Speak a yes/no question, listen for the answer, map to a decision."""
+        lang = "es" if self._last_language == Language.SPANISH else "en"
+        self._speak_now(self._confirm_question(tool_name, lang), lang)
+
+        audio = self._record_utterance(max_seconds=6.0)
+        if audio is None or audio.size == 0:
+            logger.info("No confirmation heard — denying")
+            return "deny"
+        try:
+            text, _ = self._stt.transcribe(audio)
+        except STTError:
+            logger.exception("Confirmation STT failed — denying")
+            return "deny"
+        logger.info("Confirmation heard: %r", text)
+        return self._parse_yes_no(text, options)
+
+    @staticmethod
+    def _confirm_question(tool_name: str, lang: str) -> str:
+        """The spoken yes/no prompt for a gated tool."""
+        if lang == "es":
+            return f"¿Quieres que ejecute {tool_name}? Di sí o no."
+        return f"Do you want me to run {tool_name}? Say yes or no."
+
+    def _speak_now(self, text: str, lang: str) -> None:
+        """Synthesise and play *text* immediately, mic muted (no barge-in)."""
+        self._capture.stop()
+        self._drain_mic_buffer()
+        try:
+            audio = self._tts.synthesize(text, language=lang)
+            self._player.play(audio, sample_rate=self._tts.sample_rate)
+        finally:
+            time.sleep(0.2)
+            self._capture.start()
+            self._drain_mic_buffer()
+
+    def _record_utterance(self, max_seconds: float = 6.0) -> np.ndarray | None:
+        """Record a single short utterance and return float32 audio.
+
+        Waits briefly for speech to begin, then captures until a short silence
+        (using Silero ``speech_prob``) or ``max_seconds`` elapses. Returns None
+        if the user never spoke.
+        """
+        self._vad.reset()
+        chunks: list[np.ndarray] = []
+        started_at = 0.0
+        last_voice_at = 0.0
+        deadline = time.monotonic() + max_seconds
+        while time.monotonic() < deadline:
+            chunk = self._capture.read_chunk(timeout=0.5)
+            if chunk is None:
+                continue
+            chunks.append(chunk)
+            float_chunk = chunk.astype(np.float32) / 32768.0
+            voiced = False
+            for offset in range(0, len(float_chunk), VAD_CHUNK_SIZE):
+                sub = float_chunk[offset: offset + VAD_CHUNK_SIZE]
+                if len(sub) < VAD_CHUNK_SIZE:
+                    sub = np.pad(sub, (0, VAD_CHUNK_SIZE - len(sub)))
+                if self._vad.speech_prob(sub) >= self._vad.threshold:
+                    voiced = True
+            now = time.monotonic()
+            if voiced:
+                if started_at == 0.0:
+                    started_at = now
+                last_voice_at = now
+            elif started_at != 0.0 and (now - last_voice_at) >= 0.6:
+                break  # end of the answer
+        if started_at == 0.0:
+            return None
+        return np.concatenate(chunks).astype(np.float32) / 32768.0
+
+    @staticmethod
+    def _parse_yes_no(text: str, options: list[str]) -> str:
+        """Map a spoken answer to a decision string (es/en)."""
+        lower = text.lower().strip()
+        yes = {
+            "sí", "si", "claro", "dale", "hazlo", "ok", "okay", "vale",
+            "adelante", "confirmo", "confirmar", "yes", "yeah", "yep",
+            "sure", "go ahead", "do it", "confirm", "affirmative",
+        }
+        no = {
+            "no", "nop", "negativo", "cancela", "cancelar", "para", "detente",
+            "nope", "cancel", "stop", "don't", "negative",
+        }
+        tokens = set(re.findall(r"[\wáéíóúñ']+", lower))
+        is_yes = bool(tokens & yes) or any(p in lower for p in ("go ahead", "do it"))
+        is_no = bool(tokens & no)
+        if is_no and not is_yes:
+            return "deny"
+        if is_yes:
+            return "once" if "once" in options else "approve"
+        # Ambiguous → fail safe.
+        return "deny"
+
     def _denoise_audio(self, audio: np.ndarray) -> np.ndarray:
         """Reduce background noise before STT (best-effort; needs noisereduce)."""
         try:
-            import noisereduce as nr  # type: ignore[import-not-found]
+            import noisereduce as nr
 
             reduced = nr.reduce_noise(y=audio, sr=SAMPLE_RATE, stationary=False)
             return np.asarray(reduced, dtype=np.float32)

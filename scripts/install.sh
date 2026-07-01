@@ -116,13 +116,28 @@ else
     warn "No web/ directory found, skipping frontend build"
 fi
 
-# --- Step 5: Download ML models ---
+# --- Step 5: Choose primary language ---
 
-info "Downloading ML models (TTS voices, wake word)..."
-uv run python scripts/download_models.py 2>&1 | grep -E "(Downloading|Done|already)"
+echo ""
+info "Primary language for the voice assistant?"
+echo "  1) Español (es)"
+echo "  2) English (en)"
+read -p "Select [1/2] (default 1): " -r LANG_SEL
+case "${LANG_SEL:-1}" in
+    2) DAX_LANG="en" ;;
+    *) DAX_LANG="es" ;;
+esac
+ok "Primary language: $DAX_LANG"
+
+# --- Step 6: Download ML models (language-aware) ---
+
+info "Downloading ML models (Kokoro + Piper TTS, Whisper STT, wake word)..."
+info "This includes large models (~2 GB) and may take several minutes."
+uv run python scripts/download_models.py --language "$DAX_LANG" 2>&1 \
+    | grep -E "(Downloading|Caching|done|ready|already|Done)"
 ok "Models downloaded"
 
-# --- Step 6: Create default config ---
+# --- Step 7: Create + configure config ---
 
 if [ ! -f "config/dax.toml" ]; then
     info "Creating default config..."
@@ -133,13 +148,32 @@ else
     ok "Config already exists at config/dax.toml"
 fi
 
-# --- Step 7: Verify ---
+info "Pinning voice language to '$DAX_LANG' in config..."
+uv run python - "$DAX_LANG" <<'PY'
+import pathlib
+import sys
+import tomllib
+
+import tomli_w
+
+lang = sys.argv[1]
+path = pathlib.Path("config/dax.toml")
+data = tomllib.loads(path.read_text()) if path.exists() else {}
+voice = data.setdefault("voice", {})
+voice["stt_language"] = lang  # pin language → no more "ru" mis-detection
+voice.setdefault("tts_engine", "kokoro")
+path.write_text(tomli_w.dumps(data))
+print(f"Configured voice for '{lang}'")
+PY
+ok "Voice configured"
+
+# --- Step 8: Verify ---
 
 info "Verifying installation..."
 uv run python -c "from dax.app import DaxApp; print('Import OK')" 2>/dev/null
 ok "Installation verified"
 
-# --- Step 8: Optional systemd service ---
+# --- Step 9: Optional systemd service ---
 
 echo ""
 read -p "Install as systemd user service? (y/N) " -n 1 -r

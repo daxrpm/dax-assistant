@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import logging
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Protocol, runtime_checkable
 
 import numpy as np
 from piper.voice import PiperVoice
@@ -17,9 +17,25 @@ from piper.voice import PiperVoice
 from dax.core.exceptions import TTSError
 
 if TYPE_CHECKING:
-    from collections.abc import Iterator
+    from collections.abc import Callable, Iterator
+
+    from dax.core.config import VoiceConfig
 
 logger = logging.getLogger(__name__)
+
+
+@runtime_checkable
+class Synthesizer(Protocol):
+    """Common surface every TTS engine exposes to the pipeline."""
+
+    @property
+    def sample_rate(self) -> int: ...
+
+    def start(self) -> None: ...
+
+    def stop(self) -> None: ...
+
+    def synthesize(self, text: str, language: str = "en") -> np.ndarray: ...
 
 
 class TextToSpeech:
@@ -196,3 +212,83 @@ class TextToSpeech:
             return self._voices[fallback_lang]
 
         raise TTSError("No TTS voice loaded")
+
+
+def _build_piper(config: VoiceConfig, models_path: str) -> TextToSpeech:
+    return TextToSpeech(
+        voice_es=config.tts_voice_es,
+        voice_en=config.tts_voice_en,
+        download_dir=str(Path(models_path) / "piper"),
+    )
+
+
+def build_tts(config: VoiceConfig, models_path: str) -> Synthesizer:
+    """Build the configured TTS engine, with Piper as the safety net.
+
+    ``tts_engine = "kokoro"`` gets a natural neural voice but needs the
+    ``kokoro-onnx`` package + model files; if either is missing at start-up the
+    pipeline still speaks via Piper instead of going silent.
+    """
+    if config.tts_engine.lower() == "kokoro":
+        from dax.voice.tts_kokoro import KokoroTTS
+
+        kokoro = KokoroTTS(
+            voice_es=config.tts_kokoro_voice_es,
+            voice_en=config.tts_kokoro_voice_en,
+            speed=config.tts_kokoro_speed,
+            model_dir=str(Path(models_path) / "kokoro"),
+        )
+        return _FallbackSynthesizer(kokoro, lambda: _build_piper(config, models_path))
+    return _build_piper(config, models_path)
+
+
+class _FallbackSynthesizer:
+    """Wraps a primary engine and lazily swaps to a fallback if it fails.
+
+    The swap happens at :meth:`start` (engine fails to load) or on the first
+    failed :meth:`synthesize`, so a missing model or a bad utterance degrades
+    to Piper instead of breaking the whole voice loop.
+    """
+
+    def __init__(
+        self,
+        primary: Synthesizer,
+        fallback_factory: Callable[[], Synthesizer],
+    ) -> None:
+        self._primary = primary
+        self._fallback_factory = fallback_factory
+        self._active: Synthesizer = primary
+        self._fell_back = False
+
+    def _swap_to_fallback(self) -> None:
+        if self._fell_back:
+            return
+        logger.warning("TTS falling back to Piper")
+        fallback = self._fallback_factory()
+        fallback.start()
+        self._active = fallback
+        self._fell_back = True
+
+    @property
+    def sample_rate(self) -> int:
+        return self._active.sample_rate
+
+    def start(self) -> None:
+        try:
+            self._primary.start()
+        except Exception:
+            logger.warning("Primary TTS engine failed to start", exc_info=True)
+            self._swap_to_fallback()
+
+    def stop(self) -> None:
+        self._active.stop()
+
+    def synthesize(self, text: str, language: str = "en") -> np.ndarray:
+        try:
+            return self._active.synthesize(text, language=language)
+        except Exception:
+            if self._fell_back:
+                raise
+            logger.warning("Primary TTS synth failed — switching to Piper", exc_info=True)
+            self._swap_to_fallback()
+            return self._active.synthesize(text, language=language)

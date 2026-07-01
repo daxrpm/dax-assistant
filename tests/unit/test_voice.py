@@ -113,7 +113,7 @@ class TestPipelineEnabled:
             patch("dax.voice.pipeline.WakeWordDetector"),
             patch("dax.voice.pipeline.VoiceActivityDetector"),
             patch("dax.voice.pipeline.SpeechToText"),
-            patch("dax.voice.pipeline.TextToSpeech"),
+            patch("dax.voice.pipeline.build_tts"),
         ):
             pipeline = VoicePipeline(
                 config=config,
@@ -139,3 +139,71 @@ class TestPipelineEnabled:
     def test_initial_state_is_idle(self):
         pipeline = self._make_pipeline()
         assert pipeline.state == PipelineState.IDLE
+
+
+class TestYesNoParser:
+    """The spoken-confirmation parser (voice approval)."""
+
+    def test_spanish_yes(self):
+        assert VoicePipeline._parse_yes_no("sí, claro", []) == "approve"
+
+    def test_english_yes(self):
+        assert VoicePipeline._parse_yes_no("yeah go ahead", []) == "approve"
+
+    def test_no_denies(self):
+        assert VoicePipeline._parse_yes_no("no, cancela", []) == "deny"
+
+    def test_yes_maps_to_once_when_shell_option(self):
+        assert VoicePipeline._parse_yes_no("dale", ["once", "save"]) == "once"
+
+    def test_ambiguous_fails_safe_to_deny(self):
+        assert VoicePipeline._parse_yes_no("mmm tal vez", []) == "deny"
+
+
+class TestSTTLanguageResolution:
+    """Auto-detect must never surface a spurious language (the 'ruso' bug)."""
+
+    def _stt(self, language: str):
+        from dax.voice.stt import SpeechToText
+
+        return SpeechToText(language=language, fallback_language="es")
+
+    def test_pinned_language_is_honoured(self):
+        info = MagicMock(language="ru", language_probability=0.99)
+        assert self._stt("es")._resolve_language(info) == "es"
+
+    def test_low_confidence_falls_back(self):
+        info = MagicMock(language="ru", language_probability=0.30)
+        assert self._stt("auto")._resolve_language(info) == "es"
+
+    def test_confident_english_accepted(self):
+        info = MagicMock(language="en", language_probability=0.92)
+        assert self._stt("auto")._resolve_language(info) == "en"
+
+
+class TestBuildTTS:
+    def test_piper_engine_returns_piper(self):
+        from dax.core.config import VoiceConfig
+        from dax.voice.tts import TextToSpeech, build_tts
+
+        tts = build_tts(VoiceConfig(tts_engine="piper"), "models")
+        assert isinstance(tts, TextToSpeech)
+
+    def test_kokoro_engine_wraps_in_fallback(self):
+        from dax.core.config import VoiceConfig
+        from dax.voice.tts import _FallbackSynthesizer, build_tts
+
+        tts = build_tts(VoiceConfig(tts_engine="kokoro"), "models")
+        assert isinstance(tts, _FallbackSynthesizer)
+
+
+class TestSpeakerVerifier:
+    """Voice ID must fail open when no profile/encoder is available."""
+
+    def test_fails_open_without_profile(self, tmp_path):
+        from dax.voice.speaker import SpeakerVerifier
+
+        verifier = SpeakerVerifier(profile_path=str(tmp_path / "p.npy"))
+        # No encoder loaded and no profile → accept everything.
+        assert verifier.active is False
+        assert verifier.verify(np.zeros(16000, dtype=np.float32)) is True

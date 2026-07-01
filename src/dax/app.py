@@ -268,6 +268,7 @@ class DaxApp:
                     voice_channel=voice_ch,
                     loop=loop,
                     models_path=self._config.storage.models_path,
+                    approval=self._approval,
                 )
                 self._voice_pipeline.start()
                 log.info("Voice pipeline ready")

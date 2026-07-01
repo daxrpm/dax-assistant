@@ -83,8 +83,12 @@ def build_messages_for_llm(
     """
     now = datetime.now().astimezone()
     dated_prompt = (
-        f"{system_prompt}\n\nCurrent date and time: "
-        f"{now.strftime('%A, %Y-%m-%d %H:%M %Z')}."
+        f"{system_prompt}\n\n## Current date & time (authoritative)\n"
+        f"Right now it is {now.strftime('%A, %Y-%m-%d %H:%M %Z')}. "
+        "This is the real current time — use it directly for any question about "
+        "the date, time, day of week, or to resolve relative dates "
+        "('today', 'tomorrow', 'hoy', 'mañana', 'esta semana'). "
+        "Never say you don't know the current date."
     )
     messages: list[dict[str, Any]] = [
         {"role": "system", "content": dated_prompt},

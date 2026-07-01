@@ -28,7 +28,7 @@ and storage are all swappable behind small interfaces.
   webhook. Secrets live in `.env`, never in the committed config.
 - **Memory.** Conversations are persisted per channel/session in SQLite and replayed into
   each turn, plus a tool-execution audit log.
-- **Modern web UI.** React 19 + Mantine, minimalist, light/dark (follows your OS theme).
+- **Modern web UI.** React + HeroUI v3 + Tailwind v4, minimalist, light/dark (follows your OS theme).
 
 ---
 
@@ -124,11 +124,64 @@ the assistant typed tools to operate the machine. Safety is layered:
   and rejects shell metacharacters (`|`, `;`, `&`, redirects, …).
 - **Confirmation gate.** The `[tools.policy]` rules classify each tool as `allow` / `ask` /
   `deny`. Destructive tools (write/delete/shell/exec/launch …) default to `ask`, which
-  blocks execution until you approve the modal in the web UI (with a timeout that
-  fail-safes to *deny*).
+  blocks execution until you approve — the modal in the web UI, or a **spoken yes/no** when
+  the request came from the voice channel (with a timeout that fail-safes to *deny*).
 - **Audit log.** Every gated execution is recorded and visible on the dashboard.
 
 Disable PC control entirely by setting `enabled = false` on the `dax-system` server.
+
+---
+
+## Voice assistant (Alexa-style, 100% open source)
+
+Say the wake word and talk — Dax wakes, listens, transcribes, answers out loud, and keeps
+the conversation going for follow-ups without re-triggering. Everything runs locally.
+
+**The stack**
+
+| Stage | Engine | Notes |
+| --- | --- | --- |
+| Wake word | [openWakeWord](https://github.com/dscripka/openWakeWord) | default `hey_jarvis`; set `[voice] wake_word_model` to another built-in (e.g. `alexa`) or a custom `.onnx` |
+| VAD / endpointing | [Silero VAD](https://github.com/snakers4/silero-vad) | adaptive: short pause for quick commands, longer for sentences |
+| STT | [faster-whisper](https://github.com/SYSTRAN/faster-whisper) | default `large-v3-turbo` (int8); language **pinned** to avoid mis-detection |
+| TTS | [Kokoro](https://github.com/thewh1teagle/kokoro-onnx) (default) / [Piper](https://github.com/rhasspy/piper) (fallback) | natural neural voice; auto-falls back to Piper if Kokoro is missing |
+| Voice ID *(optional)* | [Resemblyzer](https://github.com/resemble-ai/Resemblyzer) | enroll your voice so other people can't drive the assistant |
+
+**One-command install** (prompts for Spanish/English and downloads the right models):
+
+```bash
+./scripts/install.sh
+# or fetch models manually for one language:
+~/.local/bin/uv run python scripts/download_models.py --language es
+```
+
+**Key settings** (`config/dax.toml` → `[voice]`):
+
+```toml
+[voice]
+enabled = true
+wake_word_model = "hey_jarvis"     # built-in name or path to a custom .onnx
+stt_model = "large-v3-turbo"       # large-v3-turbo | small | base | …
+stt_language = "es"                # PIN to "es"/"en" — fixes "ru" mis-detection
+tts_engine = "kokoro"              # kokoro (natural) | piper (fast)
+voice_confirm = true               # confirm gated tools BY VOICE, not the web modal
+response_timeout_s = 180           # let long tool chains finish before giving up
+require_wake_word_each_turn = false # set true in noisy/shared rooms
+speaker_verification = false       # set true after enrolling your voice
+```
+
+**Voice behaviour worth knowing**
+
+- **Fresh per activation.** Each wake word starts a new conversation scope, so Dax doesn't
+  bleed context from past chats; follow-ups within the same activation keep context.
+- **Spoken confirmations.** When a tool needs approval and the request came from voice, Dax
+  asks out loud (“¿lo ejecuto? sí/no”) instead of waiting on the (unseen) web modal.
+- **Voice ID.** Enroll once, then enable it to ignore other voices:
+
+  ```bash
+  ~/.local/bin/uv run python scripts/enroll_voice.py   # records a few clips
+  # then set [voice] speaker_verification = true
+  ```
 
 ---
 

@@ -53,11 +53,17 @@ class ToolGate:
         self._shell_allow = shell_allow
         self._storage = storage
 
-    async def execute(self, tool_call: ToolCall) -> ToolResult:
-        """Resolve, gate, execute, and audit a single tool call."""
+    async def execute(
+        self, tool_call: ToolCall, *, channel: str | None = None
+    ) -> ToolResult:
+        """Resolve, gate, execute, and audit a single tool call.
+
+        ``channel`` is the originating channel (e.g. "voice"); it routes
+        confirmation prompts to the right place (spoken vs web modal).
+        """
         resolved_call = self._resolve_server(tool_call)
 
-        blocked = await self._gate(resolved_call)
+        blocked = await self._gate(resolved_call, channel=channel)
         if blocked is not None:
             return blocked
 
@@ -95,7 +101,9 @@ class ToolGate:
             arguments=tool_call.arguments,
         )
 
-    async def _gate(self, call: ToolCall) -> ToolResult | None:
+    async def _gate(
+        self, call: ToolCall, *, channel: str | None = None
+    ) -> ToolResult | None:
         """Apply the policy. Returns a blocking ToolResult, or None to proceed."""
         if self._policy is None:
             return None
@@ -111,7 +119,7 @@ class ToolGate:
         # The shell tool is gated by the user-managed binary allowlist, not the
         # name-pattern policy: known binaries run freely, unknown ones prompt.
         if call.tool_name == _SHELL_TOOL_NAME and self._shell_allow is not None:
-            return await self._gate_shell(call)
+            return await self._gate_shell(call, channel=channel)
         if decision is Decision.ALLOW:
             return None
         # ASK — require confirmation.
@@ -129,6 +137,7 @@ class ToolGate:
             tool_name=call.tool_name,
             server_name=call.server_name,
             arguments=dict(call.arguments),
+            channel=channel,
         )
         approved = result != "deny"
         await self._audit(call, "approved" if approved else "declined")
@@ -140,7 +149,9 @@ class ToolGate:
             )
         return None
 
-    async def _gate_shell(self, call: ToolCall) -> ToolResult | None:
+    async def _gate_shell(
+        self, call: ToolCall, *, channel: str | None = None
+    ) -> ToolResult | None:
         """Gate a shell_run call against the user-managed command allowlist.
 
         Allowlisted binaries run with no prompt. Unknown ones ask the user, who
@@ -171,6 +182,7 @@ class ToolGate:
             server_name=call.server_name,
             arguments=dict(call.arguments),
             options=["once", "save"],
+            channel=channel,
         )
         if decision == "deny":
             await self._audit(call, "declined")
