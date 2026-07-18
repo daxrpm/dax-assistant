@@ -313,6 +313,38 @@ class TestAgentToolCalling:
         assert llm.last_messages[-1]["role"] == "system"
         assert "Never claim an action succeeded" in llm.last_messages[-1]["content"]
 
+    async def test_tool_limit_never_returns_deepseek_dsml(self):
+        tool_response = Message(
+            role=MessageRole.ASSISTANT,
+            tool_calls=(ToolCall(
+                id="call_1", server_name="spotify", tool_name="skip", arguments={}
+            ),),
+        )
+        bars = "\N{FULLWIDTH VERTICAL LINE}" * 2
+        dsml = (
+            f'<{bars}DSML{bars}tool_calls>'
+            f'<{bars}DSML{bars}invoke name="skipToNext">'
+            f'</{bars}DSML{bars}invoke>'
+            f'</{bars}DSML{bars}tool_calls>'
+        )
+        llm = _MockLLM(responses=[
+            *[tool_response for _ in range(MAX_TOOL_ITERATIONS)],
+            Message(role=MessageRole.ASSISTANT, content=dsml),
+        ])
+        agent = Agent(
+            bus=MessageBus(),
+            llm=llm,  # type: ignore[arg-type]
+            tools=_MockTools(),  # type: ignore[arg-type]
+            storage=_MockStorage(),  # type: ignore[arg-type]
+        )
+
+        response = await agent._handle_message(Message(
+            content="Pon otra", channel=ChannelType.VOICE, language=Language.SPANISH
+        ))
+
+        assert "DSML" not in response.content
+        assert response.content.startswith("No pude completar")
+
 
 class _StatefulStorage:
     """In-memory storage that actually resumes conversations by session key."""

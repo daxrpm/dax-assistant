@@ -22,7 +22,7 @@ from typing import TYPE_CHECKING, Any
 
 from dax.core.exceptions import LLMError
 from dax.core.models import Language, Message, MessageRole
-from dax.llm.client import build_messages_for_llm
+from dax.llm.client import build_messages_for_llm, sanitize_assistant_text
 from dax.llm.tool_mapper import mcp_tools_to_openai
 from dax.orchestrator.prompting import SystemPromptBuilder
 from dax.orchestrator.tool_gate import ToolGate
@@ -265,7 +265,7 @@ class Agent:
                 messages=llm_messages,
                 tools=None,
             )
-            content = final_response.content
+            content = sanitize_assistant_text(final_response.content)
         except LLMError:
             logger.exception("Final tool-result summary failed")
             content = ""
@@ -314,6 +314,13 @@ class Agent:
 
     def _assistant_reply(self, source: Message, content: str) -> Message:
         """Build an assistant Message mirroring the source's channel/metadata."""
+        content = sanitize_assistant_text(content)
+        if not content:
+            content = (
+                "No pude generar una respuesta válida."
+                if source.language is Language.SPANISH
+                else "I couldn't generate a valid response."
+            )
         return Message(
             role=MessageRole.ASSISTANT,
             content=content,

@@ -7,11 +7,30 @@ its own SDK's native format, so the orchestrator stays provider-agnostic.
 
 from __future__ import annotations
 
+import re
 from datetime import datetime
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
     from dax.core.models import Message
+
+
+_DSML_BLOCK_RE = re.compile(
+    r"<[|\uFF5C]{2}DSML[|\uFF5C]{2}tool_calls>.*?"
+    r"</[|\uFF5C]{2}DSML[|\uFF5C]{2}tool_calls>",
+    re.IGNORECASE | re.DOTALL,
+)
+_DSML_TAG_RE = re.compile(
+    r"</?[|\uFF5C]{2}DSML[|\uFF5C]{2}(?:tool_calls|invoke)[^>]*>",
+    re.IGNORECASE,
+)
+
+
+def sanitize_assistant_text(text: str) -> str:
+    """Remove provider control markup that must never reach users or TTS."""
+    cleaned = _DSML_BLOCK_RE.sub("", text)
+    cleaned = _DSML_TAG_RE.sub("", cleaned)
+    return cleaned.strip()
 
 SYSTEM_PROMPT = """You are Dax, a personal AI assistant running locally on the user's machine. \
 You have direct access to the user's Nextcloud (calendar, contacts, notes, files, mail) and \
