@@ -14,6 +14,7 @@ Design choices:
 from __future__ import annotations
 
 import logging
+import os
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -31,21 +32,30 @@ _SAMPLE_RATE = 16_000
 class SpeakerVerifier:
     """Verify that an utterance matches the enrolled owner's voice."""
 
-    def __init__(self, profile_path: str, threshold: float = 0.65) -> None:
+    def __init__(
+        self,
+        profile_path: str,
+        threshold: float = 0.65,
+        fail_open: bool = True,
+    ) -> None:
         self._profile_path = Path(profile_path).expanduser()
         self._threshold = threshold
+        self._fail_open = fail_open
         self._encoder: VoiceEncoder | None = None
         self._reference: np.ndarray | None = None
+        self._load_error: str | None = None
 
     # ── Lifecycle ──────────────────────────────────────────────────────────
 
     def start(self) -> None:
         """Load the encoder and the enrolled profile (best-effort)."""
+        self._load_error = None
         try:
             from resemblyzer import VoiceEncoder
 
             self._encoder = VoiceEncoder(verbose=False)
-        except Exception:
+        except Exception as exc:
+            self._load_error = f"{type(exc).__name__}: {exc}"
             logger.warning(
                 "Speaker verification unavailable (resemblyzer failed to load) "
                 "— accepting all voices",
@@ -78,6 +88,16 @@ class SpeakerVerifier:
         """True only when both the encoder and an enrolled profile are ready."""
         return self._encoder is not None and self._reference is not None
 
+    @property
+    def encoder_ready(self) -> bool:
+        """True when enrollment can produce embeddings."""
+        return self._encoder is not None
+
+    @property
+    def unavailable_reason(self) -> str | None:
+        """Underlying encoder load failure, suitable for diagnostics."""
+        return self._load_error
+
     # ── Public API ─────────────────────────────────────────────────────────
 
     def embed(self, audio: np.ndarray) -> np.ndarray | None:
@@ -96,14 +116,18 @@ class SpeakerVerifier:
     def verify(self, audio: np.ndarray) -> bool:
         """Return True if *audio* matches the owner (or if verification is off).
 
-        Fails open: with no encoder or no enrolled profile, always True.
+        Availability failures follow the configured fail-open policy.
         """
         if not self.active:
-            return True
+            return self._fail_open
         embedding = self.embed(audio)
         if embedding is None or self._reference is None:
-            return True
-        similarity = float(np.dot(embedding, self._reference))
+            return self._fail_open
+        try:
+            similarity = float(np.dot(embedding, self._reference))
+        except (TypeError, ValueError):
+            logger.warning("Invalid speaker profile shape", exc_info=True)
+            return self._fail_open
         accepted = similarity >= self._threshold
         logger.info(
             "Speaker similarity %.3f (threshold %.2f) → %s",
@@ -128,7 +152,12 @@ class SpeakerVerifier:
         norm = np.linalg.norm(mean)
         reference = (mean / norm) if norm > 0 else mean
         self._profile_path.parent.mkdir(parents=True, exist_ok=True)
-        np.save(self._profile_path, reference.astype(np.float32))
+        temporary = self._profile_path.with_suffix(f"{self._profile_path.suffix}.tmp")
+        with temporary.open("wb") as handle:
+            np.save(handle, reference.astype(np.float32))
+            handle.flush()
+            os.fsync(handle.fileno())
+        os.replace(temporary, self._profile_path)
         self._reference = reference.astype(np.float32)
         logger.info("Enrolled voice profile → %s", self._profile_path)
         return True

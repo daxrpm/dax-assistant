@@ -36,6 +36,7 @@ import numpy as np
 
 from dax.core.exceptions import STTError, TTSError, VoiceError
 from dax.core.models import ChannelType, Language, Message, MessageRole
+from dax.llm.client import sanitize_assistant_text
 from dax.voice.audio_io import CHUNK_SIZE, SAMPLE_RATE, AudioCapture, AudioPlayer
 from dax.voice.speaker import SpeakerVerifier
 from dax.voice.stt import build_stt
@@ -65,6 +66,7 @@ def _clean_for_speech(text: str) -> str:
     Belt-and-suspenders alongside the voice system prompt: even if the model
     emits markdown, the synthesizer should speak clean prose.
     """
+    text = sanitize_assistant_text(text)
     # Links/images: [label](url) -> label, ![alt](url) -> alt
     text = re.sub(r"!?\[([^\]]+)\]\([^)]*\)", r"\1", text)
     # Inline emphasis / code markers
@@ -165,6 +167,7 @@ class VoicePipeline:
             self._speaker = SpeakerVerifier(
                 profile_path=str(Path(models_path) / "voice_profile.npy"),
                 threshold=getattr(config, "speaker_threshold", 0.65),
+                fail_open=getattr(config, "speaker_fail_open", True),
             )
         # In noisy/shared rooms, require the wake word for every turn instead of
         # hands-free follow-up (which can pick up other people).
@@ -179,6 +182,12 @@ class VoicePipeline:
         self._adaptive = getattr(config, "adaptive_endpointing", True)
         self._silence_s = max(0.25, min(1.5, config.silence_duration_ms / 1000))
         self._conv_timeout = getattr(config, "conversation_timeout_s", 8)
+        self._followup_activation_ms = max(
+            80, getattr(config, "followup_activation_ms", 320)
+        )
+        self._thinking_pause_s = max(
+            0.0, min(3.0, getattr(config, "thinking_pause_ms", 900) / 1000)
+        )
         # Generous reply window so long multi-tool actions finish before we
         # give up on the turn (was a hard 60s → "se agotó el tiempo de espera").
         self._response_timeout = getattr(config, "response_timeout_s", 180)
@@ -204,6 +213,8 @@ class VoicePipeline:
         # past conversations), while follow-up turns within the same activation
         # share context. Reset to None when we return to IDLE.
         self._conversation_id: str | None = None
+        self._followup_buffer: list[np.ndarray] = []
+        self._followup_voiced_ms = 0
 
     # -- Properties --
 
@@ -383,12 +394,10 @@ class VoicePipeline:
 
         speech_len = self._last_voice_at - self._speech_started_at
         # The configured silence duration is the baseline; longer utterances get
-        # up to 450 ms extra so natural mid-sentence pauses are not clipped.
-        pause_s = (
-            self._silence_s
-            if speech_len < 1.2
-            else min(self._silence_s + 0.45, self._silence_s + speech_len * 0.12)
-        )
+        # a separate thinking allowance so natural pauses are not clipped.
+        pause_s = self._silence_s
+        if speech_len >= 1.2:
+            pause_s += self._thinking_pause_s
         return (now - self._last_voice_at) >= pause_s
 
     def _handle_conversing(self) -> None:
@@ -412,6 +421,7 @@ class VoicePipeline:
 
         # Detect follow-up speech start (no wake word needed).
         float_chunk = chunk.astype(np.float32) / 32768.0
+        voiced = False
         for offset in range(0, len(float_chunk), VAD_CHUNK_SIZE):
             sub = float_chunk[offset: offset + VAD_CHUNK_SIZE]
             if len(sub) < VAD_CHUNK_SIZE:
@@ -422,12 +432,22 @@ class VoicePipeline:
                 else (self._vad.process_chunk(sub) or {}).get("start") is not None
             )
             if speaking:
-                logger.info("Follow-up speech detected, continuing conversation")
-                self._enter_listening()
-                self._speech_buffer = [chunk]
-                self._speech_started_at = time.monotonic()
-                self._last_voice_at = self._speech_started_at
-                return
+                voiced = True
+
+        if not voiced:
+            self._followup_buffer = []
+            self._followup_voiced_ms = 0
+            return
+
+        self._followup_buffer.append(chunk)
+        self._followup_voiced_ms += round(len(chunk) / SAMPLE_RATE * 1000)
+        if self._followup_voiced_ms >= self._followup_activation_ms:
+            logger.info("Sustained follow-up speech detected, continuing conversation")
+            pre_roll = list(self._followup_buffer)
+            self._enter_listening()
+            self._speech_buffer = pre_roll
+            self._speech_started_at = time.monotonic()
+            self._last_voice_at = self._speech_started_at
 
     # -- Speech processing --
 
@@ -441,15 +461,16 @@ class VoicePipeline:
         float_audio = raw_audio.astype(np.float32) / 32768.0
         self._speech_buffer = []
 
-        if self._denoise:
-            float_audio = self._denoise_audio(float_audio)
-
         # Voice ID: drop the utterance if it isn't the enrolled owner (so other
-        # people talking can't drive the assistant). Fails open if not enrolled.
+        # people talking can't drive the assistant). Verify the original signal;
+        # denoising can alter the speaker characteristics used by embeddings.
         if self._speaker is not None and not self._speaker.verify(float_audio):
             logger.info("Utterance rejected by speaker verification")
             self._state = PipelineState.IDLE
             return
+
+        if self._denoise:
+            float_audio = self._denoise_audio(float_audio)
 
         try:
             text, detected_lang = self._stt.transcribe(float_audio)
@@ -540,8 +561,7 @@ class VoicePipeline:
 
             if interrupted:
                 logger.info("Barge-in detected — listening to the user")
-                self._drain_mic_buffer()
-                self._enter_listening()
+                self._enter_barge_in_listening()
                 return
 
             # End the conversation only when the USER said goodbye — not when
@@ -604,6 +624,15 @@ class VoicePipeline:
             if self._wakeword.detect(chunk) is not None:
                 return True
         return False
+
+    def _enter_barge_in_listening(self) -> None:
+        """Listen immediately without discarding speech after the wake word.
+
+        The detector has already consumed the wake-word frames. Any following
+        command is still queued by the live microphone and must survive the
+        transition; draining here used to cut off fast "Hey Dax, para" turns.
+        """
+        self._enter_listening()
 
     # -- Spoken confirmation (voice approval) --
 
@@ -747,6 +776,8 @@ class VoicePipeline:
         self._state = PipelineState.CONVERSING
         self._conversation_start = time.monotonic()
         self._vad.reset()
+        self._followup_buffer = []
+        self._followup_voiced_ms = 0
         self._drain_mic_buffer()  # discard any TTS tail before listening
         logger.info(
             "Conversation mode — listening for follow-up (%ds timeout)",

@@ -26,19 +26,28 @@ stt_openai_prompt = "Transcribe natural Spanish accurately. Preserve names and c
 stt_fallback_to_local = true
 # TTS: kokoro (natural neural voice) with Piper as fast fallback.
 tts_engine = "kokoro"
-tts_kokoro_voice_es = "ef_dora"
+tts_kokoro_voice_es = "em_alex"
 tts_kokoro_voice_en = "af_heart"
+tts_kokoro_speed = 0.95
+tts_openai_model = "gpt-4o-mini-tts"
+tts_openai_voice = "marin"
+tts_openai_instructions_es = "Habla en español de forma cálida, natural y conversacional, con acento neutro y ritmo tranquilo."
+tts_openai_timeout_s = 30
+tts_fallback_to_local = true
 tts_voice_es = "es_ES-davefx-medium"
 tts_voice_en = "en_US-lessac-medium"
 vad_threshold = 0.5
-silence_duration_ms = 600
+silence_duration_ms = 800
 # Reliability / UX
 response_timeout_s = 180          # wait this long for long tool chains to finish
+followup_activation_ms = 320       # ignore isolated speech/music transients
+thinking_pause_ms = 900            # extra silence allowed in longer phrases
 voice_confirm = true              # confirm gated tools by voice (not the web modal)
 require_wake_word_each_turn = false
 # Voice ID (enroll first: scripts/enroll_voice.py)
 speaker_verification = false
 speaker_threshold = 0.65
+speaker_fail_open = true           # false = reject speech if profile is unavailable
 
 [llm]
 # Recommended: Anthropic claude for reliable tool use. Set ANTHROPIC_API_KEY in .env.

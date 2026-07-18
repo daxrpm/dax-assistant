@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import asyncio
 import io
+import time
 import wave
 from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
@@ -143,6 +144,47 @@ class TestPipelineEnabled:
         pipeline = self._make_pipeline()
         assert pipeline.state == PipelineState.IDLE
 
+    def test_barge_in_preserves_queued_command_audio(self):
+        pipeline = self._make_pipeline()
+        pipeline._drain_mic_buffer = MagicMock()
+
+        pipeline._enter_barge_in_listening()
+
+        assert pipeline.state == PipelineState.LISTENING
+        pipeline._drain_mic_buffer.assert_not_called()
+
+    def test_followup_requires_sustained_speech(self):
+        pipeline = self._make_pipeline()
+        chunk = np.zeros(1280, dtype=np.int16)
+        pipeline._capture.read_chunk.return_value = chunk
+        pipeline._vad.speech_prob.return_value = 0.9
+        pipeline._vad.threshold = 0.5
+        pipeline._conversation_start = time.monotonic()
+        pipeline._state = PipelineState.CONVERSING
+
+        for _ in range(3):
+            pipeline._handle_conversing()
+            assert pipeline.state == PipelineState.CONVERSING
+
+        pipeline._handle_conversing()
+        assert pipeline.state == PipelineState.LISTENING
+        assert len(pipeline._speech_buffer) == 4
+
+    def test_followup_vad_spike_is_discarded(self):
+        pipeline = self._make_pipeline()
+        chunk = np.zeros(1280, dtype=np.int16)
+        pipeline._capture.read_chunk.return_value = chunk
+        pipeline._vad.speech_prob.side_effect = [0.9, 0.0, 0.0, 0.0, 0.0, 0.0]
+        pipeline._vad.threshold = 0.5
+        pipeline._conversation_start = time.monotonic()
+        pipeline._state = PipelineState.CONVERSING
+
+        pipeline._handle_conversing()
+        pipeline._handle_conversing()
+
+        assert pipeline.state == PipelineState.CONVERSING
+        assert pipeline._followup_buffer == []
+
 
 class TestYesNoParser:
     """The spoken-confirmation parser (voice approval)."""
@@ -270,6 +312,30 @@ class TestBuildTTS:
         tts = build_tts(VoiceConfig(tts_engine="kokoro"), "models")
         assert isinstance(tts, _FallbackSynthesizer)
 
+    def test_openai_engine_wraps_in_local_fallback(self):
+        from dax.core.config import VoiceConfig
+        from dax.voice.tts import _FallbackSynthesizer, build_tts
+
+        tts = build_tts(VoiceConfig(tts_engine="openai"), "models")
+        assert isinstance(tts, _FallbackSynthesizer)
+
+    def test_openai_tts_requests_pcm_with_spanish_instructions(self):
+        from dax.voice.tts import OpenAITextToSpeech
+
+        tts = OpenAITextToSpeech(voice="marin", instructions_es="Habla natural.")
+        tts._client = MagicMock()
+        tts._client.audio.speech.create.return_value = SimpleNamespace(
+            content=np.array([0, 1000, -1000], dtype="<i2").tobytes()
+        )
+
+        audio = tts.synthesize("Hola", language="es")
+
+        assert audio.tolist() == [0, 1000, -1000]
+        kwargs = tts._client.audio.speech.create.call_args.kwargs
+        assert kwargs["voice"] == "marin"
+        assert kwargs["response_format"] == "pcm"
+        assert kwargs["instructions"] == "Habla natural."
+
 
 class TestSpeakerVerifier:
     """Voice ID must fail open when no profile/encoder is available."""
@@ -281,3 +347,11 @@ class TestSpeakerVerifier:
         # No encoder loaded and no profile → accept everything.
         assert verifier.active is False
         assert verifier.verify(np.zeros(16000, dtype=np.float32)) is True
+
+    def test_can_fail_closed_without_profile(self, tmp_path):
+        from dax.voice.speaker import SpeakerVerifier
+
+        verifier = SpeakerVerifier(
+            profile_path=str(tmp_path / "missing.npy"), fail_open=False
+        )
+        assert verifier.verify(np.zeros(16000, dtype=np.float32)) is False

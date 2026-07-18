@@ -51,18 +51,29 @@ class VoiceConfig(BaseModel):
     stt_fallback_to_local: bool = True
 
     # -- Text-to-speech -----------------------------------------------------
-    # "kokoro" = natural neural voice (recommended); "piper" = faster, robotic.
-    tts_engine: str = "kokoro"
+    # Local engines keep audio private; OpenAI offers the most natural prosody.
+    tts_engine: Literal["kokoro", "piper", "openai"] = "kokoro"
     # Piper voice names/paths (fallback engine).
     tts_voice_es: str = "es_ES-davefx-medium"
     tts_voice_en: str = "en_US-lessac-medium"
     # Kokoro voice ids (see VOICES.md). ES: ef_dora/em_alex; EN: af_heart/am_michael.
-    tts_kokoro_voice_es: str = "ef_dora"
+    tts_kokoro_voice_es: str = "em_alex"
     tts_kokoro_voice_en: str = "af_heart"
-    tts_kokoro_speed: float = 1.0
+    tts_kokoro_speed: float = 0.95
+    tts_openai_model: str = "gpt-4o-mini-tts"
+    tts_openai_voice: str = "marin"
+    tts_openai_instructions_es: str = (
+        "Habla en español de forma cálida, natural y conversacional, con acento "
+        "neutro y ritmo tranquilo. Evita sonar como un locutor o un robot."
+    )
+    tts_openai_instructions_en: str = (
+        "Speak warmly and naturally, like a concise personal assistant."
+    )
+    tts_openai_timeout_s: int = 30
+    tts_fallback_to_local: bool = True
 
     vad_threshold: float = 0.5
-    silence_duration_ms: int = 600
+    silence_duration_ms: int = 800
     # Adaptive endpointing: shorten the end-of-speech pause for short commands
     # and lengthen it for longer utterances (natural pauses), Alexa-style.
     adaptive_endpointing: bool = True
@@ -75,6 +86,12 @@ class VoiceConfig(BaseModel):
     earcon: bool = True
     # Seconds to keep listening for a follow-up after speaking (follow-up mode).
     conversation_timeout_s: int = 8
+    # Require sustained speech before opening a hands-free follow-up. A single
+    # music transient or percussion hit must not create a new voice turn.
+    followup_activation_ms: int = 320
+    # Additional silence allowed after longer phrases so thinking pauses can
+    # resume before the utterance is committed to STT.
+    thinking_pause_ms: int = 900
 
     # -- Reliability & UX ---------------------------------------------------
     # Max seconds to wait for the assistant's reply (incl. long tool chains)
@@ -93,6 +110,8 @@ class VoiceConfig(BaseModel):
     speaker_verification: bool = False
     # Cosine-similarity threshold (0..1) for accepting a speaker as the owner.
     speaker_threshold: float = 0.65
+    # When false, enabling Voice ID without a valid profile rejects all speech.
+    speaker_fail_open: bool = True
 
 
 class OllamaProviderConfig(BaseModel):

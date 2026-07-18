@@ -8,8 +8,9 @@ output modes.
 from __future__ import annotations
 
 import logging
+import os
 from pathlib import Path
-from typing import TYPE_CHECKING, Protocol, runtime_checkable
+from typing import TYPE_CHECKING, Any, Protocol, runtime_checkable
 
 import numpy as np
 from piper.voice import PiperVoice
@@ -36,6 +37,72 @@ class Synthesizer(Protocol):
     def stop(self) -> None: ...
 
     def synthesize(self, text: str, language: str = "en") -> np.ndarray: ...
+
+
+class OpenAITextToSpeech:
+    """Natural hosted speech using OpenAI's PCM Audio API."""
+
+    def __init__(
+        self,
+        model: str = "gpt-4o-mini-tts",
+        voice: str = "marin",
+        instructions_es: str = "",
+        instructions_en: str = "",
+        timeout_s: int = 30,
+    ) -> None:
+        self._model = model
+        self._voice = voice
+        self._instructions = {"es": instructions_es, "en": instructions_en}
+        self._timeout_s = max(1, timeout_s)
+        self._client: Any = None
+
+    @property
+    def sample_rate(self) -> int:
+        return 24_000
+
+    def start(self) -> None:
+        if not os.environ.get("OPENAI_API_KEY"):
+            raise TTSError(
+                "OpenAI TTS requires OPENAI_API_KEY; configure it in Voice settings"
+            )
+        try:
+            from openai import OpenAI
+
+            self._client = OpenAI(timeout=self._timeout_s)
+        except Exception as exc:
+            raise TTSError(f"Failed to initialize OpenAI TTS: {exc}") from exc
+        logger.info(
+            "TTS started (engine=openai, model=%s, voice=%s)",
+            self._model,
+            self._voice,
+        )
+
+    def stop(self) -> None:
+        client = self._client
+        self._client = None
+        close = getattr(client, "close", None)
+        if callable(close):
+            close()
+        logger.info("OpenAI TTS stopped")
+
+    def synthesize(self, text: str, language: str = "en") -> np.ndarray:
+        if self._client is None:
+            raise TTSError("OpenAI TTS not started")
+        kwargs: dict[str, object] = {
+            "model": self._model,
+            "voice": self._voice,
+            "input": text,
+            "response_format": "pcm",
+        }
+        instructions = self._instructions.get(language) or self._instructions["en"]
+        if instructions:
+            kwargs["instructions"] = instructions
+        try:
+            response = self._client.audio.speech.create(**kwargs)
+            content = bytes(response.content)
+        except Exception as exc:
+            raise TTSError(f"OpenAI TTS synthesis failed: {exc}") from exc
+        return np.frombuffer(content, dtype="<i2").copy()
 
 
 class TextToSpeech:
@@ -229,7 +296,24 @@ def build_tts(config: VoiceConfig, models_path: str) -> Synthesizer:
     ``kokoro-onnx`` package + model files; if either is missing at start-up the
     pipeline still speaks via Piper instead of going silent.
     """
-    if config.tts_engine.lower() == "kokoro":
+    if config.tts_engine == "openai":
+        hosted = OpenAITextToSpeech(
+            model=config.tts_openai_model,
+            voice=config.tts_openai_voice,
+            instructions_es=config.tts_openai_instructions_es,
+            instructions_en=config.tts_openai_instructions_en,
+            timeout_s=config.tts_openai_timeout_s,
+        )
+        if config.tts_fallback_to_local:
+            return _FallbackSynthesizer(
+                hosted, lambda: _build_local_tts(config, models_path)
+            )
+        return hosted
+    return _build_local_tts(config, models_path)
+
+
+def _build_local_tts(config: VoiceConfig, models_path: str) -> Synthesizer:
+    if config.tts_engine in {"kokoro", "openai"}:
         from dax.voice.tts_kokoro import KokoroTTS
 
         kokoro = KokoroTTS(
@@ -263,7 +347,7 @@ class _FallbackSynthesizer:
     def _swap_to_fallback(self) -> None:
         if self._fell_back:
             return
-        logger.warning("TTS falling back to Piper")
+        logger.warning("TTS falling back to the configured local engine")
         fallback = self._fallback_factory()
         fallback.start()
         self._active = fallback

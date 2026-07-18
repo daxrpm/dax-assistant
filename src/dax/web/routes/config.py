@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import contextlib
 import os
+from pathlib import Path
 from typing import Any, Literal
 
 from fastapi import APIRouter, HTTPException, Request
@@ -94,12 +95,18 @@ class VoiceConfigUpdate(BaseModel):
     stt_openai_prompt: str | None = None
     stt_openai_api_key: str | None = None
     stt_fallback_to_local: bool | None = None
-    tts_engine: str | None = None
+    tts_engine: Literal["kokoro", "piper", "openai"] | None = None
     tts_voice_es: str | None = None
     tts_voice_en: str | None = None
     tts_kokoro_voice_es: str | None = None
     tts_kokoro_voice_en: str | None = None
     tts_kokoro_speed: float | None = None
+    tts_openai_model: str | None = None
+    tts_openai_voice: str | None = None
+    tts_openai_instructions_es: str | None = None
+    tts_openai_instructions_en: str | None = None
+    tts_openai_timeout_s: int | None = None
+    tts_fallback_to_local: bool | None = None
     vad_threshold: float | None = None
     silence_duration_ms: int | None = None
     adaptive_endpointing: bool | None = None
@@ -107,11 +114,14 @@ class VoiceConfigUpdate(BaseModel):
     barge_in: bool | None = None
     earcon: bool | None = None
     conversation_timeout_s: int | None = None
+    followup_activation_ms: int | None = None
+    thinking_pause_ms: int | None = None
     response_timeout_s: int | None = None
     voice_confirm: bool | None = None
     require_wake_word_each_turn: bool | None = None
     speaker_verification: bool | None = None
     speaker_threshold: float | None = None
+    speaker_fail_open: bool | None = None
 
 
 class WhatsAppConfigUpdate(BaseModel):
@@ -192,6 +202,12 @@ async def get_config(config: ConfigDep) -> dict[str, Any]:
             "tts_kokoro_voice_es": config.voice.tts_kokoro_voice_es,
             "tts_kokoro_voice_en": config.voice.tts_kokoro_voice_en,
             "tts_kokoro_speed": config.voice.tts_kokoro_speed,
+            "tts_openai_model": config.voice.tts_openai_model,
+            "tts_openai_voice": config.voice.tts_openai_voice,
+            "tts_openai_instructions_es": config.voice.tts_openai_instructions_es,
+            "tts_openai_instructions_en": config.voice.tts_openai_instructions_en,
+            "tts_openai_timeout_s": config.voice.tts_openai_timeout_s,
+            "tts_fallback_to_local": config.voice.tts_fallback_to_local,
             "vad_threshold": config.voice.vad_threshold,
             "silence_duration_ms": config.voice.silence_duration_ms,
             "adaptive_endpointing": getattr(config.voice, "adaptive_endpointing", True),
@@ -199,11 +215,17 @@ async def get_config(config: ConfigDep) -> dict[str, Any]:
             "barge_in": getattr(config.voice, "barge_in", True),
             "earcon": getattr(config.voice, "earcon", True),
             "conversation_timeout_s": getattr(config.voice, "conversation_timeout_s", 8),
+            "followup_activation_ms": config.voice.followup_activation_ms,
+            "thinking_pause_ms": config.voice.thinking_pause_ms,
             "response_timeout_s": config.voice.response_timeout_s,
             "voice_confirm": config.voice.voice_confirm,
             "require_wake_word_each_turn": config.voice.require_wake_word_each_turn,
             "speaker_verification": config.voice.speaker_verification,
             "speaker_threshold": config.voice.speaker_threshold,
+            "speaker_fail_open": config.voice.speaker_fail_open,
+            "speaker_profile_enrolled": (
+                Path(config.storage.models_path).expanduser() / "voice_profile.npy"
+            ).is_file(),
         },
         "llm": {
             "default_provider": config.llm.default_provider,
@@ -364,7 +386,11 @@ async def update_voice(
 
     dax_app = getattr(request.app.state, "dax_app", None)
     reload_needed = bool(config_changes) or (
-        key_changed and config.voice.stt_backend == "openai"
+        key_changed
+        and (
+            config.voice.stt_backend == "openai"
+            or config.voice.tts_engine == "openai"
+        )
     )
     try:
         persist_config(request)
