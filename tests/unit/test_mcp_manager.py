@@ -38,3 +38,10 @@ class TestEnvVarResolution:
                 "secret": "{env:KEY}",
             })
             assert result == {"plain": "no change", "secret": "value"}
+
+    def test_resolve_dict_uses_server_variables(self):
+        result = _resolve_env_dict(
+            {"Authorization": "Bearer {env:HA_TOKEN}"},
+            {"HA_TOKEN": "server-token"},
+        )
+        assert result == {"Authorization": "Bearer server-token"}

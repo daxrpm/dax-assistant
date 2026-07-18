@@ -29,11 +29,14 @@ logger = logging.getLogger(__name__)
 _ENV_PATTERN = re.compile(r"\{env:(\w+)\}")
 
 
-def _resolve_env_vars(value: str) -> str:
+def _resolve_env_vars(value: str, variables: dict[str, str] | None = None) -> str:
     """Replace {env:VAR_NAME} patterns with environment variable values."""
+
+    lookup = {**os.environ, **(variables or {})}
+
     def _replace(match: re.Match[str]) -> str:
         var_name = match.group(1)
-        env_value = os.environ.get(var_name, "")
+        env_value = lookup.get(var_name, "")
         if not env_value:
             logger.warning("Environment variable '%s' not set", var_name)
         return env_value
@@ -41,9 +44,11 @@ def _resolve_env_vars(value: str) -> str:
     return _ENV_PATTERN.sub(_replace, value)
 
 
-def _resolve_env_dict(d: dict[str, str]) -> dict[str, str]:
+def _resolve_env_dict(
+    d: dict[str, str], variables: dict[str, str] | None = None
+) -> dict[str, str]:
     """Resolve env vars in all values of a dict."""
-    return {k: _resolve_env_vars(v) for k, v in d.items()}
+    return {k: _resolve_env_vars(v, variables) for k, v in d.items()}
 
 
 # Desktop/session variables a *local* stdio server (the bundled dax-system)
@@ -136,7 +141,11 @@ class MCPManager:
                     "MCP server '%s' (%s) has no URL, skipping", name, transport
                 )
                 return None
-            headers = _resolve_env_dict(server_config.headers)
+            # HTTP servers can define credentials in their own env field.  Use
+            # those values when resolving header placeholders, while still
+            # allowing references to the Dax process environment.
+            server_env = _resolve_env_dict(server_config.env)
+            headers = _resolve_env_dict(server_config.headers, server_env)
             oauth_token = _get_oauth_token(name)
             if oauth_token:
                 headers["Authorization"] = f"Bearer {oauth_token}"
