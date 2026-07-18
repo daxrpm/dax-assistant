@@ -14,7 +14,7 @@ from dax.core.models import (
     ToolCall,
     ToolResult,
 )
-from dax.orchestrator.agent import Agent
+from dax.orchestrator.agent import MAX_TOOL_ITERATIONS, Agent
 from dax.orchestrator.bus import MessageBus
 
 
@@ -271,6 +271,47 @@ class TestAgentToolCalling:
         assert response.content == "Sorry, that tool failed."
 
         await agent.stop()
+
+    async def test_tool_limit_gets_tool_free_final_summary(self):
+        tool_response = Message(
+            role=MessageRole.ASSISTANT,
+            tool_calls=(
+                ToolCall(
+                    id="call_1",
+                    server_name="spotify",
+                    tool_name="play",
+                    arguments={},
+                ),
+            ),
+        )
+        llm = _MockLLM(responses=[
+            *[tool_response for _ in range(MAX_TOOL_ITERATIONS)],
+            Message(
+                role=MessageRole.ASSISTANT,
+                content="No pude reproducirla porque no hay dispositivos disponibles.",
+            ),
+        ])
+        agent = Agent(
+            bus=MessageBus(),
+            llm=llm,  # type: ignore[arg-type]
+            tools=_MockTools(),  # type: ignore[arg-type]
+            storage=_MockStorage(),  # type: ignore[arg-type]
+        )
+
+        response = await agent._handle_message(
+            Message(
+                content="Pon música",
+                channel=ChannelType.VOICE,
+                language=Language.SPANISH,
+            )
+        )
+
+        assert response.content == (
+            "No pude reproducirla porque no hay dispositivos disponibles."
+        )
+        assert llm.last_tools is None
+        assert llm.last_messages[-1]["role"] == "system"
+        assert "Never claim an action succeeded" in llm.last_messages[-1]["content"]
 
 
 class _StatefulStorage:

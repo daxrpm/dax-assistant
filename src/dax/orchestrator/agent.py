@@ -21,7 +21,7 @@ import time
 from typing import TYPE_CHECKING, Any
 
 from dax.core.exceptions import LLMError
-from dax.core.models import Message, MessageRole
+from dax.core.models import Language, Message, MessageRole
 from dax.llm.client import build_messages_for_llm
 from dax.llm.tool_mapper import mcp_tools_to_openai
 from dax.orchestrator.prompting import SystemPromptBuilder
@@ -247,14 +247,40 @@ class Agent:
                 response.tool_calls, llm_messages, channel=message.channel.value
             )
 
-        # If we exhausted iterations, return whatever we have.
+        # The tool budget is exhausted, but the last response only contains a
+        # tool call. Make one tool-free pass so the user hears the real outcome
+        # instead of a generic (and potentially false) success message.
         logger.warning("Max tool iterations (%d) reached", MAX_TOOL_ITERATIONS)
+        llm_messages.append({
+            "role": "system",
+            "content": (
+                "The tool execution budget is exhausted. Do not request any more "
+                "tools. Briefly tell the user what succeeded, what failed, and "
+                "what they need to do next. Never claim an action succeeded when "
+                "a tool result reported an error."
+            ),
+        })
+        try:
+            final_response = await self._llm.complete(
+                messages=llm_messages,
+                tools=None,
+            )
+            content = final_response.content
+        except LLMError:
+            logger.exception("Final tool-result summary failed")
+            content = ""
+
+        if not content:
+            content = (
+                "No pude completar la solicitud porque se agotaron los intentos "
+                "de ejecución."
+                if message.language is Language.SPANISH
+                else "I couldn't complete the request because the execution attempts ran out."
+            )
         await self._emit_done(start_ts)
         return await self._finalize(
             conversation,
-            self._assistant_reply(
-                message, response.content or "I completed the requested actions."
-            ),
+            self._assistant_reply(message, content),
         )
 
     async def _run_tool_calls(
