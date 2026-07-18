@@ -14,7 +14,7 @@ describe("Markdown", () => {
 describe("LoginPage", () => {
   it("renders the welcome screen", () => {
     render(<LoginPage onLoggedIn={() => {}} configured />);
-    expect(screen.getByText("Welcome to Dax")).toBeInTheDocument();
+    expect(screen.getByText("Welcome back")).toBeInTheDocument();
     expect(screen.getByPlaceholderText("Password")).toBeInTheDocument();
   });
 });

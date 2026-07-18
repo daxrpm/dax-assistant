@@ -17,14 +17,25 @@ export interface GeneralConfig {
 
 export interface VoiceConfig {
   enabled: boolean;
+  wake_word_model: string;
   wake_word_threshold: number;
+  stt_backend: "local" | "openai";
   stt_model: string;
   stt_compute_type: string;
   stt_device: string;
   stt_beam_size: number;
   stt_language: string;
+  stt_openai_model: string;
+  stt_openai_timeout_s: number;
+  stt_openai_prompt: string;
+  stt_openai_configured: boolean;
+  stt_fallback_to_local: boolean;
+  tts_engine: string;
   tts_voice_es: string;
   tts_voice_en: string;
+  tts_kokoro_voice_es: string;
+  tts_kokoro_voice_en: string;
+  tts_kokoro_speed: number;
   vad_threshold: number;
   silence_duration_ms: number;
   adaptive_endpointing: boolean;
@@ -32,6 +43,11 @@ export interface VoiceConfig {
   barge_in: boolean;
   earcon: boolean;
   conversation_timeout_s: number;
+  response_timeout_s: number;
+  voice_confirm: boolean;
+  require_wake_word_each_turn: boolean;
+  speaker_verification: boolean;
+  speaker_threshold: number;
 }
 
 export interface LLMConfig {
