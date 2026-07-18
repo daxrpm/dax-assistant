@@ -1,32 +1,40 @@
 [Unit]
 Description=Dax Personal AI Assistant
 Documentation=https://github.com/daxrpm/dax-assistant
-After=network-online.target ollama.service
 Wants=network-online.target
+After=network-online.target graphical-session.target
 
 [Service]
 Type=simple
-User=daxrpm
-Group=daxrpm
-WorkingDirectory=/home/daxrpm/Desktop/Projects/dax-assistant
-ExecStart=/home/daxrpm/Desktop/Projects/dax-assistant/.venv/bin/python -m dax --config config/dax.toml
+WorkingDirectory=%h/.local/share/dax-assistant/app
+ExecStart=%h/.local/share/dax-assistant/app/.venv/bin/dax
 Restart=on-failure
-RestartSec=5
-StandardOutput=journal
-StandardError=journal
-SyslogIdentifier=dax-assistant
+RestartSec=5s
+TimeoutStopSec=30s
+KillMode=mixed
+UMask=0077
+Environment=PYTHONUNBUFFERED=1
+Environment="DAX_STORAGE__DATABASE_PATH=%h/.local/state/dax-assistant/dax.db"
+Environment="DAX_STORAGE__MODELS_PATH=%h/.local/share/dax-assistant/models"
+Environment="DAX_MEMORY_PATH=%h/.local/state/dax-assistant/memory"
+Environment="HF_HOME=%h/.cache/dax-assistant/huggingface"
 
-# Audio access for voice pipeline
-SupplementaryGroups=audio
-
-# PipeWire/PulseAudio socket access
-Environment=XDG_RUNTIME_DIR=/run/user/1000
-
-# Security hardening
+# Safe for a desktop assistant. ProtectHome/PrivateDevices are intentionally not
+# enabled because Dax provides user-approved file, application, and audio tools.
 NoNewPrivileges=yes
-ProtectSystem=strict
-ReadWritePaths=/home/daxrpm/Desktop/Projects/dax-assistant/data
-ReadWritePaths=/home/daxrpm/Desktop/Projects/dax-assistant/config
+PrivateTmp=yes
+ProtectSystem=full
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectKernelLogs=yes
+ProtectControlGroups=yes
+ProtectClock=yes
+ProtectHostname=yes
+RestrictSUIDSGID=yes
+LockPersonality=yes
+CapabilityBoundingSet=
+AmbientCapabilities=
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
 
 [Install]
 WantedBy=default.target

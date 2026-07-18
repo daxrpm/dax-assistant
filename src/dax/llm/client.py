@@ -53,6 +53,9 @@ service reports an actionable prerequisite (for example, Spotify says no playbac
 available), stop the tool loop, explain that prerequisite, and tell the user how to resolve it. \
 Do not use shell or PC-control tools to work around a remote service error unless the user \
 explicitly requested that approach.
+6. **Stop after a successful mutation.** When a tool that changes state reports success, \
+do not call the same mutation repeatedly in the same turn. You may retry it once with \
+corrected arguments after an error; after that, report the outcome instead of experimenting.
 
 ## Available capabilities
 

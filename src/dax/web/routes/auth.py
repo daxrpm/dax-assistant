@@ -38,6 +38,16 @@ class AuthStatus(BaseModel):
     authenticated: bool
 
 
+class HealthResponse(BaseModel):
+    status: str
+
+
+@router.get("/health", response_model=HealthResponse)
+async def health() -> HealthResponse:
+    """Unauthenticated liveness probe for systemd and reverse proxies."""
+    return HealthResponse(status="ok")
+
+
 @router.get("/auth/status", response_model=AuthStatus)
 async def auth_status(request: Request, auth: AuthDep) -> AuthStatus:
     return AuthStatus(

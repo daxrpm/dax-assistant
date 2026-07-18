@@ -17,6 +17,7 @@ import asyncio
 import contextlib
 import json
 import logging
+import re
 import time
 from typing import TYPE_CHECKING, Any
 
@@ -30,7 +31,7 @@ from dax.orchestrator.tool_gate import ToolGate
 if TYPE_CHECKING:
     from collections.abc import Callable, Coroutine, Sequence
 
-    from dax.core.models import Conversation, ToolCall
+    from dax.core.models import Conversation, ToolCall, ToolResult
     from dax.core.policy import ToolPolicy
     from dax.core.ports import LLMProvider, Storage, ToolProvider
     from dax.core.shell_allow import ShellAllowlist
@@ -49,6 +50,12 @@ MAX_HISTORY_MESSAGES = 20
 # when the latest message names no keywords.
 _RELEVANCE_CONTEXT_TURNS = 3
 
+_SPANISH_HINTS = {
+    "blanca", "blanco", "cambio", "color", "como", "de", "el", "esta",
+    "la", "las", "lo", "los", "no", "pon", "ponla", "puedes", "que",
+    "quiero", "totalmente", "una",
+}
+
 
 def _relevance_query(content: str, history: list[Message]) -> str:
     """Build the query used to pick relevant tools, with recent context.
@@ -64,6 +71,42 @@ def _relevance_query(content: str, history: list[Message]) -> str:
         if m.role is MessageRole.USER and m.content
     ][-_RELEVANCE_CONTEXT_TURNS:]
     return " ".join([*recent, content])
+
+
+def _respond_in_spanish(message: Message) -> bool:
+    if message.language is Language.SPANISH:
+        return True
+    if message.language is Language.ENGLISH:
+        return False
+    words = set(re.findall(r"[a-záéíóúñü]+", message.content.lower()))
+    return bool(
+        "¿" in message.content
+        or "¡" in message.content
+        or len(words & _SPANISH_HINTS) >= 2
+    )
+
+
+def _tool_budget_fallback(
+    message: Message, results: list[tuple[ToolCall, ToolResult]]
+) -> str:
+    spanish = _respond_in_spanish(message)
+    failed = next(
+        ((call, result) for call, result in reversed(results) if result.is_error),
+        None,
+    )
+    if failed is not None:
+        call, result = failed
+        detail = " ".join(result.content.split())[:300] or "unknown tool error"
+        if spanish:
+            return f"Algunos pasos sí se ejecutaron, pero {call.tool_name} falló: {detail}"
+        return f"Some steps completed, but {call.tool_name} failed: {detail}"
+    if results:
+        if spanish:
+            return "Las acciones se ejecutaron, pero no pude confirmar el resultado final."
+        return "The actions ran, but I couldn't confirm the final result."
+    if spanish:
+        return "No pude completar la solicitud porque se agotaron los intentos de ejecución."
+    return "I couldn't complete the request because the execution attempts ran out."
 
 
 class Agent:
@@ -89,6 +132,7 @@ class Agent:
         shell_allow: ShellAllowlist | None = None,
         max_tools: int = 45,
         memory_path: str | None = None,
+        system_prompt: str = "",
     ) -> None:
         self._bus = bus
         self._llm = llm
@@ -98,7 +142,7 @@ class Agent:
         # responses fast. The relevance filter picks the best within this.
         self._max_tools = max_tools
         # Collaborators: prompt assembly and the policy/confirmation/exec gate.
-        self._prompt = SystemPromptBuilder(memory_path)
+        self._prompt = SystemPromptBuilder(memory_path, base_prompt=system_prompt)
         self._gate = ToolGate(
             tools,
             policy=policy,
@@ -110,6 +154,10 @@ class Agent:
         self._event_broadcaster: (
             Callable[[dict[str, Any]], Coroutine[Any, Any, None]] | None
         ) = None
+
+    def set_system_prompt(self, prompt: str) -> None:
+        """Apply a new base prompt without restarting the agent."""
+        self._prompt.set_base_prompt(prompt)
 
     def set_event_broadcaster(
         self,
@@ -218,6 +266,7 @@ class Agent:
 
         await self._emit({"type": "thinking"})
         start_ts = time.monotonic()
+        execution_results: list[tuple[ToolCall, ToolResult]] = []
 
         # LLM call + tool execution loop
         for iteration in range(MAX_TOOL_ITERATIONS):
@@ -243,8 +292,12 @@ class Agent:
                 iteration,
             )
             llm_messages.append(self._format_assistant_tool_calls(response))
-            await self._run_tool_calls(
-                response.tool_calls, llm_messages, channel=message.channel.value
+            execution_results.extend(
+                await self._run_tool_calls(
+                    response.tool_calls,
+                    llm_messages,
+                    channel=message.channel.value,
+                )
             )
 
         # The tool budget is exhausted, but the last response only contains a
@@ -271,12 +324,7 @@ class Agent:
             content = ""
 
         if not content:
-            content = (
-                "No pude completar la solicitud porque se agotaron los intentos "
-                "de ejecución."
-                if message.language is Language.SPANISH
-                else "I couldn't complete the request because the execution attempts ran out."
-            )
+            content = _tool_budget_fallback(message, execution_results)
         await self._emit_done(start_ts)
         return await self._finalize(
             conversation,
@@ -289,9 +337,10 @@ class Agent:
         llm_messages: list[dict[str, Any]],
         *,
         channel: str | None = None,
-    ) -> None:
+    ) -> list[tuple[ToolCall, ToolResult]]:
         """Execute each tool call via the gate, emitting UI events + feeding
         results back into the LLM message list."""
+        results: list[tuple[ToolCall, ToolResult]] = []
         for tool_call in tool_calls:
             await self._emit({
                 "type": "tool_call",
@@ -300,6 +349,7 @@ class Agent:
                 "args": dict(tool_call.arguments),
             })
             result = await self._gate.execute(tool_call, channel=channel)
+            results.append((tool_call, result))
             await self._emit({
                 "type": "tool_result",
                 "tool": tool_call.tool_name,
@@ -311,6 +361,7 @@ class Agent:
                 "tool_call_id": tool_call.id,
                 "content": result.content,
             })
+        return results
 
     def _assistant_reply(self, source: Message, content: str) -> Message:
         """Build an assistant Message mirroring the source's channel/metadata."""

@@ -29,6 +29,7 @@ import httpx
 from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import HTMLResponse
 
+from dax.storage.secrets import SecretStore
 from dax.web.dependencies import ConfigDep
 
 router = APIRouter(tags=["oauth"])
@@ -39,8 +40,12 @@ logger = logging.getLogger(__name__)
 # For production with multiple workers, use DB/Redis instead.
 _pending_flows: dict[str, dict[str, Any]] = {}
 
-# Token storage file
+# Legacy plaintext files, imported and removed by configure_oauth_store().
 _TOKEN_FILE = Path("data/mcp-tokens.json")
+_CLIENT_FILE = Path("data/mcp-clients.json")
+_OAUTH_TOKENS_KEY = "__DAX_MCP_OAUTH_TOKENS_V1"
+_OAUTH_CLIENTS_KEY = "__DAX_MCP_OAUTH_CLIENTS_V1"
+_oauth_store: SecretStore | None = None
 
 
 # -- Public endpoints --
@@ -377,15 +382,56 @@ async def _try_well_known(
 # -- Token storage --
 
 
-def _store_tokens(name: str, tokens: dict[str, Any]) -> None:
-    """Store OAuth tokens to disk (owner-read-only permissions)."""
-    _TOKEN_FILE.parent.mkdir(parents=True, exist_ok=True)
+def configure_oauth_store(store: SecretStore) -> None:
+    """Use encrypted SQLite storage and migrate legacy OAuth JSON files."""
+    global _oauth_store
+    _oauth_store = store
+    _migrate_legacy_oauth_file(_TOKEN_FILE, _OAUTH_TOKENS_KEY)
+    _migrate_legacy_oauth_file(_CLIENT_FILE, _OAUTH_CLIENTS_KEY)
 
+
+def _store() -> SecretStore:
+    if _oauth_store is not None:
+        return _oauth_store
+    return SecretStore("data/dax.db")
+
+
+def _load_bucket(key: str) -> dict[str, Any]:
+    payload = _store().get(key)
+    if payload is None:
+        return {}
+    try:
+        data = json.loads(payload)
+        return data if isinstance(data, dict) else {}
+    except json.JSONDecodeError:
+        logger.error("Encrypted OAuth record %s is invalid JSON", key)
+        return {}
+
+
+def _save_bucket(key: str, values: dict[str, Any]) -> None:
+    _store().set(key, json.dumps(values, separators=(",", ":"), sort_keys=True))
+
+
+def _migrate_legacy_oauth_file(path: Path, key: str) -> None:
+    if not path.exists():
+        return
+    try:
+        data = json.loads(path.read_text())
+        if not isinstance(data, dict):
+            raise ValueError("OAuth data must be an object")
+        existing = _load_bucket(key)
+        _save_bucket(key, {**data, **existing})
+        path.unlink()
+        logger.info("Migrated legacy OAuth credentials from %s", path)
+    except (OSError, ValueError, json.JSONDecodeError):
+        logger.exception("Could not migrate legacy OAuth credentials from %s", path)
+
+
+def _store_tokens(name: str, tokens: dict[str, Any]) -> None:
+    """Store OAuth tokens encrypted in SQLite."""
     all_tokens = _load_all_tokens()
     all_tokens[name] = tokens
-
-    _TOKEN_FILE.write_text(json.dumps(all_tokens, indent=2))
-    _TOKEN_FILE.chmod(0o600)
+    _save_bucket(_OAUTH_TOKENS_KEY, all_tokens)
 
 
 def _load_tokens(name: str) -> dict[str, Any] | None:
@@ -398,18 +444,12 @@ def _delete_tokens(name: str) -> None:
     """Delete stored tokens for a server."""
     all_tokens = _load_all_tokens()
     all_tokens.pop(name, None)
-    if _TOKEN_FILE.exists():
-        _TOKEN_FILE.write_text(json.dumps(all_tokens, indent=2))
+    _save_bucket(_OAUTH_TOKENS_KEY, all_tokens)
 
 
 def _load_all_tokens() -> dict[str, Any]:
-    """Load all stored tokens from disk."""
-    if not _TOKEN_FILE.exists():
-        return {}
-    try:
-        return json.loads(_TOKEN_FILE.read_text())
-    except (json.JSONDecodeError, OSError):
-        return {}
+    """Load all encrypted OAuth tokens."""
+    return _load_bucket(_OAUTH_TOKENS_KEY)
 
 
 def get_access_token(name: str) -> str | None:
@@ -499,9 +539,6 @@ async def refresh_access_token(name: str) -> str | None:
 
 # -- Dynamic Client Registration (RFC 7591) --
 
-_CLIENT_FILE = Path("data/mcp-clients.json")
-
-
 async def _register_client(
     registration_endpoint: str,
     redirect_uri: str,
@@ -541,12 +578,10 @@ async def _register_client(
 
 
 def _store_client_info(name: str, info: dict[str, Any]) -> None:
-    """Store registered client credentials to disk."""
-    _CLIENT_FILE.parent.mkdir(parents=True, exist_ok=True)
+    """Store registered client credentials encrypted in SQLite."""
     all_clients = _load_all_clients()
     all_clients[name] = info
-    _CLIENT_FILE.write_text(json.dumps(all_clients, indent=2))
-    _CLIENT_FILE.chmod(0o600)
+    _save_bucket(_OAUTH_CLIENTS_KEY, all_clients)
 
 
 def _load_client_info(name: str) -> dict[str, Any] | None:
@@ -555,13 +590,8 @@ def _load_client_info(name: str) -> dict[str, Any] | None:
 
 
 def _load_all_clients() -> dict[str, Any]:
-    """Load all stored client credentials from disk."""
-    if not _CLIENT_FILE.exists():
-        return {}
-    try:
-        return json.loads(_CLIENT_FILE.read_text())
-    except (json.JSONDecodeError, OSError):
-        return {}
+    """Load all encrypted OAuth client credentials."""
+    return _load_bucket(_OAUTH_CLIENTS_KEY)
 
 
 # -- HTML templates --

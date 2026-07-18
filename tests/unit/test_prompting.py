@@ -54,3 +54,23 @@ def test_memory_block_injects_saved_facts(tmp_path: Path) -> None:
 def test_memory_block_absent_when_no_path() -> None:
     builder = SystemPromptBuilder(memory_path=None)
     assert "remember about the user" not in builder.build([], channel=ChannelType.WEB)
+
+
+def test_custom_prompt_keeps_runtime_addenda() -> None:
+    builder = SystemPromptBuilder(memory_path=None, base_prompt="Custom behavior")
+    tools = [{"name": "play", "server_name": "spotify"}]
+
+    prompt = builder.build(tools, channel=ChannelType.VOICE)
+
+    assert prompt.startswith("Custom behavior")
+    assert "Active tools" in prompt
+    assert prompt.endswith(VOICE_STYLE_PROMPT)
+    assert SYSTEM_PROMPT not in prompt
+
+
+def test_prompt_hot_reload_applies_to_next_build() -> None:
+    builder = SystemPromptBuilder(memory_path=None)
+
+    builder.set_base_prompt("New production prompt")
+
+    assert builder.build([], channel=ChannelType.WEB) == "New production prompt"

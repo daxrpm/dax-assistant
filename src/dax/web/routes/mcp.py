@@ -15,6 +15,8 @@ from dax.web.dependencies import ConfigDep, persist_config
 
 router = APIRouter(tags=["mcp"])
 
+_SECRET_MASK = "********"
+
 
 class MCPServerCreate(BaseModel):
     name: str
@@ -45,14 +47,36 @@ class ShellAllowUpdate(BaseModel):
     commands: list[str] = Field(default_factory=list)
 
 
-def _server_dict(srv: Any) -> dict[str, Any]:
+def _redact_values(values: dict[str, str], *, all_values: bool) -> dict[str, str]:
+    return {
+        key: (
+            _SECRET_MASK
+            if all_values or value.startswith("{env:") or key.lower() in {
+                "authorization", "x-api-key", "api-key", "token", "cookie"
+            }
+            else value
+        )
+        for key, value in values.items()
+    }
+
+
+def _restore_masked_values(
+    incoming: dict[str, str], previous: dict[str, str]
+) -> dict[str, str]:
+    return {
+        key: previous.get(key, value) if value == _SECRET_MASK else value
+        for key, value in incoming.items()
+    }
+
+
+def server_response(srv: Any) -> dict[str, Any]:
     return {
         "command": srv.command,
         "args": srv.args,
-        "env": srv.env,
+        "env": _redact_values(srv.env, all_values=True),
         "transport": srv.transport,
         "url": srv.url,
-        "headers": srv.headers,
+        "headers": _redact_values(srv.headers, all_values=False),
         "enabled": srv.enabled,
         "export_codex": getattr(srv, "export_codex", False),
         "export_claude": getattr(srv, "export_claude", False),
@@ -62,7 +86,7 @@ def _server_dict(srv: Any) -> dict[str, Any]:
 @router.get("/config/mcp/servers")
 async def list_mcp_servers(config: ConfigDep) -> dict[str, Any]:
     """List all configured MCP servers."""
-    return {name: _server_dict(srv) for name, srv in config.mcp.servers.items()}
+    return {name: server_response(srv) for name, srv in config.mcp.servers.items()}
 
 
 @router.post("/config/mcp/servers")
@@ -133,10 +157,10 @@ async def update_mcp_server(
     server_config = MCPServerConfig(
         command=body.command,
         args=body.args,
-        env=body.env,
+        env=_restore_masked_values(body.env, previous.env),
         transport=body.transport,
         url=body.url,
-        headers=body.headers,
+        headers=_restore_masked_values(body.headers, previous.headers),
         enabled=body.enabled,
         export_codex=body.export_codex,
         export_claude=body.export_claude,
@@ -180,7 +204,7 @@ async def delete_mcp_server(
 #
 # The binaries the assistant may run on this PC via the dax-system `shell_run`
 # tool. The agent runs allowlisted commands without asking and prompts for the
-# rest. Editing here updates the live allowlist and persists to TOML.
+# rest. Editing here updates the live allowlist and encrypted configuration.
 
 
 def _shell_allow_runtime(request: Request) -> Any | None:
@@ -204,7 +228,7 @@ async def get_system_shell_allow(request: Request, config: ConfigDep) -> dict[st
 async def update_system_shell_allow(
     request: Request, body: ShellAllowUpdate, config: ConfigDep
 ) -> dict[str, Any]:
-    """Replace the shell allowlist. Applies live and persists to TOML."""
+    """Replace the shell allowlist. Applies live and persists encrypted."""
     from dax.mcp_servers.system.server import _SHELL_METACHARS
 
     # Normalise: trim, drop blanks, de-dupe (order preserved). Each entry must be
@@ -230,7 +254,7 @@ async def update_system_shell_allow(
 
     runtime = _shell_allow_runtime(request)
     if runtime is not None:
-        # replace() fires the persistence hook; avoid double-writing the TOML.
+        # replace() fires the persistence hook; avoid a duplicate DB write.
         runtime.replace(commands)
     else:
         persist_config(request)

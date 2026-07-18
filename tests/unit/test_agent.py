@@ -343,7 +343,50 @@ class TestAgentToolCalling:
         ))
 
         assert "DSML" not in response.content
-        assert response.content.startswith("No pude completar")
+        assert response.content == (
+            "Las acciones se ejecutaron, pero no pude confirmar el resultado final."
+        )
+
+    async def test_tool_limit_reports_last_error_in_auto_detected_spanish(self):
+        tool_response = Message(
+            role=MessageRole.ASSISTANT,
+            tool_calls=(ToolCall(
+                id="call_1",
+                server_name="home-assistant",
+                tool_name="HassLightSet",
+                arguments={"name": "Bedroom Light", "color": "#FFFFFF"},
+            ),),
+        )
+        bars = "\N{FULLWIDTH VERTICAL LINE}" * 2
+        dsml = f"<{bars}DSML{bars}tool_calls></{bars}DSML{bars}tool_calls>"
+        llm = _MockLLM(responses=[
+            *[tool_response for _ in range(MAX_TOOL_ITERATIONS)],
+            Message(role=MessageRole.ASSISTANT, content=dsml),
+        ])
+        tools = _MockTools(results={
+            "HassLightSet": ToolResult(
+                call_id="call_1",
+                content="Error: Received invalid slot info for HassLightSet",
+                is_error=True,
+            )
+        })
+        agent = Agent(
+            bus=MessageBus(),
+            llm=llm,  # type: ignore[arg-type]
+            tools=tools,  # type: ignore[arg-type]
+            storage=_MockStorage(),  # type: ignore[arg-type]
+        )
+
+        response = await agent._handle_message(Message(
+            content="No cambió de color, ponla totalmente blanca",
+            channel=ChannelType.WEB,
+            language=Language.AUTO,
+        ))
+
+        assert response.content.startswith(
+            "Algunos pasos sí se ejecutaron, pero HassLightSet falló:"
+        )
+        assert "invalid slot info" in response.content
 
 
 class _StatefulStorage:

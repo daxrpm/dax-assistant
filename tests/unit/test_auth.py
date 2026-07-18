@@ -63,6 +63,11 @@ async def auth_client(auth_app: FastAPI) -> AsyncClient:
 
 
 class TestAuthFlow:
+    async def test_health_endpoint_is_public(self, auth_client: AsyncClient):
+        response = await auth_client.get("/api/health")
+        assert response.status_code == 200
+        assert response.json() == {"status": "ok"}
+
     async def test_protected_route_requires_auth(self, auth_client: AsyncClient):
         resp = await auth_client.get("/api/status")
         assert resp.status_code == 401

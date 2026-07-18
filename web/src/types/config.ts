@@ -13,6 +13,8 @@ export interface GeneralConfig {
   language_default: string;
   log_level: string;
   memory_path: string;
+  system_prompt: string;
+  system_prompt_custom: boolean;
 }
 
 export interface VoiceConfig {

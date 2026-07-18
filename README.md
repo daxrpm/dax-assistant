@@ -25,7 +25,7 @@ and storage are all swappable behind small interfaces.
   **confirmation policy** — the web UI pops a modal you must approve before it runs.
 - **Secure by default.** Binds to `127.0.0.1`, single-user login (argon2 password hash +
   signed session cookies), auth enforced on the API, the WebSocket, and the WhatsApp
-  webhook. Secrets live in `.env`, never in the committed config.
+  webhook. Configuration and credentials are encrypted at rest in SQLite.
 - **Memory.** Conversations are persisted per channel/session in SQLite and replayed into
   each turn, plus a tool-execution audit log.
 - **Modern web UI.** React + HeroUI v3 + Tailwind v4, minimalist, light/dark (follows your OS theme).
@@ -36,6 +36,8 @@ and storage are all swappable behind small interfaces.
 
 - Python **3.11** (the project pins `>=3.11,<3.12`).
 - [`uv`](https://docs.astral.sh/uv/) for dependency management.
+- Linux with `systemd --user`. The installer supports Fedora/RHEL, Debian/Ubuntu, Arch,
+  and openSUSE and installs Python 3.11 through `uv` when needed.
 - [Ollama](https://ollama.com/) running locally if you want the default local provider
   (otherwise set a cloud provider as default).
 - Node.js (only to rebuild the web UI from source).
@@ -45,48 +47,107 @@ and storage are all swappable behind small interfaces.
 
 ---
 
-## Quick start
+## Production install
+
+Install the latest release and all voice/audio dependencies for the current user:
+
+```bash
+bash <(curl -fsSL https://raw.githubusercontent.com/daxrpm/dax-assistant/main/scripts/install.sh)
+```
+
+From an existing checkout, run `./scripts/install.sh install`. The installer prompts for
+English or Spanish models, creates an isolated Python 3.11 environment, and starts a
+hardened `systemd --user` service. It does not require root except when the selected
+distribution's package manager installs missing system libraries. Production web assets
+are included; Node.js is not required.
+
+Default paths follow the XDG base-directory specification:
+
+| Content | Default path |
+| --- | --- |
+| Application | `~/.local/share/dax-assistant/app` |
+| Models | `~/.local/share/dax-assistant/models` |
+| Database and key | `~/.local/state/dax-assistant/` |
+| Service unit | `~/.config/systemd/user/dax-assistant.service` |
+| Caches | `~/.cache/dax-assistant/` |
+
+Use `--install-dir PATH`, `--models-dir PATH`, or the corresponding XDG environment
+variables to change these locations. Run `./scripts/install.sh --help` for all options.
+
+### Operations
+
+```bash
+systemctl --user status dax-assistant
+journalctl --user -u dax-assistant -f
+./scripts/install.sh doctor
+./scripts/install.sh update
+./scripts/install.sh uninstall          # preserves state and models
+./scripts/install.sh uninstall --purge  # also removes state, models, and caches
+```
+
+Updates create a timestamped database/key backup under
+`~/.local/state/dax-assistant/backups`, update the application and dependencies, restart
+the service, and roll back the application if startup fails. To restore a local-key
+installation manually, stop the service and copy a matching `.db` and `.key` backup pair
+over `dax.db` and `dax.key` before restarting it. Never restore one without the other.
+
+For external key management, set `DAX_MASTER_KEY` in the service environment and keep it
+separate from the database. The value must be the same Fernet key on every restart and
+must be backed up independently; losing it makes the encrypted configuration
+unrecoverable. A mode-`0600` systemd `EnvironmentFile` in `~/.config/dax-assistant/` is a
+simple option. Run `systemctl --user edit dax-assistant`, add the directive below, then
+reload and restart the service:
+
+```ini
+[Service]
+EnvironmentFile=%h/.config/dax-assistant/environment
+```
+
+### Audio troubleshooting
+
+The service joins your graphical user session so it can use PipeWire/PulseAudio. If voice
+does not start, run `./scripts/install.sh doctor`, confirm that
+`systemctl --user status pipewire pipewire-pulse` is healthy, and inspect the service log.
+Verify input devices independently with `wpctl status` or `arecord -l`. Remote SSH-only
+sessions may not have access to the desktop audio session; install and run Dax as the
+logged-in desktop user.
+
+`systemd --user` is the supported deployment model. A container is not the default
+because microphone capture, PipeWire playback, desktop notifications, clipboard access,
+and user-approved PC-control tools all depend on the host graphical session. Passing
+those sockets and devices into Docker reduces isolation while adding substantial setup.
+
+---
+
+## Development quick start
 
 ```bash
 # 1. Install dependencies (creates the .venv)
 ~/.local/bin/uv sync --all-extras
 
-# 2. Create your config and secrets
-cp config/dax.toml.example config/dax.toml
-cp .env.example .env
-
-# 3. Generate a login password hash and paste it into .env
-~/.local/bin/uv run python -m dax.web.auth 'your-password'
-#  -> $argon2id$v=19$...   (set DAX_SECURITY__PASSWORD_HASH to this)
-
-# 4. Generate a session secret and paste it into .env too
-openssl rand -hex 32
-#  -> set DAX_SECURITY__SESSION_SECRET to this
-
-# 5. (optional) Add cloud API keys to .env: ANTHROPIC_API_KEY / OPENAI_API_KEY / GEMINI_API_KEY
-
-# 6. Run
+# 2. Run; defaults and a persistent session secret are initialized automatically
 ~/.local/bin/uv run dax
 ```
 
-Then open **http://127.0.0.1:8420** and log in with the password from step 3.
+Then open **http://127.0.0.1:8420**, create the login password, and configure
+providers, integrations, voice, and MCP servers from Settings.
 
 If you only want the default local provider, make sure Ollama is running and has the model
-referenced in `config/dax.toml` (`[llm.ollama] model`), e.g. `ollama pull llama3.1:8b`.
+selected in Settings, e.g. `ollama pull llama3.1:8b`.
 
 ---
 
 ## Configuration
 
-Settings come from `config/dax.toml` (structure) and environment variables / `.env`
-(**secrets**). Env vars use the `DAX_` prefix with `__` as the nested delimiter and
-**override** the TOML file. For example `[security].password_hash` maps to
-`DAX_SECURITY__PASSWORD_HASH`.
+Settings are stored as a versioned encrypted document in `data/dax.db`. Secret fields,
+MCP headers, and MCP environment values are independently encrypted and represented only
+by references inside that document. Environment variables use the `DAX_` prefix with `__`
+as the nested delimiter and override the database configuration.
 
-See [`config/dax.toml.example`](config/dax.toml.example) for the full annotated config and
-[`.env.example`](.env.example) for every secret.
+`config/dax.toml.example` and `.env.example` remain migration templates. When a legacy
+`config/dax.toml` is found, Dax imports it once and removes it after successful encryption.
 
-### Secrets (always in `.env`, never committed)
+### Secrets
 
 | Variable | Purpose |
 | --- | --- |
@@ -98,7 +159,11 @@ See [`config/dax.toml.example`](config/dax.toml.example) for the full annotated 
 | `DAX_WHATSAPP__EVOLUTION_API_KEY` | Evolution API key (if WhatsApp is enabled) |
 | `DAX_WHATSAPP__WEBHOOK_SECRET` | shared secret required on inbound webhooks |
 
-`config/dax.toml` and `.env` are git-ignored; only the `*.example` files are tracked.
+Use the Settings UI for secrets. Values are write-only in the API, encrypted with Fernet,
+and never returned to the browser. The database and master-key files are mode `0600` and
+git-ignored. For stronger key separation, set `DAX_MASTER_KEY` from a system credential
+manager; otherwise Dax creates `data/dax.key`. Environment variables remain available for
+deployment-time overrides.
 
 ### Choosing / adding LLM providers
 
@@ -115,7 +180,7 @@ changes required.
 
 ## PC control & safety
 
-The bundled `dax-system` MCP server (`config/dax.toml` → `[mcp.servers.dax-system]`) gives
+The bundled `dax-system` MCP server, managed from Settings, gives
 the assistant typed tools to operate the machine. Safety is layered:
 
 - **Path confinement.** File tools resolve paths and reject anything outside the allowed
@@ -147,15 +212,14 @@ the conversation going for follow-ups without re-triggering. Everything runs loc
 | TTS | [Kokoro](https://github.com/thewh1teagle/kokoro-onnx) (default) / [Piper](https://github.com/rhasspy/piper) (fallback) | natural neural voice; auto-falls back to Piper if Kokoro is missing |
 | Voice ID *(optional)* | [Resemblyzer](https://github.com/resemble-ai/Resemblyzer) | enroll your voice so other people can't drive the assistant |
 
-**One-command install** (prompts for Spanish/English and downloads the right models):
+The production installer prompts for Spanish/English and downloads the right models. To
+fetch models manually for one language:
 
 ```bash
-./scripts/install.sh
-# or fetch models manually for one language:
-~/.local/bin/uv run python scripts/download_models.py --language es
+~/.local/bin/uv run python scripts/download_models.py --language es --models-dir data/models
 ```
 
-**Key settings** (`config/dax.toml` → `[voice]`):
+**Key settings** (editable from Settings → Voice):
 
 ```toml
 [voice]
@@ -227,7 +291,10 @@ src/dax/
 Dax binds to loopback. To reach it from another device, prefer a private overlay
 (Tailscale, WireGuard) or an authenticated reverse proxy over HTTPS rather than exposing
 the port. If you must listen on the LAN, set `[web] expose_lan = true` and
-`[security] cookie_secure = true` behind TLS — auth is still enforced.
+`[security] cookie_secure = true` behind TLS; auth is still enforced. Allow TCP port 8420
+in the host firewall only for the trusted subnet and never expose it directly to the
+internet. When using a reverse proxy, preserve WebSocket upgrades for `/api/chat/ws` and
+proxy to `http://127.0.0.1:8420`.
 
 ---
 

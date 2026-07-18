@@ -18,11 +18,13 @@ Usage::
 from __future__ import annotations
 
 import argparse
+import os
+import shutil
 import sys
 import urllib.request
 from pathlib import Path
 
-MODELS_DIR = Path("models")
+MODELS_DIR = Path(os.environ.get("DAX_MODELS_DIR", "models"))
 
 PIPER_VOICES: dict[str, dict[str, str]] = {
     "es": {
@@ -54,19 +56,30 @@ KOKORO_FILES = {
 def _download(url: str, dest: Path) -> bool:
     """Download *url* to *dest*; return True on success."""
     dest.parent.mkdir(parents=True, exist_ok=True)
+    temporary = dest.with_suffix(f"{dest.suffix}.part")
     try:
-        urllib.request.urlretrieve(url, dest)
+        request = urllib.request.Request(url, headers={"User-Agent": "Dax-Installer/1"})
+        with (
+            urllib.request.urlopen(request, timeout=60) as response,
+            temporary.open("wb") as output,
+        ):
+            shutil.copyfileobj(response, output)
+            output.flush()
+            os.fsync(output.fileno())
+        if temporary.stat().st_size == 0:
+            raise OSError("downloaded file is empty")
+        os.replace(temporary, dest)
     except Exception as exc:  # pragma: no cover - network
         print(f"  ERROR downloading {url}: {exc}", file=sys.stderr)
-        if dest.exists():
-            dest.unlink()
+        temporary.unlink(missing_ok=True)
         return False
     return True
 
 
-def download_kokoro() -> None:
+def download_kokoro() -> bool:
     """Download the Kokoro neural TTS model and voice bank."""
     kokoro_dir = MODELS_DIR / "kokoro"
+    success = True
     for name, url in KOKORO_FILES.items():
         dest = kokoro_dir / name
         if dest.exists() and dest.stat().st_size > 0:
@@ -75,11 +88,15 @@ def download_kokoro() -> None:
         print(f"[kokoro] Downloading {name} (this can take a while)…")
         if _download(url, dest):
             print(f"[kokoro] {name} done")
+        else:
+            success = False
+    return success
 
 
-def download_piper_voices(languages: list[str]) -> None:
+def download_piper_voices(languages: list[str]) -> bool:
     """Download Piper ONNX voice models from Hugging Face."""
     piper_dir = MODELS_DIR / "piper"
+    success = True
     for lang in languages:
         info = PIPER_VOICES[lang]
         onnx_path = piper_dir / f"{info['name']}.onnx"
@@ -93,9 +110,11 @@ def download_piper_voices(languages: list[str]) -> None:
             ok = _download(url, piper_dir / f"{info['name']}{suffix}") and ok
         if ok:
             print(f"[{lang}] Done")
+        success = success and ok
+    return success
 
 
-def download_whisper(model: str) -> None:
+def download_whisper(model: str) -> bool:
     """Pre-download the faster-whisper STT model (multilingual)."""
     print(f"[stt] Caching faster-whisper '{model}' (large download)…")
     try:
@@ -103,11 +122,13 @@ def download_whisper(model: str) -> None:
 
         WhisperModel(model, device="cpu", compute_type="int8")
         print(f"[stt] '{model}' ready")
+        return True
     except Exception as exc:  # pragma: no cover - network/runtime
         print(f"[stt] ERROR caching '{model}': {exc}", file=sys.stderr)
+        return False
 
 
-def download_wake_word() -> None:
+def download_wake_word() -> bool:
     """Download OpenWakeWord pretrained models."""
     print("[wake] Downloading OpenWakeWord models…")
     try:
@@ -115,11 +136,14 @@ def download_wake_word() -> None:
 
         openwakeword.utils.download_models()
         print("[wake] Done")
+        return True
     except Exception as exc:  # pragma: no cover
         print(f"[wake] ERROR: {exc}", file=sys.stderr)
+        return False
 
 
 def main() -> int:
+    global MODELS_DIR
     parser = argparse.ArgumentParser(description="Download Dax voice models")
     parser.add_argument(
         "--language", choices=["es", "en", "both"], default="both",
@@ -131,19 +155,28 @@ def main() -> int:
     )
     parser.add_argument("--no-kokoro", action="store_true", help="skip Kokoro TTS")
     parser.add_argument("--no-stt", action="store_true", help="skip STT pre-cache")
+    parser.add_argument(
+        "--models-dir", type=Path, default=MODELS_DIR,
+        help="destination for Dax-managed model files",
+    )
     args = parser.parse_args()
+    MODELS_DIR = args.models_dir.expanduser().resolve()
 
     languages = ["es", "en"] if args.language == "both" else [args.language]
 
+    results: list[bool] = []
     if not args.no_kokoro:
-        download_kokoro()
-    download_piper_voices(languages)
+        results.append(download_kokoro())
+    results.append(download_piper_voices(languages))
     if not args.no_stt:
-        download_whisper(args.stt_model)
-    download_wake_word()
+        results.append(download_whisper(args.stt_model))
+    results.append(download_wake_word())
 
-    print("\nAll models downloaded!")
-    return 0
+    if all(results):
+        print("\nAll models downloaded!")
+        return 0
+    print("\nOne or more required model downloads failed.", file=sys.stderr)
+    return 1
 
 
 if __name__ == "__main__":

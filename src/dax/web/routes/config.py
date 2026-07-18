@@ -14,9 +14,11 @@ from pathlib import Path
 from typing import Any, Literal
 
 from fastapi import APIRouter, HTTPException, Request
-from pydantic import BaseModel
+from pydantic import BaseModel, Field, field_validator
 
+from dax.llm.client import SYSTEM_PROMPT
 from dax.web.dependencies import ConfigDep, SecretStoreDep, persist_config
+from dax.web.routes.mcp import server_response
 
 router = APIRouter(tags=["config"])
 
@@ -56,6 +58,19 @@ class GeneralConfigUpdate(BaseModel):
     language_default: str | None = None
     log_level: str | None = None
     memory_path: str | None = None
+    system_prompt: str | None = Field(default=None, max_length=50_000)
+
+    @field_validator("system_prompt")
+    @classmethod
+    def validate_system_prompt(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        value = value.strip()
+        if not value:
+            raise ValueError("System prompt cannot be blank")
+        if "\x00" in value:
+            raise ValueError("System prompt cannot contain NUL characters")
+        return value
 
 
 class LLMConfigUpdate(BaseModel):
@@ -178,6 +193,8 @@ async def get_config(config: ConfigDep) -> dict[str, Any]:
             "language_default": config.language_default,
             "log_level": config.log_level,
             "memory_path": getattr(config, "memory_path", ""),
+            "system_prompt": config.system_prompt or SYSTEM_PROMPT,
+            "system_prompt_custom": bool(config.system_prompt),
         },
         "voice": {
             "enabled": config.voice.enabled,
@@ -291,17 +308,7 @@ async def get_config(config: ConfigDep) -> dict[str, Any]:
         },
         "mcp": {
             "servers": {
-                name: {
-                    "command": srv.command,
-                    "args": srv.args,
-                    "env": srv.env,
-                    "transport": srv.transport,
-                    "url": srv.url,
-                    "headers": srv.headers,
-                    "enabled": srv.enabled,
-                    "export_codex": getattr(srv, "export_codex", False),
-                    "export_claude": getattr(srv, "export_claude", False),
-                }
+                name: server_response(srv)
                 for name, srv in config.mcp.servers.items()
             },
         },
@@ -317,7 +324,24 @@ async def update_general(
         if hasattr(config, key):
             object.__setattr__(config, key, value)
     persist_config(request)
+    if body.system_prompt is not None:
+        dax_app = getattr(request.app.state, "dax_app", None)
+        if dax_app is not None:
+            dax_app.set_system_prompt(body.system_prompt)
     return {"status": "ok"}
+
+
+@router.post("/config/general/system-prompt/reset")
+async def reset_system_prompt(
+    request: Request, config: ConfigDep
+) -> dict[str, str]:
+    """Restore the maintained prompt and apply it to the next agent turn."""
+    object.__setattr__(config, "system_prompt", "")
+    persist_config(request)
+    dax_app = getattr(request.app.state, "dax_app", None)
+    if dax_app is not None:
+        dax_app.set_system_prompt("")
+    return {"status": "ok", "system_prompt": SYSTEM_PROMPT}
 
 
 @router.patch("/config/llm")

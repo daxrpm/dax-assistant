@@ -2,9 +2,14 @@
 
 from __future__ import annotations
 
+import tomllib
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 from dax.core.config import DaxConfig, load_config
+
+if TYPE_CHECKING:
+    import pytest
 
 
 class TestDaxConfig:
@@ -13,6 +18,7 @@ class TestDaxConfig:
         assert config.name == "Dax"
         assert config.language_default == "es"
         assert config.log_level == "INFO"
+        assert config.system_prompt == ""
 
     def test_voice_defaults(self):
         config = DaxConfig()
@@ -53,19 +59,28 @@ class TestDaxConfig:
 
 
 class TestLoadConfig:
-    def test_load_nonexistent_file(self):
+    def test_load_nonexistent_file(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+    ):
+        monkeypatch.setenv("DAX_STORAGE__DATABASE_PATH", str(tmp_path / "dax.db"))
         config = load_config(Path("/nonexistent/path.toml"))
         assert config.name == "Dax"  # Falls back to defaults
 
-    def test_load_none_path(self):
+    def test_load_none_path(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+    ):
+        monkeypatch.setenv("DAX_STORAGE__DATABASE_PATH", str(tmp_path / "dax.db"))
         config = load_config(None)
         assert config.name == "Dax"
 
     def test_load_from_toml(self, tmp_path: Path):
-        toml_content = """
+        toml_content = f"""
 [general]
 name = "TestBot"
 log_level = "DEBUG"
+
+[storage]
+database_path = "{tmp_path / 'dax.db'}"
 
 [llm.ollama]
 model = "qwen3.5:4b"
@@ -81,12 +96,15 @@ timeout = 60
         assert config.llm.ollama.timeout == 60
 
     def test_load_partial_overrides(self, tmp_path: Path):
-        toml_content = """
+        toml_content = f"""
 [general]
 name = "Partial"
 
 [web]
 port = 9999
+
+[storage]
+database_path = "{tmp_path / 'dax.db'}"
 """
         config_file = tmp_path / "partial.toml"
         config_file.write_text(toml_content)
@@ -97,3 +115,7 @@ port = 9999
         # Other defaults preserved
         assert config.llm.default_provider == "ollama"
         assert config.voice.enabled is True
+        bootstrap = tomllib.loads(config_file.read_text())
+        assert bootstrap == {
+            "storage": {"database_path": str(tmp_path / "dax.db")}
+        }

@@ -30,10 +30,13 @@ def bus() -> MessageBus:
 
 
 @pytest.fixture
-def app(bus: MessageBus) -> FastAPI:
+def app(bus: MessageBus, tmp_path: Path) -> FastAPI:
     # These tests exercise the endpoints themselves; auth is covered separately
     # in test_auth.py, so disable it here.
-    config = DaxConfig(security={"auth_enabled": False})
+    config = DaxConfig(
+        security={"auth_enabled": False},
+        storage={"database_path": str(tmp_path / "dax.db")},
+    )
     fastapi_app = create_app(config=config, bus=bus)
     # Manually set state since ASGITransport skips lifespan
     fastapi_app.state.config = config
@@ -201,6 +204,8 @@ class TestConfigEndpoint:
         assert data["voice"]["stt_backend"] == "local"
         assert data["voice"]["stt_openai_model"] == "gpt-4o-mini-transcribe"
         assert isinstance(data["voice"]["stt_openai_configured"], bool)
+        assert data["general"]["system_prompt"]
+        assert data["general"]["system_prompt_custom"] is False
 
     async def test_config_hides_secrets(self, client: AsyncClient):
         response = await client.get("/api/config")
@@ -229,6 +234,31 @@ class TestConfigUpdate:
         cfg_response = await client.get("/api/config")
         assert cfg_response.json()["general"]["name"] == "TestBot"
         assert cfg_response.json()["general"]["log_level"] == "DEBUG"
+
+    async def test_system_prompt_updates_live_and_resets(self, client: AsyncClient):
+        app = client._transport.app  # type: ignore[union-attr]
+        dax_app = SimpleNamespace(set_system_prompt=MagicMock())
+        app.state.dax_app = dax_app
+
+        response = await client.patch(
+            "/api/config/general", json={"system_prompt": "Be concise and precise."}
+        )
+
+        assert response.status_code == 200
+        assert app.state.config.system_prompt == "Be concise and precise."
+        dax_app.set_system_prompt.assert_called_once_with("Be concise and precise.")
+
+        reset = await client.post("/api/config/general/system-prompt/reset")
+        assert reset.status_code == 200
+        assert reset.json()["system_prompt"]
+        assert app.state.config.system_prompt == ""
+        dax_app.set_system_prompt.assert_called_with("")
+
+    async def test_system_prompt_rejects_blank(self, client: AsyncClient):
+        response = await client.patch(
+            "/api/config/general", json={"system_prompt": "   "}
+        )
+        assert response.status_code == 422
 
     async def test_update_llm(self, client: AsyncClient, tmp_path: Path):
         client._transport.app.state.config_path = tmp_path / "dax.toml"  # type: ignore[union-attr]
@@ -292,7 +322,11 @@ class TestConfigUpdate:
         assert config["voice"]["stt_backend"] == "openai"
         assert config["voice"]["stt_openai_model"] == "whisper-1"
         assert config["voice"]["stt_openai_configured"] is True
-        assert "sk-voice-test" not in (tmp_path / "dax.toml").read_text()
+        from dax.storage.secrets import SecretStore
+
+        store = SecretStore(str(tmp_path / "dax.db"))
+        assert store.get("OPENAI_API_KEY") == "sk-voice-test"
+        assert not (tmp_path / "dax.toml").exists()
 
     async def test_rejects_unknown_voice_backend(self, client: AsyncClient):
         response = await client.patch(
@@ -420,6 +454,35 @@ class TestMCPServers:
             "/api/config/mcp/servers/nonexistent",
         )
         assert response.status_code == 404
+
+    async def test_mcp_secrets_are_masked_and_preserved(
+        self, client: AsyncClient,
+    ):
+        await client.post(
+            "/api/config/mcp/servers",
+            json={
+                "name": "private",
+                "transport": "streamable_http",
+                "url": "https://example.test/mcp",
+                "env": {"API_TOKEN": "env-secret"},
+                "headers": {"Authorization": "Bearer header-secret"},
+            },
+        )
+
+        listed = (await client.get("/api/config/mcp/servers")).json()["private"]
+        assert listed["env"] == {"API_TOKEN": "********"}
+        assert listed["headers"] == {"Authorization": "********"}
+
+        listed["enabled"] = False
+        response = await client.patch(
+            "/api/config/mcp/servers/private", json=listed
+        )
+
+        assert response.status_code == 200
+        app = client._transport.app  # type: ignore[union-attr]
+        server = app.state.config.mcp.servers["private"]
+        assert server.env["API_TOKEN"] == "env-secret"
+        assert server.headers["Authorization"] == "Bearer header-secret"
 
 
 class TestNewEndpoints:

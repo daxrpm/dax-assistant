@@ -34,7 +34,9 @@ when possible; for lists, say them as a natural sentence ("tienes tres eventos: 
 - Spell things out the way you'd say them, not write them."""
 
 
-def _tool_inventory(available_tools: Sequence[dict[str, Any]]) -> str:
+def _tool_inventory(
+    available_tools: Sequence[dict[str, Any]], base_prompt: str
+) -> str:
     """Append a concrete live tool inventory to the base system prompt.
 
     Grouping by server_name and listing tool names makes it unambiguous to the
@@ -42,7 +44,7 @@ def _tool_inventory(available_tools: Sequence[dict[str, Any]]) -> str:
     access" responses when tools are actually registered.
     """
     if not available_tools:
-        return SYSTEM_PROMPT
+        return base_prompt
 
     by_server: dict[str, list[str]] = {}
     for tool in available_tools:
@@ -57,16 +59,25 @@ def _tool_inventory(available_tools: Sequence[dict[str, Any]]) -> str:
         "\nUse these tools directly. Do NOT say you lack access — "
         "if a tool is listed above you can call it."
     )
-    return SYSTEM_PROMPT + "\n".join(lines)
+    return base_prompt + "\n".join(lines)
 
 
 class SystemPromptBuilder:
     """Assembles the per-turn system prompt (tools + memory + voice style)."""
 
-    def __init__(self, memory_path: str | None = None) -> None:
+    def __init__(
+        self,
+        memory_path: str | None = None,
+        base_prompt: str = SYSTEM_PROMPT,
+    ) -> None:
         # Long-term memory: user-curated facts in <memory_path>/*.md, injected
         # so the assistant actually "remembers" them across conversations.
         self._memory_path = memory_path
+        self._base_prompt = base_prompt.strip() or SYSTEM_PROMPT
+
+    def set_base_prompt(self, prompt: str) -> None:
+        """Replace the editable base prompt for subsequent turns."""
+        self._base_prompt = prompt.strip() or SYSTEM_PROMPT
 
     def build(
         self,
@@ -75,7 +86,7 @@ class SystemPromptBuilder:
         channel: ChannelType,
     ) -> str:
         """Return the full system prompt for this turn."""
-        prompt = _tool_inventory(available_tools)
+        prompt = _tool_inventory(available_tools, self._base_prompt)
         prompt += self._memory_block()
         if channel is ChannelType.VOICE:
             prompt += VOICE_STYLE_PROMPT

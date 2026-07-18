@@ -21,6 +21,7 @@ before ``start()``). WAL mode makes this safe alongside the async connection.
 
 from __future__ import annotations
 
+import contextlib
 import logging
 import os
 import sqlite3
@@ -48,6 +49,9 @@ class SecretStore:
     # -- key management --
 
     def _load_or_create_key(self) -> bytes:
+        external_key = os.environ.get("DAX_MASTER_KEY")
+        if external_key:
+            return external_key.encode("ascii")
         self._db_path.parent.mkdir(parents=True, exist_ok=True)
         if self._key_path.exists():
             return self._key_path.read_bytes().strip()
@@ -80,6 +84,8 @@ class SecretStore:
                 ")"
             )
             conn.commit()
+        with contextlib.suppress(OSError):
+            self._db_path.chmod(stat.S_IRUSR | stat.S_IWUSR)
 
     # -- CRUD --
 

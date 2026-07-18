@@ -217,6 +217,12 @@ export const api = {
       body: JSON.stringify(data),
     }),
 
+  resetSystemPrompt: () =>
+    request<{ status: string; system_prompt: string }>(
+      "/config/general/system-prompt/reset",
+      { method: "POST" },
+    ),
+
   updateLLM: (data: Record<string, unknown>) =>
     request("/config/llm", {
       method: "PATCH",

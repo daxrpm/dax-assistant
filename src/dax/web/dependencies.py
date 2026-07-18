@@ -16,7 +16,6 @@ helpers expose the same lookups for them.
 
 from __future__ import annotations
 
-from pathlib import Path
 from typing import TYPE_CHECKING, Annotated
 
 from fastapi import Depends, HTTPException, Request, status
@@ -25,7 +24,7 @@ from fastapi import Depends, HTTPException, Request, status
 # dependency aliases below embed them as real types — FastAPI resolves the
 # annotations via get_type_hints() at startup, so the names must exist at runtime.
 from dax.core.config import DaxConfig
-from dax.core.config_io import dump_config_toml
+from dax.core.config_io import save_encrypted_config
 from dax.core.policy import ToolPolicy
 from dax.core.shell_allow import ShellAllowlist
 from dax.llm.router import LLMRouter
@@ -81,15 +80,14 @@ def get_secret_store(request: Request) -> SecretStore:
 
 
 def persist_config(request: Request) -> None:
-    """Serialize the live config to TOML (secrets extracted to the store).
+    """Persist the live configuration as an encrypted SQLite document.
 
     The single persistence entry point shared by every config-mutating route —
     centralizes resolving the config, secret store, and config path from app
     state so handlers don't each re-derive them.
     """
     config = request.app.state.config
-    config_path = getattr(request.app.state, "config_path", Path("config/dax.toml"))
-    dump_config_toml(config, get_secret_store(request), config_path)
+    save_encrypted_config(config, get_secret_store(request))
 
 
 # --- Optionally-wired adapters (required at runtime, 503 if absent) ---

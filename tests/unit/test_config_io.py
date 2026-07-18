@@ -8,7 +8,12 @@ from typing import TYPE_CHECKING
 import pytest
 
 from dax.core.config import DaxConfig, MCPServerConfig, load_config
-from dax.core.config_io import SECRET_FIELDS, dump_config_toml
+from dax.core.config_io import (
+    SECRET_FIELDS,
+    dump_config_toml,
+    load_encrypted_config,
+    save_encrypted_config,
+)
 from dax.storage.secrets import SecretStore
 
 if TYPE_CHECKING:
@@ -25,6 +30,7 @@ def test_roundtrip_preserves_non_default_fields(
 ) -> None:
     """A modified config survives dump → load unchanged (no silent field loss)."""
     cfg = DaxConfig()
+    cfg.storage.database_path = str(tmp_path / "dax.db")
     cfg.name = "Custom"
     cfg.web.port = 9999
     cfg.web.expose_lan = True
@@ -34,6 +40,7 @@ def test_roundtrip_preserves_non_default_fields(
     cfg.llm.max_tools = 77
     cfg.tools.policy.deny = ["dangerous_*"]
     cfg.tools.shell_allow = ["git", "ls"]
+    cfg.system_prompt = "Custom encrypted system prompt"
 
     path = tmp_path / "dax.toml"
     dump_config_toml(cfg, store, path)
@@ -48,6 +55,7 @@ def test_roundtrip_preserves_non_default_fields(
     assert reloaded.llm.max_tools == 77
     assert reloaded.tools.policy.deny == ["dangerous_*"]
     assert reloaded.tools.shell_allow == ["git", "ls"]
+    assert reloaded.system_prompt == "Custom encrypted system prompt"
 
 
 def test_secrets_are_never_written_to_toml(
@@ -139,3 +147,28 @@ def test_secret_fields_cover_known_secret_paths() -> None:
         for part in path.split("."):
             assert hasattr(obj, part), f"stale secret path: {path}"
             obj = getattr(obj, part)
+
+
+def test_complete_config_and_mcp_env_are_encrypted(
+    tmp_path: Path, store: SecretStore
+) -> None:
+    cfg = DaxConfig(name="Private Dax")
+    cfg.storage.database_path = str(tmp_path / "dax.db")
+    cfg.mcp.servers["home"] = MCPServerConfig(
+        transport="streamable_http",
+        url="https://example.test/mcp",
+        env={"API_ACCESS_TOKEN": "plaintext-token"},
+    )
+
+    save_encrypted_config(cfg, store)
+
+    raw_database = (tmp_path / "dax.db").read_bytes()
+    assert b"plaintext-token" not in raw_database
+    assert b"Private Dax" not in raw_database
+    stored = load_encrypted_config(store)
+    assert stored is not None
+    assert stored["name"] == "Private Dax"
+    assert stored["mcp"]["servers"]["home"]["env"]["API_ACCESS_TOKEN"].startswith(
+        "{env:DAX_MCP_"
+    )
+    assert store.get("DAX_MCP_HOME_ENV_API_ACCESS_TOKEN") == "plaintext-token"

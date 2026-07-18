@@ -1,5 +1,7 @@
-# Dax Assistant — example configuration.
-# Copy to config/dax.toml and edit. SECRETS GO IN .env, NEVER HERE.
+# Dax Assistant — legacy import template.
+# New installs use the Settings UI and encrypted SQLite configuration. If copied
+# to config/dax.toml, this file is imported once and then removed automatically.
+# Never place secrets in this template.
 
 [general]
 name = "Dax"

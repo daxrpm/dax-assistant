@@ -9,6 +9,8 @@ Dax is a self-hosted, single-user personal AI assistant. A FastAPI backend runs 
 ## Commands
 
 `uv` lives at `~/.local/bin/uv` and is often not on `PATH` — use the full path.
+Production deployments use the generated `systemd --user` unit from
+`scripts/install.sh`; the checked-in unit is a reference for default XDG paths.
 
 ```bash
 # Backend
@@ -66,12 +68,13 @@ The agent does **not** send all tools to the LLM. `registry.get_relevant_tools(q
 
 `MCPManager` holds one persistent `MCPClient` session per server (stdio subprocess or streamable-HTTP). `mcp_servers/system/server.py` is the bundled **`dax-system`** server giving the assistant typed, path-confined, allowlisted PC-control tools. OAuth for remote MCP servers lives in `web/routes/oauth.py` (PKCE + dynamic client registration); after the callback it **reconnects** the server so the Bearer token takes effect without a restart, and refreshes expired tokens before reconnecting.
 
-### Config & secrets (`core/config.py`, `web/routes/api.py`)
+### Config & secrets (`core/config.py`, `core/config_io.py`)
 
-pydantic-settings, precedence **env > .env > TOML > defaults**, `DAX_` prefix with `__` as nested delimiter (e.g. `[security].password_hash` → `DAX_SECURITY__PASSWORD_HASH`). Critical conventions when adding config:
+pydantic-settings, precedence **env > encrypted SQLite config > defaults**, `DAX_` prefix with `__` as nested delimiter (e.g. `security.password_hash` → `DAX_SECURITY__PASSWORD_HASH`). Critical conventions when adding config:
 
-- **`web/routes/api.py::_save_config_to_toml` rewrites the *entire* TOML from the in-memory config.** Any new config field must be serialized there or it is lost on the next settings save.
-- **Secrets never go in TOML.** Write them to `.env` via `_upsert_env_var()` and store a `{env:VAR}` reference in TOML (`_env_ref_for_secret()` / `_secure_headers_for_toml()`). Then resolve `{env:VAR}` at use-time (`factory._resolve_env` for LLM keys, `manager._resolve_env_dict` for MCP env/headers). `config/dax.toml` and `.env` are git-ignored; only `*.example` files are tracked — **never commit real secrets.**
+- **`config_io.save_encrypted_config()` writes the complete validated config as encrypted JSON in the SQLite `secrets` table.** Persistence is model-driven, so new Pydantic fields round-trip automatically.
+- **Secret fields, MCP headers, and all MCP environment values are separate encrypted entries.** The config document contains only `{env:VAR}` references. API responses mask these values and PATCH restores unchanged masks server-side.
+- `config/dax.toml` and `.env` are legacy one-time imports. After a successful migration the full TOML is removed; a custom database location may retain a bootstrap containing only `storage.database_path`.
 - Settings edits mutate the live config object in place; some apply live (LLM router, tool policy via `policy.reload`), others (host/port, Telegram) need a restart.
 
 ### Channels (`channels/`)

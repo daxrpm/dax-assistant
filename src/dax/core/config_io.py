@@ -1,4 +1,4 @@
-"""Configuration persistence — serialize :class:`DaxConfig` back to TOML.
+"""Encrypted configuration persistence and legacy TOML export.
 
 This replaces ~210 lines of hand-built TOML strings that silently dropped any
 field not explicitly listed. Serialization is now driven by Pydantic's
@@ -21,6 +21,7 @@ and extracted to the store the same way, keyed deterministically per server.
 
 from __future__ import annotations
 
+import json
 import re
 from enum import Enum
 from typing import TYPE_CHECKING, Any
@@ -39,6 +40,9 @@ class SecretMode(Enum):
 
     REF = "ref"  # keep a {env:VAR} placeholder in TOML
     OMIT = "omit"  # drop from TOML; reload via os.environ
+
+
+CONFIG_STORE_KEY = "__DAX_ENCRYPTED_CONFIG_V1"
 
 
 # Dotted config paths that carry secrets → (env var name, mode). The single
@@ -88,6 +92,12 @@ def _env_var_for_header(server_name: str, header_name: str) -> str:
     return f"DAX_MCP_{s.upper()}_HDR_{h.upper()}"
 
 
+def _env_var_for_mcp_env(server_name: str, key: str) -> str:
+    s = re.sub(r"[^a-z0-9]", "_", server_name.lower())
+    k = re.sub(r"[^a-z0-9]", "_", key.lower())
+    return f"DAX_MCP_{s.upper()}_ENV_{k.upper()}"
+
+
 def secure_headers(
     server_name: str,
     headers: dict[str, str],
@@ -108,6 +118,23 @@ def secure_headers(
             var = _env_var_for_header(server_name, name)
             store.set(var, value)
             safe[name] = f"{{env:{var}}}"
+    return safe
+
+
+def secure_mcp_env(
+    server_name: str,
+    values: dict[str, str],
+    store: SecretStore,
+) -> dict[str, str]:
+    """Extract every MCP process variable into encrypted storage."""
+    safe: dict[str, str] = {}
+    for name, value in values.items():
+        if value.startswith("{env:"):
+            safe[name] = value
+            continue
+        var = _env_var_for_mcp_env(server_name, name)
+        store.set(var, value)
+        safe[name] = f"{{env:{var}}}"
     return safe
 
 
@@ -179,6 +206,36 @@ def _restructure(data: dict[str, Any]) -> dict[str, Any]:
     return {_GENERAL_TABLE: general, **tables}
 
 
+def _secure_config_data(config: DaxConfig, store: SecretStore) -> dict[str, Any]:
+    data: dict[str, Any] = config.model_dump(mode="python")
+    _extract_secrets(data, store)
+    servers = (data.get("mcp") or {}).get("servers") or {}
+    for name, srv in servers.items():
+        srv["env"] = secure_mcp_env(name, srv.get("env") or {}, store)
+        srv["headers"] = secure_headers(name, srv.get("headers") or {}, store)
+    return _strip_none(data)
+
+
+def save_encrypted_config(config: DaxConfig, store: SecretStore) -> None:
+    """Persist the complete validated configuration as encrypted JSON."""
+    data = _secure_config_data(config, store)
+    store.set(
+        CONFIG_STORE_KEY,
+        json.dumps(data, ensure_ascii=True, separators=(",", ":"), sort_keys=True),
+    )
+
+
+def load_encrypted_config(store: SecretStore) -> dict[str, Any] | None:
+    """Load and decode the encrypted configuration document, if initialized."""
+    payload = store.get(CONFIG_STORE_KEY)
+    if payload is None:
+        return None
+    data = json.loads(payload)
+    if not isinstance(data, dict):
+        raise ValueError("encrypted configuration root must be an object")
+    return data
+
+
 def dump_config_toml(
     config: DaxConfig,
     store: SecretStore,
@@ -189,15 +246,7 @@ def dump_config_toml(
     Standalone (no HTTP request) so the app can persist outside a handler — e.g.
     when the agent saves a newly approved shell command.
     """
-    data: dict[str, Any] = config.model_dump(mode="python")
-
-    _extract_secrets(data, store)
-
-    # Sensitive MCP headers → store + {env:…} refs.
-    servers = (data.get("mcp") or {}).get("servers") or {}
-    for name, srv in servers.items():
-        srv["headers"] = secure_headers(name, srv.get("headers") or {}, store)
-
+    data = _secure_config_data(config, store)
     structured = _restructure(_strip_none(data))
 
     config_path.parent.mkdir(parents=True, exist_ok=True)

@@ -1,9 +1,11 @@
 import { useState } from "react";
 import { Button } from "@heroui/react";
-import { Copy, Check } from "lucide-react";
+import { Copy, Check, RotateCcw, ShieldCheck } from "lucide-react";
 import { api } from "../../api/client";
 import type { FullConfig } from "../../types/config";
-import { Panel, PanelHeader, Field, TextInput, Select, useToast } from "../../components/ui";
+import { Panel, PanelHeader, Field, TextInput, TextArea, Select, useToast } from "../../components/ui";
+
+const MAX_PROMPT_LENGTH = 50_000;
 
 export function GeneralTab({
   config,
@@ -16,6 +18,8 @@ export function GeneralTab({
   const [name, setName] = useState(config.general.name);
   const [lang, setLang] = useState(config.general.language_default);
   const [logLevel, setLogLevel] = useState(config.general.log_level);
+  const [systemPrompt, setSystemPrompt] = useState(config.general.system_prompt);
+  const [promptCustom, setPromptCustom] = useState(config.general.system_prompt_custom);
   const [saving, setSaving] = useState(false);
 
   // External-client config exports
@@ -25,7 +29,7 @@ export function GeneralTab({
   const [claudeLoading, setClaudeLoading] = useState(false);
   const [copied, setCopied] = useState<"codex" | "claude" | null>(null);
 
-  const save = async () => {
+  const saveGeneral = async () => {
     setSaving(true);
     try {
       await api.updateGeneral({ name, language_default: lang, log_level: logLevel });
@@ -33,6 +37,35 @@ export function GeneralTab({
       onSaved();
     } catch (e) {
       toast.show(e instanceof Error ? e.message : "Save failed", "danger");
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const savePrompt = async () => {
+    setSaving(true);
+    try {
+      await api.updateGeneral({ system_prompt: systemPrompt });
+      setPromptCustom(true);
+      toast.show("System prompt applied", "success");
+      onSaved();
+    } catch (e) {
+      toast.show(e instanceof Error ? e.message : "Save failed", "danger");
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const resetPrompt = async () => {
+    setSaving(true);
+    try {
+      const result = await api.resetSystemPrompt();
+      setSystemPrompt(result.system_prompt);
+      setPromptCustom(false);
+      toast.show("System prompt restored", "success");
+      onSaved();
+    } catch (e) {
+      toast.show(e instanceof Error ? e.message : "Reset failed", "danger");
     } finally {
       setSaving(false);
     }
@@ -99,9 +132,50 @@ export function GeneralTab({
             </Select>
           </Field>
           <div className="flex justify-end">
-            <Button variant="primary" onPress={save} isDisabled={saving}>
+            <Button variant="primary" onPress={saveGeneral} isDisabled={saving}>
               {saving ? "Saving…" : "Save"}
             </Button>
+          </div>
+        </div>
+      </Panel>
+
+      <Panel>
+        <PanelHeader
+          title="System prompt"
+          description="Core behavior applied on the next message without restarting Dax"
+        />
+        <div className="flex flex-col gap-3">
+          <div className="flex items-center gap-2 rounded-xl border border-separator bg-background px-3 py-2 text-xs text-muted">
+            <ShieldCheck size={15} className="shrink-0 text-primary" />
+            Tool policy, confirmations, live tool inventory, memory, and voice formatting remain enforced separately.
+          </div>
+          <Field
+            label={promptCustom ? "Custom prompt" : "Built-in prompt"}
+            description="Changes are encrypted in SQLite. Blank prompts are rejected."
+          >
+            <TextArea
+              value={systemPrompt}
+              rows={18}
+              onChange={(e) => setSystemPrompt(e.target.value)}
+              className="font-mono text-xs leading-5"
+            />
+          </Field>
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            <span className={`text-xs ${systemPrompt.length > MAX_PROMPT_LENGTH ? "text-danger" : "text-muted"}`}>
+              {systemPrompt.length.toLocaleString()} / {MAX_PROMPT_LENGTH.toLocaleString()} characters
+            </span>
+            <div className="flex gap-2">
+              <Button variant="tertiary" onPress={resetPrompt} isDisabled={saving || !promptCustom}>
+                <RotateCcw size={14} />Restore default
+              </Button>
+              <Button
+                variant="primary"
+                onPress={savePrompt}
+                isDisabled={saving || !systemPrompt.trim() || systemPrompt.length > MAX_PROMPT_LENGTH}
+              >
+                {saving ? "Saving…" : "Save prompt"}
+              </Button>
+            </div>
           </div>
         </div>
       </Panel>

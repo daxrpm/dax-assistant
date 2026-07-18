@@ -17,6 +17,8 @@ if TYPE_CHECKING:
 
     from pydantic_settings import PydanticBaseSettingsSource
 
+    from dax.storage.secrets import SecretStore
+
 
 class VoiceConfig(BaseModel):
     """Voice pipeline configuration."""
@@ -346,7 +348,7 @@ class DaxConfig(BaseSettings):
 
     Settings are loaded in order of priority:
     1. Environment variables (highest priority)
-    2. TOML config file
+    2. Encrypted SQLite configuration
     3. Default values (lowest priority)
     """
 
@@ -377,6 +379,9 @@ class DaxConfig(BaseSettings):
     language_default: str = "es"
     log_level: str = "INFO"
     memory_path: str = "~/.dax/memory"
+    # Empty selects the maintained built-in prompt. Custom values are encrypted
+    # with the rest of the configuration and hot-reloaded by the live agent.
+    system_prompt: str = ""
 
     voice: VoiceConfig = Field(default_factory=VoiceConfig)
     llm: LLMConfig = Field(default_factory=LLMConfig)
@@ -390,10 +395,10 @@ class DaxConfig(BaseSettings):
 
 
 def load_config(config_path: Path | None = None) -> DaxConfig:
-    """Load configuration from TOML file and environment variables.
+    """Load encrypted configuration, importing a legacy TOML once when present.
 
     Args:
-        config_path: Path to the TOML config file. If None, uses defaults only.
+        config_path: Optional legacy TOML path used only for migration/bootstrap.
 
     Returns:
         Fully resolved DaxConfig instance.
@@ -413,12 +418,30 @@ def load_config(config_path: Path | None = None) -> DaxConfig:
             toml_data = tomllib.load(f)
         overrides = _flatten_toml(toml_data)
 
-    _bootstrap_secrets(overrides, config_path)
+    store = _bootstrap_secrets(overrides, config_path)
 
-    return DaxConfig(**overrides)
+    from dax.core.config_io import load_encrypted_config, save_encrypted_config
+    from dax.core.exceptions import ConfigError
+
+    try:
+        stored = load_encrypted_config(store)
+        importing_legacy = bool(overrides) and not _bootstrap_only(overrides)
+        config = DaxConfig(
+            **(overrides if importing_legacy else (stored if stored is not None else {}))
+        )
+        if stored is None or importing_legacy:
+            save_encrypted_config(config, store)
+    except Exception as exc:
+        raise ConfigError(f"Encrypted configuration is invalid: {exc}") from exc
+
+    if config_path is not None and config_path.exists() and importing_legacy:
+        _retire_legacy_toml(config_path, config.storage.database_path)
+    return config
 
 
-def _bootstrap_secrets(overrides: dict[str, Any], config_path: Path | None) -> None:
+def _bootstrap_secrets(
+    overrides: dict[str, Any], config_path: Path | None
+) -> SecretStore:
     """Seed os.environ from the encrypted secret store before config is built.
 
     Secrets (API keys, password hash, session secret) live encrypted in SQLite,
@@ -453,6 +476,32 @@ def _bootstrap_secrets(overrides: dict[str, Any], config_path: Path | None) -> N
     # restarts without any manual setup.
     if not os.environ.get("DAX_SECURITY__SESSION_SECRET"):
         store.set("DAX_SECURITY__SESSION_SECRET", _secrets.token_urlsafe(48))
+    return store
+
+
+def _bootstrap_only(overrides: dict[str, Any]) -> bool:
+    """True when the legacy file contains only the non-secret database pointer."""
+    return bool(overrides) and set(overrides) == {"storage"} and set(
+        overrides["storage"]
+    ) == {"database_path"}
+
+
+def _retire_legacy_toml(config_path: Path, database_path: str) -> None:
+    """Remove migrated TOML, retaining only a custom database-path bootstrap."""
+    from dax.core.exceptions import ConfigError
+
+    try:
+        if database_path == "data/dax.db":
+            config_path.unlink()
+            return
+        import tomli_w
+
+        config_path.write_text(
+            tomli_w.dumps({"storage": {"database_path": database_path}}),
+            encoding="utf-8",
+        )
+    except OSError as exc:
+        raise ConfigError(f"Could not retire legacy config {config_path}: {exc}") from exc
 
 
 def _flatten_toml(data: dict[str, Any]) -> dict[str, Any]:
