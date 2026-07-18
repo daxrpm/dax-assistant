@@ -15,9 +15,9 @@
     "semantic_hash": "3ea725724bc8ebe483c9f13d6aa1124f"
   },
   "pyproject.toml": {
-    "mtime": 1782863324.7741747,
-    "ast_hash": "f061bfc0ccfd6f73598a2359a14f5ee7",
-    "semantic_hash": "f061bfc0ccfd6f73598a2359a14f5ee7"
+    "mtime": 1784398553.2176511,
+    "ast_hash": "20f99f95b02414adba0c0d7800fea4f0",
+    "semantic_hash": ""
   },
   "scripts/download_models.py": {
     "mtime": 1782863210.948215,
@@ -85,8 +85,8 @@
     "semantic_hash": "d41d8cd98f00b204e9800998ecf8427e"
   },
   "src/dax/core/config.py": {
-    "mtime": 1784392806.9658532,
-    "ast_hash": "442e6f919c3b24b5f2f1a0f7ddf56fae",
+    "mtime": 1784396338.9065928,
+    "ast_hash": "cbbbf555f4fb940a2b40bb83625b990a",
     "semantic_hash": ""
   },
   "src/dax/core/config_io.py": {
@@ -130,8 +130,8 @@
     "semantic_hash": "d41d8cd98f00b204e9800998ecf8427e"
   },
   "src/dax/llm/client.py": {
-    "mtime": 1784391618.746649,
-    "ast_hash": "83a4e57b4020c277028493b20a1c2a25",
+    "mtime": 1784396027.0422676,
+    "ast_hash": "411c78188485442f4ae68045fdea2f85",
     "semantic_hash": ""
   },
   "src/dax/llm/factory.py": {
@@ -185,9 +185,9 @@
     "semantic_hash": "069cfe6b237bcefc0d237ea1de857df7"
   },
   "src/dax/mcp/manager.py": {
-    "mtime": 1782861054.4773176,
-    "ast_hash": "538919ef9e8f7d6d9967f2b1519555cf",
-    "semantic_hash": "538919ef9e8f7d6d9967f2b1519555cf"
+    "mtime": 1784411197.13363,
+    "ast_hash": "442fe5045c0fddb7b6bb031dbd70d676",
+    "semantic_hash": ""
   },
   "src/dax/mcp/registry.py": {
     "mtime": 1782414017.400411,
@@ -220,8 +220,8 @@
     "semantic_hash": "d41d8cd98f00b204e9800998ecf8427e"
   },
   "src/dax/orchestrator/agent.py": {
-    "mtime": 1784391549.9425194,
-    "ast_hash": "43d8d94326670f05705b0dfff0f487a9",
+    "mtime": 1784395783.6864722,
+    "ast_hash": "a62cc07a8b0622920e778c39639410f5",
     "semantic_hash": ""
   },
   "src/dax/orchestrator/approval.py": {
@@ -280,14 +280,14 @@
     "semantic_hash": "4362b38cafd3b5b4eb76d94ee4f4288e"
   },
   "src/dax/voice/pipeline.py": {
-    "mtime": 1784392482.5082753,
-    "ast_hash": "86a094748d23525bb806e9ebd55abf19",
+    "mtime": 1784396146.7985215,
+    "ast_hash": "b93dee35f52d571cf17a98bca3a9defd",
     "semantic_hash": ""
   },
   "src/dax/voice/speaker.py": {
-    "mtime": 1782862875.3557384,
-    "ast_hash": "2bd25c3fb52c22bcb5b04e9efa0bbe3c",
-    "semantic_hash": "2bd25c3fb52c22bcb5b04e9efa0bbe3c"
+    "mtime": 1784398553.217662,
+    "ast_hash": "9908f68fffe5a97026587621daacfd45",
+    "semantic_hash": ""
   },
   "src/dax/voice/stt.py": {
     "mtime": 1784392806.9668531,
@@ -295,9 +295,9 @@
     "semantic_hash": ""
   },
   "src/dax/voice/tts.py": {
-    "mtime": 1782862560.2774756,
-    "ast_hash": "6c9ec652e314161cab1821120671d3ac",
-    "semantic_hash": "6c9ec652e314161cab1821120671d3ac"
+    "mtime": 1784395811.848097,
+    "ast_hash": "a31c6d4647efcfd6bd2327838b23acdf",
+    "semantic_hash": ""
   },
   "src/dax/voice/tts_kokoro.py": {
     "mtime": 1782862528.8911796,
@@ -345,8 +345,8 @@
     "semantic_hash": "148e55d26648e07bd3e056f88b6ee404"
   },
   "src/dax/web/routes/config.py": {
-    "mtime": 1784393057.3801095,
-    "ast_hash": "e711bc30ee991b8b232ee474898e9333",
+    "mtime": 1784396075.6373181,
+    "ast_hash": "6e78a99539e1a1746ede702c03748a2e",
     "semantic_hash": ""
   },
   "src/dax/web/routes/conversations.py": {
@@ -385,9 +385,9 @@
     "semantic_hash": "03550184c7bd3968027650048b5387d3"
   },
   "src/dax/web/server.py": {
-    "mtime": 1782861054.4813175,
-    "ast_hash": "fab85bf3dde87aa86f2dd9f3f5ed50d6",
-    "semantic_hash": "fab85bf3dde87aa86f2dd9f3f5ed50d6"
+    "mtime": 1784397008.4345548,
+    "ast_hash": "d026b902906dee5bebbdafccf3994f1b",
+    "semantic_hash": ""
   },
   "src/dax/web/spa_middleware.py": {
     "mtime": 1773977516.5654652,
@@ -430,13 +430,13 @@
     "semantic_hash": "d41d8cd98f00b204e9800998ecf8427e"
   },
   "tests/unit/test_agent.py": {
-    "mtime": 1784391549.9435196,
-    "ast_hash": "d92e978c13afe9aa4f2812caac9e2216",
+    "mtime": 1784396027.0443246,
+    "ast_hash": "bf3fa4f7612581c391c57a009a026dfa",
     "semantic_hash": ""
   },
   "tests/unit/test_api.py": {
-    "mtime": 1784393087.7881408,
-    "ast_hash": "899e9b08b46b2aeb6551710f50c26b6c",
+    "mtime": 1784397290.314396,
+    "ast_hash": "46a5fe5d5f503b3aadc9a2d628a69a4d",
     "semantic_hash": ""
   },
   "tests/unit/test_approval.py": {
@@ -465,9 +465,9 @@
     "semantic_hash": "f9236dcfd4863c133a3410d468e75048"
   },
   "tests/unit/test_mcp_manager.py": {
-    "mtime": 1774020644.0741847,
-    "ast_hash": "f1f2eb9a169259606f8c98830ab9e5d4",
-    "semantic_hash": "f1f2eb9a169259606f8c98830ab9e5d4"
+    "mtime": 1784411204.6136377,
+    "ast_hash": "a9f4d64c831d127b48f3a6d5c40ef8dd",
+    "semantic_hash": ""
   },
   "tests/unit/test_models.py": {
     "mtime": 1773975244.9080932,
@@ -510,8 +510,8 @@
     "semantic_hash": "91a051a42950d8fb6d404927ca32ad33"
   },
   "tests/unit/test_voice.py": {
-    "mtime": 1784392716.5927162,
-    "ast_hash": "135671ad4cad21c558a4ac542cc60e2b",
+    "mtime": 1784395987.9332268,
+    "ast_hash": "af2309e730422360e8d39ef6c39541c5",
     "semantic_hash": ""
   },
   "tests/unit/test_webhooks.py": {
@@ -535,9 +535,9 @@
     "semantic_hash": "0e2c623b35cad92b79540b63fdea01f3"
   },
   "web/src/api/client.ts": {
-    "mtime": 1782493564.4345303,
-    "ast_hash": "78ff1c5da8abec5417c81e6c81fb494c",
-    "semantic_hash": "78ff1c5da8abec5417c81e6c81fb494c"
+    "mtime": 1784397149.014084,
+    "ast_hash": "525e3478c061b6f2a0f4731592b81ae1",
+    "semantic_hash": ""
   },
   "web/src/components/AppShell.tsx": {
     "mtime": 1782493679.829965,
@@ -670,8 +670,8 @@
     "semantic_hash": "85cceee92167bd76fced9a371d48445f"
   },
   "web/src/pages/settings/VoiceTab.tsx": {
-    "mtime": 1784393032.8850844,
-    "ast_hash": "506556402feb3abc396008245e61f4c8",
+    "mtime": 1784397149.0153415,
+    "ast_hash": "28c78ce1553bfe7eed79327a07af3b46",
     "semantic_hash": ""
   },
   "web/src/pages/settings/WhatsAppTab.tsx": {
@@ -690,8 +690,8 @@
     "semantic_hash": ""
   },
   "web/src/types/config.ts": {
-    "mtime": 1784392645.936583,
-    "ast_hash": "85d5020cdfc5efa7e1f2b412ed140b31",
+    "mtime": 1784396075.6397133,
+    "ast_hash": "3a3a78a6a13e3af3a40faafec2fd50f8",
     "semantic_hash": ""
   },
   "web/tsconfig.json": {
@@ -720,8 +720,8 @@
     "semantic_hash": "f52ff3a27e5d4cd3747e755fd148c207"
   },
   "src/dax/web/static/index.html": {
-    "mtime": 1784393155.199105,
-    "ast_hash": "6a144f5159734dfee1fcc45c90b6d59e",
+    "mtime": 1784397310.254785,
+    "ast_hash": "b974da0ce9f1f79dbb9722569bf1fe47",
     "semantic_hash": ""
   },
   "web/index.html": {
@@ -730,12 +730,12 @@
     "semantic_hash": "647271aabf0d04a8ba029b5b8ed54f36"
   },
   "src/dax/web/static/favicon.svg": {
-    "mtime": 1784393154.9192095,
+    "mtime": 1784397310.0726686,
     "ast_hash": "7e840862161341271697daa99a40d76b",
     "semantic_hash": "7e840862161341271697daa99a40d76b"
   },
   "src/dax/web/static/icons.svg": {
-    "mtime": 1784393154.9202328,
+    "mtime": 1784397310.072782,
     "ast_hash": "3b4fcfcf393eca4d264dca4a4663bc37",
     "semantic_hash": "3b4fcfcf393eca4d264dca4a4663bc37"
   },
@@ -749,9 +749,24 @@
     "ast_hash": "3b4fcfcf393eca4d264dca4a4663bc37",
     "semantic_hash": "3b4fcfcf393eca4d264dca4a4663bc37"
   },
-  "src/dax/web/static/assets/index-Dv7mEN36.js": {
-    "mtime": 1784393155.1972096,
-    "ast_hash": "ff749dadc49efbaa4e8da50189b15f29",
+  "src/dax/web/routes/voice.py": {
+    "mtime": 1784398553.218664,
+    "ast_hash": "963b94bd262aacf3b9e00543513deff1",
+    "semantic_hash": ""
+  },
+  "src/dax/web/static/assets/index-Dvu6q04l.js": {
+    "mtime": 1784397310.253574,
+    "ast_hash": "a7ec583faf360e3ff777365791062215",
+    "semantic_hash": ""
+  },
+  "web/src/pages/settings/VoiceEnrollment.tsx": {
+    "mtime": 1784397149.014776,
+    "ast_hash": "9fd1576f94cb22e7da161a33be9afa3c",
+    "semantic_hash": ""
+  },
+  "web/src/pages/settings/VoiceGallery.tsx": {
+    "mtime": 1784397290.3148286,
+    "ast_hash": "0a49cc5b740fe39e0454b941a2a37b20",
     "semantic_hash": ""
   }
 }
