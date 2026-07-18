@@ -111,6 +111,7 @@ class DaxApp:
 
         # Voice pipeline (initialized in start() if enabled)
         self._voice_pipeline: VoicePipeline | None = None
+        self._voice_reload_lock = asyncio.Lock()
 
         # Web
         self._web_app = create_app(config=config, bus=self._bus)
@@ -271,12 +272,18 @@ class DaxApp:
                     approval=self._approval,
                 )
                 self._voice_pipeline.start()
+                if hasattr(self._web_app, "state"):
+                    self._web_app.state.voice_pipeline = self._voice_pipeline
+                    self._web_app.state.voice_listening = True
                 log.info("Voice pipeline ready")
             except Exception:
                 log.exception(
                     "Voice pipeline failed to start — continuing without voice"
                 )
                 self._voice_pipeline = None
+                if hasattr(self._web_app, "state"):
+                    self._web_app.state.voice_pipeline = None
+                    self._web_app.state.voice_listening = False
 
         log.info("Dax Assistant is ready")
 
@@ -295,6 +302,55 @@ class DaxApp:
             await tg_channel.start()
             self._channels["telegram"] = tg_channel
             logger.info("Telegram channel reloaded")
+
+    async def reload_voice(self) -> None:
+        """Serialize live voice reloads so repeated UI saves remain safe."""
+        async with self._voice_reload_lock:
+            await self._reload_voice_now()
+
+    async def _reload_voice_now(self) -> None:
+        """Restart the voice channel and pipeline with the live configuration."""
+        from dax.voice.pipeline import VoicePipeline as VoicePipelineImpl
+
+        if self._voice_pipeline is not None:
+            await asyncio.to_thread(self._voice_pipeline.stop)
+            self._voice_pipeline = None
+
+        existing = self._channels.pop("voice", None)
+        if existing is not None:
+            await existing.stop()
+
+        self._web_app.state.voice_pipeline = None
+        self._web_app.state.voice_listening = False
+        if not self._config.voice.enabled:
+            logger.info("Voice pipeline disabled")
+            return
+
+        voice_channel = VoiceChannel()
+        await voice_channel.start()
+        self._channels["voice"] = voice_channel
+        try:
+            self._voice_pipeline = VoicePipelineImpl(
+                config=self._config.voice,
+                bus=self._bus,
+                voice_channel=voice_channel,
+                loop=asyncio.get_running_loop(),
+                models_path=self._config.storage.models_path,
+                approval=self._approval,
+            )
+            await asyncio.to_thread(self._voice_pipeline.start)
+        except Exception:
+            self._channels.pop("voice", None)
+            await voice_channel.stop()
+            self._voice_pipeline = None
+            raise
+
+        self._web_app.state.voice_pipeline = self._voice_pipeline
+        self._web_app.state.voice_listening = True
+        logger.info(
+            "Voice pipeline reloaded (stt_backend=%s)",
+            self._config.voice.stt_backend,
+        )
 
     async def stop(self) -> None:
         """Shut down all components in reverse order."""

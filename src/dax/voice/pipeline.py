@@ -38,7 +38,7 @@ from dax.core.exceptions import STTError, TTSError, VoiceError
 from dax.core.models import ChannelType, Language, Message, MessageRole
 from dax.voice.audio_io import CHUNK_SIZE, SAMPLE_RATE, AudioCapture, AudioPlayer
 from dax.voice.speaker import SpeakerVerifier
-from dax.voice.stt import SpeechToText
+from dax.voice.stt import build_stt
 from dax.voice.tts import build_tts
 from dax.voice.vad import VAD_CHUNK_SIZE, VoiceActivityDetector
 from dax.voice.wakeword import WakeWordDetector
@@ -155,17 +155,7 @@ class VoicePipeline:
             threshold=config.vad_threshold,
             silence_duration_ms=config.silence_duration_ms,
         )
-        # In "auto" language mode, fall back to the user's primary language
-        # rather than ever surfacing a mis-detected one (e.g. "ru").
-        fallback_lang = config.stt_language if config.stt_language in {"es", "en"} else "es"
-        self._stt = SpeechToText(
-            model_size=config.stt_model,
-            compute_type=config.stt_compute_type,
-            language=config.stt_language,
-            device=getattr(config, "stt_device", "auto"),
-            beam_size=getattr(config, "stt_beam_size", 1),
-            fallback_language=fallback_lang,
-        )
+        self._stt = build_stt(config)
         self._tts = build_tts(config, models_path)
 
         # Speaker verification (Voice ID) — only constructed when enabled. Fails
@@ -187,6 +177,7 @@ class VoicePipeline:
         self._barge_in = getattr(config, "barge_in", True)
         self._earcon_enabled = getattr(config, "earcon", True)
         self._adaptive = getattr(config, "adaptive_endpointing", True)
+        self._silence_s = max(0.25, min(1.5, config.silence_duration_ms / 1000))
         self._conv_timeout = getattr(config, "conversation_timeout_s", 8)
         # Generous reply window so long multi-tool actions finish before we
         # give up on the turn (was a hard 60s → "se agotó el tiempo de espera").
@@ -391,8 +382,13 @@ class VoicePipeline:
             return False  # still waiting for speech to begin
 
         speech_len = self._last_voice_at - self._speech_started_at
-        # Adaptive pause: short for quick commands, longer for long utterances.
-        pause_s = 0.45 if speech_len < 1.2 else min(0.9, 0.45 + speech_len * 0.12)
+        # The configured silence duration is the baseline; longer utterances get
+        # up to 450 ms extra so natural mid-sentence pauses are not clipped.
+        pause_s = (
+            self._silence_s
+            if speech_len < 1.2
+            else min(self._silence_s + 0.45, self._silence_s + speech_len * 0.12)
+        )
         return (now - self._last_voice_at) >= pause_s
 
     def _handle_conversing(self) -> None:

@@ -19,6 +19,9 @@ class TestDaxConfig:
         assert config.voice.enabled is True
         assert config.voice.stt_model == "large-v3-turbo"
         assert config.voice.stt_language == "es"
+        assert config.voice.stt_backend == "local"
+        assert config.voice.stt_openai_model == "gpt-4o-mini-transcribe"
+        assert config.voice.stt_fallback_to_local is True
         assert config.voice.tts_engine == "kokoro"
         assert config.voice.wake_word_model == "hey_jarvis"
 

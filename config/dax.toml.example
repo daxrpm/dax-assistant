@@ -12,11 +12,18 @@ enabled = true
 # Wake word: built-in openWakeWord name (hey_jarvis, alexa, …) or path to a .onnx
 wake_word_model = "hey_jarvis"
 wake_word_threshold = 0.7
-# STT: large-v3-turbo is accurate and CPU-friendly (int8). small/base are faster.
+# STT backend: local keeps audio private; openai uses the hosted Audio API.
+stt_backend = "local"
+# Local STT: large-v3-turbo is accurate and CPU-friendly (int8).
 stt_model = "large-v3-turbo"
 stt_compute_type = "auto"        # auto -> float16 on GPU, int8 on CPU
 stt_language = "es"              # PIN to es/en (recommended) or "auto" to detect
 stt_beam_size = 2
+# Hosted STT (uses OPENAI_API_KEY and falls back locally on network/API errors).
+stt_openai_model = "gpt-4o-mini-transcribe"
+stt_openai_timeout_s = 30
+stt_openai_prompt = "Transcribe natural Spanish accurately. Preserve names and commands such as Dax, Spotify, Nextcloud and Home Assistant."
+stt_fallback_to_local = true
 # TTS: kokoro (natural neural voice) with Piper as fast fallback.
 tts_engine = "kokoro"
 tts_kokoro_voice_es = "ef_dora"

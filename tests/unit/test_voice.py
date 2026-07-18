@@ -7,6 +7,9 @@ to verify the pipeline logic without requiring audio hardware or model files.
 from __future__ import annotations
 
 import asyncio
+import io
+import wave
+from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
 import numpy as np
@@ -112,7 +115,7 @@ class TestPipelineEnabled:
             patch("dax.voice.pipeline.AudioPlayer"),
             patch("dax.voice.pipeline.WakeWordDetector"),
             patch("dax.voice.pipeline.VoiceActivityDetector"),
-            patch("dax.voice.pipeline.SpeechToText"),
+            patch("dax.voice.pipeline.build_stt"),
             patch("dax.voice.pipeline.build_tts"),
         ):
             pipeline = VoicePipeline(
@@ -179,6 +182,77 @@ class TestSTTLanguageResolution:
     def test_confident_english_accepted(self):
         info = MagicMock(language="en", language_probability=0.92)
         assert self._stt("auto")._resolve_language(info) == "en"
+
+
+class TestOpenAIHostedSTT:
+    def test_encodes_audio_as_16khz_mono_wav(self):
+        from dax.voice.stt import OpenAISpeechToText
+
+        payload = OpenAISpeechToText._wav_bytes(
+            np.array([-1.0, 0.0, 1.0], dtype=np.float32)
+        )
+        with wave.open(io.BytesIO(payload), "rb") as wav:
+            assert wav.getnchannels() == 1
+            assert wav.getsampwidth() == 2
+            assert wav.getframerate() == 16_000
+            assert wav.getnframes() == 3
+
+    def test_transcribes_with_model_language_and_prompt(self):
+        from dax.voice.stt import OpenAISpeechToText
+
+        stt = OpenAISpeechToText(
+            model="gpt-4o-transcribe",
+            language="es",
+            prompt="Dax y Spotify",
+        )
+        stt._client = MagicMock()
+        stt._client.audio.transcriptions.create.return_value = SimpleNamespace(
+            text="Pon música en Spotify."
+        )
+
+        text, language = stt.transcribe(np.zeros(1600, dtype=np.float32))
+
+        assert text == "Pon música en Spotify."
+        assert language == "es"
+        kwargs = stt._client.audio.transcriptions.create.call_args.kwargs
+        assert kwargs["model"] == "gpt-4o-transcribe"
+        assert kwargs["language"] == "es"
+        assert kwargs["prompt"] == "Dax y Spotify"
+        assert kwargs["file"][0] == "speech.wav"
+
+    def test_factory_selects_local_and_hosted_backends(self):
+        from dax.core.config import VoiceConfig
+        from dax.voice.stt import (
+            FallbackSpeechToText,
+            OpenAISpeechToText,
+            SpeechToText,
+            build_stt,
+        )
+
+        assert isinstance(build_stt(VoiceConfig(stt_backend="local")), SpeechToText)
+        assert isinstance(
+            build_stt(VoiceConfig(stt_backend="openai")), FallbackSpeechToText
+        )
+        assert isinstance(
+            build_stt(VoiceConfig(
+                stt_backend="openai", stt_fallback_to_local=False
+            )),
+            OpenAISpeechToText,
+        )
+
+    def test_hosted_failure_uses_lazy_local_fallback(self):
+        from dax.core.exceptions import STTError
+        from dax.voice.stt import FallbackSpeechToText
+
+        primary = MagicMock()
+        primary.transcribe.side_effect = STTError("network down")
+        fallback = MagicMock()
+        fallback.transcribe.return_value = ("hola", "es")
+        stt = FallbackSpeechToText(primary, fallback)
+        stt._primary_ready = True
+
+        assert stt.transcribe(np.zeros(1600, dtype=np.float32)) == ("hola", "es")
+        fallback.start.assert_called_once()
 
 
 class TestBuildTTS:

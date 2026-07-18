@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+from types import SimpleNamespace
 from typing import TYPE_CHECKING
+from unittest.mock import AsyncMock
 
 import pytest
 from httpx import ASGITransport, AsyncClient
@@ -103,6 +105,9 @@ class TestConfigEndpoint:
         assert "web" in data
         assert "whatsapp" in data
         assert "mcp" in data
+        assert data["voice"]["stt_backend"] == "local"
+        assert data["voice"]["stt_openai_model"] == "gpt-4o-mini-transcribe"
+        assert isinstance(data["voice"]["stt_openai_configured"], bool)
 
     async def test_config_hides_secrets(self, client: AsyncClient):
         response = await client.get("/api/config")
@@ -168,6 +173,100 @@ class TestConfigUpdate:
         assert response.status_code == 200
         assert router.name == "openai"
         assert "ollama" not in router.provider_names
+
+    async def test_update_hosted_voice_config_and_encrypt_key(
+        self, client: AsyncClient, tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+    ):
+        monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+        app = client._transport.app  # type: ignore[union-attr]
+        app.state.config_path = tmp_path / "dax.toml"
+        object.__setattr__(
+            app.state.config.storage, "database_path", str(tmp_path / "dax.db")
+        )
+
+        response = await client.patch(
+            "/api/config/voice",
+            json={
+                "stt_backend": "openai",
+                "stt_openai_model": "whisper-1",
+                "stt_openai_api_key": "sk-voice-test",
+                "stt_fallback_to_local": True,
+            },
+        )
+
+        assert response.status_code == 200
+        config = (await client.get("/api/config")).json()
+        assert config["voice"]["stt_backend"] == "openai"
+        assert config["voice"]["stt_openai_model"] == "whisper-1"
+        assert config["voice"]["stt_openai_configured"] is True
+        assert "sk-voice-test" not in (tmp_path / "dax.toml").read_text()
+
+    async def test_rejects_unknown_voice_backend(self, client: AsyncClient):
+        response = await client.patch(
+            "/api/config/voice", json={"stt_backend": "unknown"}
+        )
+        assert response.status_code == 422
+
+    async def test_identical_voice_patch_does_not_reload(self, client: AsyncClient):
+        app = client._transport.app  # type: ignore[union-attr]
+        dax_app = SimpleNamespace(reload_voice=AsyncMock())
+        app.state.dax_app = dax_app
+
+        response = await client.patch(
+            "/api/config/voice", json={"stt_backend": "local"}
+        )
+
+        assert response.status_code == 200
+        assert response.json()["note"] == "Voice configuration unchanged"
+        dax_app.reload_voice.assert_not_awaited()
+
+    async def test_voice_patch_reloads_live_pipeline(
+        self, client: AsyncClient, tmp_path: Path,
+    ):
+        from dax.storage.secrets import SecretStore
+
+        app = client._transport.app  # type: ignore[union-attr]
+        app.state.config_path = tmp_path / "dax.toml"
+        app.state.secret_store = SecretStore(str(tmp_path / "dax.db"))
+        dax_app = SimpleNamespace(reload_voice=AsyncMock())
+        app.state.dax_app = dax_app
+
+        response = await client.patch(
+            "/api/config/voice",
+            json={
+                "tts_engine": "piper",
+                "tts_voice_es": "es_ES-sharvard-medium",
+                "speaker_threshold": 0.72,
+            },
+        )
+
+        assert response.status_code == 200
+        assert response.json()["note"] == "Voice pipeline reloaded"
+        dax_app.reload_voice.assert_awaited_once()
+        voice = (await client.get("/api/config")).json()["voice"]
+        assert voice["tts_engine"] == "piper"
+        assert voice["tts_voice_es"] == "es_ES-sharvard-medium"
+        assert voice["speaker_threshold"] == 0.72
+
+    async def test_failed_voice_reload_rolls_back_config(
+        self, client: AsyncClient, tmp_path: Path,
+    ):
+        from dax.storage.secrets import SecretStore
+
+        app = client._transport.app  # type: ignore[union-attr]
+        app.state.config_path = tmp_path / "dax.toml"
+        app.state.secret_store = SecretStore(str(tmp_path / "dax.db"))
+        app.state.dax_app = SimpleNamespace(
+            reload_voice=AsyncMock(side_effect=RuntimeError("audio busy"))
+        )
+
+        response = await client.patch(
+            "/api/config/voice", json={"stt_language": "en"}
+        )
+
+        assert response.status_code == 400
+        voice = (await client.get("/api/config")).json()["voice"]
+        assert voice["stt_language"] == "es"
 
 
 class TestMCPServers:

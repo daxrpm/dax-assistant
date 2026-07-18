@@ -4,14 +4,15 @@ tool policy, and LLM/Ollama model discovery. Read-mostly; no config mutation."""
 from __future__ import annotations
 
 import asyncio
+import contextlib
 from typing import Any
 
 import aiohttp
 import httpx
-from fastapi import APIRouter, Request
+from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel
 
-from dax.web.dependencies import ConfigDep
+from dax.web.dependencies import ConfigDep, persist_config
 
 router = APIRouter(tags=["system"])
 
@@ -51,10 +52,37 @@ async def get_status(request: Request, config: ConfigDep) -> StatusResponse:
 
 
 @router.post("/voice/toggle", response_model=ToggleResponse)
-async def toggle_voice(request: Request, body: ToggleRequest) -> ToggleResponse:
+async def toggle_voice(
+    request: Request, body: ToggleRequest, config: ConfigDep
+) -> ToggleResponse:
     """Toggle voice listening on or off."""
-    request.app.state.voice_listening = body.enabled
-    return ToggleResponse(voice_listening=body.enabled)
+    if (
+        config.voice.enabled == body.enabled
+        and request.app.state.voice_listening == body.enabled
+    ):
+        return ToggleResponse(voice_listening=request.app.state.voice_listening)
+
+    previous = config.voice.enabled
+    object.__setattr__(config.voice, "enabled", body.enabled)
+    dax_app = getattr(request.app.state, "dax_app", None)
+    try:
+        if dax_app is not None:
+            await dax_app.reload_voice()
+            persist_config(request)
+        else:
+            pipeline = getattr(request.app.state, "voice_pipeline", None)
+            if pipeline is not None:
+                pipeline.enabled = body.enabled
+            request.app.state.voice_listening = body.enabled
+    except Exception as exc:
+        object.__setattr__(config.voice, "enabled", previous)
+        if dax_app is not None:
+            with contextlib.suppress(Exception):
+                await dax_app.reload_voice()
+        raise HTTPException(
+            status_code=400, detail=f"Voice pipeline failed to toggle: {exc}"
+        ) from exc
+    return ToggleResponse(voice_listening=request.app.state.voice_listening)
 
 
 @router.get("/logs")
@@ -227,7 +255,7 @@ async def list_llm_models(config: ConfigDep, provider: str = "") -> dict[str, li
     fetched = await asyncio.gather(
         *[fn() for fn in chosen.values()], return_exceptions=True
     )
-    for prov, res in zip(chosen.keys(), fetched):
+    for prov, res in zip(chosen.keys(), fetched, strict=True):
         results[prov] = res if isinstance(res, list) else []
 
     return results

@@ -7,7 +7,7 @@ Pydantic Settings handles the merge automatically.
 from __future__ import annotations
 
 import os
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, Literal
 
 from pydantic import BaseModel, Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
@@ -26,6 +26,9 @@ class VoiceConfig(BaseModel):
     # a custom ``.onnx`` model. The detector resolves both.
     wake_word_model: str = "hey_jarvis"
     wake_word_threshold: float = 0.7
+    # "local" keeps audio on-device; "openai" uploads each completed utterance
+    # to the Audio Transcriptions API and can fall back locally when unavailable.
+    stt_backend: Literal["local", "openai"] = "local"
     # faster-whisper model. "large-v3-turbo" is near-large accuracy at a fraction
     # of the cost — the sweet spot for accurate Spanish on CPU (int8).
     stt_model: str = "large-v3-turbo"
@@ -39,6 +42,13 @@ class VoiceConfig(BaseModel):
     # language is strongly recommended: short/noisy commands otherwise get
     # mis-detected (Whisper guessing "ru"/etc.). The installer sets this.
     stt_language: str = "es"
+    stt_openai_model: str = "gpt-4o-mini-transcribe"
+    stt_openai_timeout_s: int = 30
+    stt_openai_prompt: str = (
+        "Transcribe natural Spanish accurately. Preserve names and commands such "
+        "as Dax, Spotify, Nextcloud and Home Assistant."
+    )
+    stt_fallback_to_local: bool = True
 
     # -- Text-to-speech -----------------------------------------------------
     # "kokoro" = natural neural voice (recommended); "piper" = faster, robotic.

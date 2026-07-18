@@ -7,15 +7,19 @@ detected language.
 
 from __future__ import annotations
 
+import io
 import logging
-from typing import TYPE_CHECKING
+import os
+import wave
+from typing import TYPE_CHECKING, Any
 
+import numpy as np
 from faster_whisper import WhisperModel
 
 from dax.core.exceptions import STTError
 
 if TYPE_CHECKING:
-    import numpy as np
+    from dax.core.config import VoiceConfig
 
 logger = logging.getLogger(__name__)
 
@@ -167,3 +171,159 @@ class SpeechToText:
         if lang in {"es", "en"} and prob >= 0.5:
             return lang
         return self._fallback_language
+
+
+class OpenAISpeechToText:
+    """Transcribe bounded utterances with OpenAI's hosted Audio API."""
+
+    def __init__(
+        self,
+        model: str = "gpt-4o-mini-transcribe",
+        language: str = "es",
+        timeout_s: int = 30,
+        prompt: str = "",
+        fallback_language: str = "es",
+    ) -> None:
+        self._model = model
+        self._language = language
+        self._timeout_s = max(1, timeout_s)
+        self._prompt = prompt.strip()
+        self._fallback_language = (
+            fallback_language if fallback_language in {"es", "en"} else "es"
+        )
+        self._client: Any = None
+
+    def start(self) -> None:
+        if not os.environ.get("OPENAI_API_KEY"):
+            raise STTError(
+                "OpenAI hosted STT requires OPENAI_API_KEY; configure it in Voice settings"
+            )
+        try:
+            from openai import OpenAI
+
+            self._client = OpenAI(timeout=self._timeout_s)
+        except Exception as exc:
+            raise STTError(f"Failed to initialize OpenAI hosted STT: {exc}") from exc
+        logger.info(
+            "STT started (backend=openai, model=%s, lang=%s)",
+            self._model,
+            self._language,
+        )
+
+    def stop(self) -> None:
+        client = self._client
+        self._client = None
+        close = getattr(client, "close", None)
+        if callable(close):
+            close()
+        logger.info("OpenAI hosted STT stopped")
+
+    @staticmethod
+    def _wav_bytes(audio: np.ndarray) -> bytes:
+        """Encode normalized mono float audio as a 16 kHz PCM WAV."""
+        pcm = (np.clip(audio, -1.0, 1.0) * 32767.0).astype("<i2")
+        output = io.BytesIO()
+        with wave.open(output, "wb") as wav:
+            wav.setnchannels(1)
+            wav.setsampwidth(2)
+            wav.setframerate(16_000)
+            wav.writeframes(pcm.tobytes())
+        return output.getvalue()
+
+    def transcribe(self, audio: np.ndarray) -> tuple[str, str]:
+        if self._client is None:
+            raise STTError("OpenAI hosted STT not started")
+
+        kwargs: dict[str, object] = {
+            "model": self._model,
+            "file": ("speech.wav", self._wav_bytes(audio), "audio/wav"),
+            "response_format": "json",
+        }
+        if self._language != "auto":
+            kwargs["language"] = self._language
+        if self._prompt:
+            kwargs["prompt"] = self._prompt
+
+        try:
+            response = self._client.audio.transcriptions.create(**kwargs)
+            text = str(getattr(response, "text", "") or "").strip()
+        except Exception as exc:
+            raise STTError(f"OpenAI transcription failed: {exc}") from exc
+
+        language = self._language if self._language != "auto" else self._fallback_language
+        logger.debug("Transcribed via OpenAI (%s): %s", language, text)
+        return text, language
+
+
+class FallbackSpeechToText:
+    """Use hosted STT first and lazily load local Whisper after a failure."""
+
+    def __init__(
+        self,
+        primary: OpenAISpeechToText,
+        fallback: SpeechToText,
+    ) -> None:
+        self._primary = primary
+        self._fallback = fallback
+        self._primary_ready = False
+        self._fallback_ready = False
+
+    def start(self) -> None:
+        try:
+            self._primary.start()
+            self._primary_ready = True
+        except STTError as exc:
+            logger.warning("Hosted STT unavailable at startup; using local fallback: %s", exc)
+            self._start_fallback()
+
+    def stop(self) -> None:
+        if self._primary_ready:
+            self._primary.stop()
+        if self._fallback_ready:
+            self._fallback.stop()
+        self._primary_ready = False
+        self._fallback_ready = False
+
+    def _start_fallback(self) -> None:
+        if not self._fallback_ready:
+            self._fallback.start()
+            self._fallback_ready = True
+
+    def transcribe(self, audio: np.ndarray) -> tuple[str, str]:
+        if self._primary_ready:
+            try:
+                return self._primary.transcribe(audio)
+            except STTError as exc:
+                logger.warning("Hosted STT failed; retrying locally: %s", exc)
+                self._primary.stop()
+                self._primary_ready = False
+        self._start_fallback()
+        return self._fallback.transcribe(audio)
+
+
+def build_stt(config: VoiceConfig) -> SpeechToText | OpenAISpeechToText | FallbackSpeechToText:
+    """Build the configured local or hosted STT implementation."""
+    fallback_lang = config.stt_language if config.stt_language in {"es", "en"} else "es"
+    local = SpeechToText(
+        model_size=config.stt_model,
+        compute_type=config.stt_compute_type,
+        language=config.stt_language,
+        device=config.stt_device,
+        beam_size=config.stt_beam_size,
+        fallback_language=fallback_lang,
+    )
+    if config.stt_backend == "local":
+        return local
+    if config.stt_backend != "openai":
+        raise STTError(f"Unsupported STT backend: {config.stt_backend}")
+
+    hosted = OpenAISpeechToText(
+        model=config.stt_openai_model,
+        language=config.stt_language,
+        timeout_s=config.stt_openai_timeout_s,
+        prompt=config.stt_openai_prompt,
+        fallback_language=fallback_lang,
+    )
+    if config.stt_fallback_to_local:
+        return FallbackSpeechToText(hosted, local)
+    return hosted

@@ -8,7 +8,9 @@ the channel, security/auth syncs the auth manager — all without a restart.
 
 from __future__ import annotations
 
-from typing import Any
+import contextlib
+import os
+from typing import Any, Literal
 
 from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel
@@ -79,14 +81,25 @@ class LLMConfigUpdate(BaseModel):
 
 class VoiceConfigUpdate(BaseModel):
     enabled: bool | None = None
+    wake_word_model: str | None = None
     wake_word_threshold: float | None = None
+    stt_backend: Literal["local", "openai"] | None = None
     stt_model: str | None = None
     stt_compute_type: str | None = None
     stt_device: str | None = None
     stt_beam_size: int | None = None
     stt_language: str | None = None
+    stt_openai_model: str | None = None
+    stt_openai_timeout_s: int | None = None
+    stt_openai_prompt: str | None = None
+    stt_openai_api_key: str | None = None
+    stt_fallback_to_local: bool | None = None
+    tts_engine: str | None = None
     tts_voice_es: str | None = None
     tts_voice_en: str | None = None
+    tts_kokoro_voice_es: str | None = None
+    tts_kokoro_voice_en: str | None = None
+    tts_kokoro_speed: float | None = None
     vad_threshold: float | None = None
     silence_duration_ms: int | None = None
     adaptive_endpointing: bool | None = None
@@ -94,6 +107,11 @@ class VoiceConfigUpdate(BaseModel):
     barge_in: bool | None = None
     earcon: bool | None = None
     conversation_timeout_s: int | None = None
+    response_timeout_s: int | None = None
+    voice_confirm: bool | None = None
+    require_wake_word_each_turn: bool | None = None
+    speaker_verification: bool | None = None
+    speaker_threshold: float | None = None
 
 
 class WhatsAppConfigUpdate(BaseModel):
@@ -153,14 +171,27 @@ async def get_config(config: ConfigDep) -> dict[str, Any]:
         },
         "voice": {
             "enabled": config.voice.enabled,
+            "wake_word_model": config.voice.wake_word_model,
             "wake_word_threshold": config.voice.wake_word_threshold,
+            "stt_backend": config.voice.stt_backend,
             "stt_model": config.voice.stt_model,
             "stt_compute_type": config.voice.stt_compute_type,
             "stt_device": getattr(config.voice, "stt_device", "auto"),
             "stt_beam_size": getattr(config.voice, "stt_beam_size", 1),
             "stt_language": config.voice.stt_language,
+            "stt_openai_model": config.voice.stt_openai_model,
+            "stt_openai_timeout_s": config.voice.stt_openai_timeout_s,
+            "stt_openai_prompt": config.voice.stt_openai_prompt,
+            "stt_openai_configured": bool(
+                os.environ.get("OPENAI_API_KEY") or config.llm.openai.api_key
+            ),
+            "stt_fallback_to_local": config.voice.stt_fallback_to_local,
+            "tts_engine": config.voice.tts_engine,
             "tts_voice_es": config.voice.tts_voice_es,
             "tts_voice_en": config.voice.tts_voice_en,
+            "tts_kokoro_voice_es": config.voice.tts_kokoro_voice_es,
+            "tts_kokoro_voice_en": config.voice.tts_kokoro_voice_en,
+            "tts_kokoro_speed": config.voice.tts_kokoro_speed,
             "vad_threshold": config.voice.vad_threshold,
             "silence_duration_ms": config.voice.silence_duration_ms,
             "adaptive_endpointing": getattr(config.voice, "adaptive_endpointing", True),
@@ -168,6 +199,11 @@ async def get_config(config: ConfigDep) -> dict[str, Any]:
             "barge_in": getattr(config.voice, "barge_in", True),
             "earcon": getattr(config.voice, "earcon", True),
             "conversation_timeout_s": getattr(config.voice, "conversation_timeout_s", 8),
+            "response_timeout_s": config.voice.response_timeout_s,
+            "voice_confirm": config.voice.voice_confirm,
+            "require_wake_word_each_turn": config.voice.require_wake_word_each_turn,
+            "speaker_verification": config.voice.speaker_verification,
+            "speaker_threshold": config.voice.speaker_threshold,
         },
         "llm": {
             "default_provider": config.llm.default_provider,
@@ -297,14 +333,64 @@ async def update_llm(
 
 @router.patch("/config/voice")
 async def update_voice(
-    request: Request, body: VoiceConfigUpdate, config: ConfigDep
+    request: Request,
+    body: VoiceConfigUpdate,
+    config: ConfigDep,
+    store: SecretStoreDep,
 ) -> dict[str, str]:
-    """Update voice pipeline settings."""
-    for key, value in body.model_dump(exclude_none=True).items():
-        if hasattr(config.voice, key):
+    """Update voice settings and restart the live pipeline when available."""
+    updates = body.model_dump(exclude_none=True)
+    api_key = updates.pop("stt_openai_api_key", None)
+    old_stored_key = store.get("OPENAI_API_KEY")
+    old_env_key = os.environ.get("OPENAI_API_KEY")
+    key_changed = bool(api_key) and api_key != old_env_key
+    old_values = {
+        key: getattr(config.voice, key)
+        for key in updates
+        if hasattr(config.voice, key)
+    }
+    config_changes = {
+        key: value
+        for key, value in updates.items()
+        if key in old_values and old_values[key] != value
+    }
+    if not config_changes and not key_changed:
+        return {"status": "ok", "note": "Voice configuration unchanged"}
+
+    for key, value in config_changes.items():
+        object.__setattr__(config.voice, key, value)
+    if key_changed and isinstance(api_key, str):
+        store.set("OPENAI_API_KEY", api_key)
+
+    dax_app = getattr(request.app.state, "dax_app", None)
+    reload_needed = bool(config_changes) or (
+        key_changed and config.voice.stt_backend == "openai"
+    )
+    try:
+        persist_config(request)
+        if dax_app is not None and reload_needed:
+            await dax_app.reload_voice()
+    except Exception as exc:
+        for key, value in old_values.items():
             object.__setattr__(config.voice, key, value)
-    persist_config(request)
-    return {"status": "ok"}
+        if key_changed:
+            if old_stored_key is not None:
+                store.set("OPENAI_API_KEY", old_stored_key)
+            else:
+                store.delete("OPENAI_API_KEY")
+                if old_env_key is not None:
+                    os.environ["OPENAI_API_KEY"] = old_env_key
+        with contextlib.suppress(Exception):
+            persist_config(request)
+        if dax_app is not None and reload_needed:
+            with contextlib.suppress(Exception):
+                await dax_app.reload_voice()
+        raise HTTPException(
+            status_code=400, detail=f"Voice pipeline failed to reload: {exc}"
+        ) from exc
+
+    note = "Voice pipeline reloaded" if dax_app is not None and reload_needed else "Saved"
+    return {"status": "ok", "note": note}
 
 
 @router.patch("/config/whatsapp")
