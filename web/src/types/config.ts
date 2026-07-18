@@ -36,6 +36,12 @@ export interface VoiceConfig {
   tts_kokoro_voice_es: string;
   tts_kokoro_voice_en: string;
   tts_kokoro_speed: number;
+  tts_openai_model: string;
+  tts_openai_voice: string;
+  tts_openai_instructions_es: string;
+  tts_openai_instructions_en: string;
+  tts_openai_timeout_s: number;
+  tts_fallback_to_local: boolean;
   vad_threshold: number;
   silence_duration_ms: number;
   adaptive_endpointing: boolean;
@@ -43,11 +49,15 @@ export interface VoiceConfig {
   barge_in: boolean;
   earcon: boolean;
   conversation_timeout_s: number;
+  followup_activation_ms: number;
+  thinking_pause_ms: number;
   response_timeout_s: number;
   voice_confirm: boolean;
   require_wake_word_each_turn: boolean;
   speaker_verification: boolean;
   speaker_threshold: number;
+  speaker_fail_open: boolean;
+  speaker_profile_enrolled: boolean;
 }
 
 export interface LLMConfig {

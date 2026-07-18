@@ -2,10 +2,13 @@
 
 from __future__ import annotations
 
+import io
+import wave
 from types import SimpleNamespace
 from typing import TYPE_CHECKING
-from unittest.mock import AsyncMock
+from unittest.mock import AsyncMock, MagicMock
 
+import numpy as np
 import pytest
 from httpx import ASGITransport, AsyncClient
 
@@ -91,6 +94,96 @@ class TestVoiceToggle:
             json={"wrong_field": True},
         )
         assert response.status_code == 422
+
+
+def _wav_recording(sample_rate: int = 16_000, seconds: int = 2) -> bytes:
+    output = io.BytesIO()
+    with wave.open(output, "wb") as wav:
+        wav.setnchannels(1)
+        wav.setsampwidth(2)
+        wav.setframerate(sample_rate)
+        tone = np.full(sample_rate * seconds, 1200, dtype="<i2")
+        wav.writeframes(tone.tobytes())
+    return output.getvalue()
+
+
+class TestVoiceStudio:
+    async def test_enrolls_three_wav_samples_and_reloads(
+        self,
+        client: AsyncClient,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ):
+        app = client._transport.app  # type: ignore[union-attr]
+        object.__setattr__(app.state.config.storage, "models_path", str(tmp_path))
+        app.state.dax_app = SimpleNamespace(reload_voice=AsyncMock())
+        verifier = MagicMock()
+        verifier.encoder_ready = True
+        verifier.enroll.return_value = True
+        monkeypatch.setattr(
+            "dax.web.routes.voice.SpeakerVerifier", MagicMock(return_value=verifier)
+        )
+        recording = _wav_recording()
+
+        response = await client.post(
+            "/api/voice/enroll",
+            files=[
+                ("samples", (f"sample-{index}.wav", recording, "audio/wav"))
+                for index in range(3)
+            ],
+        )
+
+        assert response.status_code == 200
+        assert response.json() == {"status": "ok", "enrolled": True, "samples": 3}
+        assert verifier.enroll.call_count == 1
+        app.state.dax_app.reload_voice.assert_awaited_once()
+
+    async def test_rejects_wrong_enrollment_sample_rate(self, client: AsyncClient):
+        recording = _wav_recording(sample_rate=44_100)
+        response = await client.post(
+            "/api/voice/enroll",
+            files=[
+                ("samples", (f"sample-{index}.wav", recording, "audio/wav"))
+                for index in range(3)
+            ],
+        )
+
+        assert response.status_code == 422
+        assert "16 kHz" in response.json()["detail"]
+
+    async def test_profile_status_and_delete(
+        self, client: AsyncClient, tmp_path: Path,
+    ):
+        app = client._transport.app  # type: ignore[union-attr]
+        object.__setattr__(app.state.config.storage, "models_path", str(tmp_path))
+        profile = tmp_path / "voice_profile.npy"
+        profile.write_bytes(b"profile")
+
+        assert (await client.get("/api/voice/profile")).json()["enrolled"] is True
+        response = await client.delete("/api/voice/profile")
+
+        assert response.status_code == 200
+        assert response.json()["enrolled"] is False
+        assert not profile.exists()
+
+    async def test_returns_wav_voice_preview(
+        self, client: AsyncClient, monkeypatch: pytest.MonkeyPatch,
+    ):
+        engine = MagicMock()
+        engine.sample_rate = 24_000
+        engine.synthesize.return_value = np.arange(240, dtype=np.int16)
+        monkeypatch.setattr("dax.web.routes.voice._build_preview_engine", lambda *_: engine)
+
+        response = await client.post(
+            "/api/voice/preview",
+            json={"engine": "kokoro", "voice": "em_alex"},
+        )
+
+        assert response.status_code == 200
+        assert response.headers["content-type"] == "audio/wav"
+        assert response.content.startswith(b"RIFF")
+        engine.start.assert_called_once()
+        engine.stop.assert_called_once()
 
 
 class TestConfigEndpoint:

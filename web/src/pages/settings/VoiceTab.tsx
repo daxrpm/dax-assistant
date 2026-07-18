@@ -11,6 +11,8 @@ import {
   Toggle,
   useToast,
 } from "../../components/ui";
+import { VoiceEnrollment } from "./VoiceEnrollment";
+import { VoiceGallery } from "./VoiceGallery";
 
 export function VoiceTab({
   config,
@@ -40,6 +42,12 @@ export function VoiceTab({
   const [kokoroVoiceEs, setKokoroVoiceEs] = useState(v.tts_kokoro_voice_es);
   const [kokoroVoiceEn, setKokoroVoiceEn] = useState(v.tts_kokoro_voice_en);
   const [kokoroSpeed, setKokoroSpeed] = useState(v.tts_kokoro_speed);
+  const [openAITTSModel, setOpenAITTSModel] = useState(v.tts_openai_model);
+  const [openAITTSVoice, setOpenAITTSVoice] = useState(v.tts_openai_voice);
+  const [openAITTSInstructionsEs, setOpenAITTSInstructionsEs] = useState(v.tts_openai_instructions_es);
+  const [openAITTSInstructionsEn, setOpenAITTSInstructionsEn] = useState(v.tts_openai_instructions_en);
+  const [openAITTSTimeout, setOpenAITTSTimeout] = useState(v.tts_openai_timeout_s);
+  const [ttsLocalFallback, setTTSLocalFallback] = useState(v.tts_fallback_to_local);
   const [wakeThreshold, setWakeThreshold] = useState(v.wake_word_threshold);
   const [vadThreshold, setVadThreshold] = useState(v.vad_threshold);
   const [silence, setSilence] = useState(v.silence_duration_ms);
@@ -48,11 +56,14 @@ export function VoiceTab({
   const [bargeIn, setBargeIn] = useState(v.barge_in ?? true);
   const [earcon, setEarcon] = useState(v.earcon ?? true);
   const [conversationTimeout, setConversationTimeout] = useState(v.conversation_timeout_s);
+  const [followupActivation, setFollowupActivation] = useState(v.followup_activation_ms);
+  const [thinkingPause, setThinkingPause] = useState(v.thinking_pause_ms);
   const [responseTimeout, setResponseTimeout] = useState(v.response_timeout_s);
   const [voiceConfirm, setVoiceConfirm] = useState(v.voice_confirm);
   const [wakeEachTurn, setWakeEachTurn] = useState(v.require_wake_word_each_turn);
   const [speakerVerification, setSpeakerVerification] = useState(v.speaker_verification);
   const [speakerThreshold, setSpeakerThreshold] = useState(v.speaker_threshold);
+  const [speakerFailOpen, setSpeakerFailOpen] = useState(v.speaker_fail_open);
   const [saving, setSaving] = useState(false);
 
   const save = async () => {
@@ -78,6 +89,12 @@ export function VoiceTab({
         tts_kokoro_voice_es: kokoroVoiceEs,
         tts_kokoro_voice_en: kokoroVoiceEn,
         tts_kokoro_speed: kokoroSpeed,
+        tts_openai_model: openAITTSModel,
+        tts_openai_voice: openAITTSVoice,
+        tts_openai_instructions_es: openAITTSInstructionsEs,
+        tts_openai_instructions_en: openAITTSInstructionsEn,
+        tts_openai_timeout_s: openAITTSTimeout,
+        tts_fallback_to_local: ttsLocalFallback,
         wake_word_threshold: wakeThreshold,
         vad_threshold: vadThreshold,
         silence_duration_ms: silence,
@@ -86,11 +103,14 @@ export function VoiceTab({
         barge_in: bargeIn,
         earcon,
         conversation_timeout_s: conversationTimeout,
+        followup_activation_ms: followupActivation,
+        thinking_pause_ms: thinkingPause,
         response_timeout_s: responseTimeout,
         voice_confirm: voiceConfirm,
         require_wake_word_each_turn: wakeEachTurn,
         speaker_verification: speakerVerification,
         speaker_threshold: speakerThreshold,
+        speaker_fail_open: speakerFailOpen,
       });
       setOpenAIKey("");
       toast.show("Voice settings saved and pipeline reloaded", "success");
@@ -122,7 +142,7 @@ export function VoiceTab({
         >
           <Select value={sttBackend} onChange={(e) => setSttBackend(e.target.value as "local" | "openai")}>
             <option value="local">Local faster-whisper</option>
-            <option value="openai">OpenAI hosted</option>
+            <option value="openai">OpenAI hosted (paid, proprietary)</option>
           </Select>
         </Field>
         {sttBackend === "local" ? (
@@ -184,15 +204,26 @@ export function VoiceTab({
             <option value="en">English</option>
           </Select>
         </Field>
-        <Field label="Text-to-speech engine" description="Kokoro is more natural; Piper is lighter and faster.">
+        <Field label="Text-to-speech engine" description="Kokoro and Piper are local/open source. OpenAI is optional, hosted and paid.">
           <Select value={ttsEngine} onChange={(e) => setTTSEngine(e.target.value)}>
             <option value="kokoro">Kokoro neural</option>
             <option value="piper">Piper local</option>
+            <option value="openai">OpenAI hosted voice (paid, proprietary)</option>
           </Select>
         </Field>
+        <VoiceGallery
+          kokoroVoice={kokoroVoiceEs}
+          kokoroSpeed={kokoroSpeed}
+          openAIVoice={openAITTSVoice}
+          openAIModel={openAITTSModel}
+          openAIInstructions={openAITTSInstructionsEs}
+          openAIConfigured={v.stt_openai_configured}
+          onKokoroVoice={setKokoroVoiceEs}
+          onOpenAIVoice={setOpenAITTSVoice}
+        />
         {ttsEngine === "kokoro" ? (
           <>
-            <Field label="Kokoro Spanish voice">
+            <Field label="Kokoro Spanish voice" description="Try em_alex (default) or ef_dora; both run locally.">
               <TextInput value={kokoroVoiceEs} onChange={(e) => setKokoroVoiceEs(e.target.value)} />
             </Field>
             <Field label="Kokoro English voice">
@@ -202,7 +233,7 @@ export function VoiceTab({
               <TextInput type="number" min="0.5" max="2" step="0.05" value={kokoroSpeed} onChange={(e) => setKokoroSpeed(Number(e.target.value))} />
             </Field>
           </>
-        ) : (
+        ) : ttsEngine === "piper" ? (
           <>
             <Field label="Piper Spanish voice">
               <TextInput value={piperVoiceEs} onChange={(e) => setPiperVoiceEs(e.target.value)} />
@@ -210,6 +241,37 @@ export function VoiceTab({
             <Field label="Piper English voice">
               <TextInput value={piperVoiceEn} onChange={(e) => setPiperVoiceEn(e.target.value)} />
             </Field>
+          </>
+        ) : (
+          <>
+            <Field label="OpenAI TTS model">
+              <TextInput value={openAITTSModel} onChange={(e) => setOpenAITTSModel(e.target.value)} />
+            </Field>
+            <Field label="OpenAI voice" description="OpenAI recommends marin or cedar for best quality.">
+              <Select value={openAITTSVoice} onChange={(e) => setOpenAITTSVoice(e.target.value)}>
+                {['marin', 'cedar', 'coral', 'nova', 'sage', 'shimmer', 'alloy', 'ash', 'ballad', 'echo', 'fable', 'onyx', 'verse'].map((voice) => (
+                  <option key={voice} value={voice}>{voice}</option>
+                ))}
+              </Select>
+            </Field>
+            {sttBackend !== "openai" && (
+              <Field label="OpenAI API key" description={v.stt_openai_configured ? "Configured. Leave blank to keep it." : "Stored encrypted and shared with hosted STT."}>
+                <TextInput type="password" value={openAIKey} placeholder={v.stt_openai_configured ? "••••••••" : "sk-..."} onChange={(e) => setOpenAIKey(e.target.value)} />
+              </Field>
+            )}
+            <Field label="Spanish voice instructions" description="Control accent, warmth, rhythm and expressiveness.">
+              <TextInput value={openAITTSInstructionsEs} onChange={(e) => setOpenAITTSInstructionsEs(e.target.value)} />
+            </Field>
+            <Field label="English voice instructions">
+              <TextInput value={openAITTSInstructionsEn} onChange={(e) => setOpenAITTSInstructionsEn(e.target.value)} />
+            </Field>
+            <Field label="OpenAI TTS timeout (seconds)">
+              <TextInput type="number" min="1" max="120" value={openAITTSTimeout} onChange={(e) => setOpenAITTSTimeout(Number(e.target.value))} />
+            </Field>
+            <div className="flex items-center justify-between rounded-xl border border-separator bg-background px-3 py-2.5">
+              <div><p className="text-sm font-medium">Local TTS fallback</p><p className="text-xs text-muted">Use Kokoro or Piper if OpenAI fails</p></div>
+              <Toggle checked={ttsLocalFallback} onChange={setTTSLocalFallback} label="Local TTS fallback" />
+            </div>
           </>
         )}
         <Field label="Wake-word threshold">
@@ -274,6 +336,12 @@ export function VoiceTab({
         <Field label="Follow-up window (seconds)" description="Keep listening without requiring the wake word again.">
           <TextInput type="number" min="1" max="60" value={conversationTimeout} onChange={(e) => setConversationTimeout(Number(e.target.value))} />
         </Field>
+        <Field label="Follow-up activation (ms)" description="Requires sustained speech before opening a follow-up; higher values reject more music transients.">
+          <TextInput type="number" min="80" max="2000" step="80" value={followupActivation} onChange={(e) => setFollowupActivation(Number(e.target.value))} />
+        </Field>
+        <Field label="Thinking pause (ms)" description="Extra silence allowed after longer phrases before committing the transcript.">
+          <TextInput type="number" min="0" max="3000" step="100" value={thinkingPause} onChange={(e) => setThinkingPause(Number(e.target.value))} />
+        </Field>
         <Field label="Maximum response wait (seconds)" description="Allows long tool actions to finish before timing out.">
           <TextInput type="number" min="10" max="600" value={responseTimeout} onChange={(e) => setResponseTimeout(Number(e.target.value))} />
         </Field>
@@ -286,13 +354,20 @@ export function VoiceTab({
           <Toggle checked={wakeEachTurn} onChange={setWakeEachTurn} label="Wake word every turn" />
         </div>
         <div className="flex items-center justify-between rounded-xl border border-separator bg-background px-3 py-2.5">
-          <div><p className="text-sm font-medium">Speaker verification</p><p className="text-xs text-muted">Use the enrolled voice profile when available</p></div>
+          <div><p className="text-sm font-medium">Speaker verification</p><p className="text-xs text-muted">{v.speaker_profile_enrolled ? "Voice profile enrolled" : "No profile: run scripts/enroll_voice.py first"}</p></div>
           <Toggle checked={speakerVerification} onChange={setSpeakerVerification} label="Speaker verification" />
         </div>
+        <VoiceEnrollment enrolled={v.speaker_profile_enrolled} onChanged={onSaved} />
         {speakerVerification && (
-          <Field label="Speaker acceptance threshold" description="Higher values are stricter. Enroll with scripts/enroll_voice.py first.">
-            <TextInput type="number" min="0" max="1" step="0.01" value={speakerThreshold} onChange={(e) => setSpeakerThreshold(Number(e.target.value))} />
-          </Field>
+          <>
+            <Field label="Speaker acceptance threshold" description="Higher values are stricter. Enroll with scripts/enroll_voice.py first.">
+              <TextInput type="number" min="0" max="1" step="0.01" value={speakerThreshold} onChange={(e) => setSpeakerThreshold(Number(e.target.value))} />
+            </Field>
+            <div className="flex items-center justify-between rounded-xl border border-separator bg-background px-3 py-2.5">
+              <div><p className="text-sm font-medium">Allow speech if Voice ID is unavailable</p><p className="text-xs text-muted">Disable after enrollment to accept only your voice</p></div>
+              <Toggle checked={speakerFailOpen} onChange={setSpeakerFailOpen} label="Voice ID fail open" />
+            </div>
+          </>
         )}
 
         <div className="flex justify-end">

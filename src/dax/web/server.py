@@ -23,6 +23,7 @@ from dax.web.routes import (
     memory,
     oauth,
     system,
+    voice,
     webhooks,
 )
 from dax.web.routes import (
@@ -88,6 +89,7 @@ def create_app(
         mcp.router,
         conversations.router,
         memory.router,
+        voice.router,
     ):
         app.include_router(domain_router, prefix="/api", dependencies=protected)
     app.include_router(oauth.router, prefix="/api", dependencies=protected)

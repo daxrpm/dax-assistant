@@ -28,6 +28,29 @@ async function request<T>(
   return response.json() as Promise<T>;
 }
 
+async function responseError(response: Response): Promise<never> {
+  const text = await response.text();
+  let message = text;
+  try {
+    const body = JSON.parse(text) as { detail?: string };
+    message = body.detail ?? text;
+  } catch {
+    // Preserve non-JSON server errors.
+  }
+  throw new ApiError(response.status, message || `API error ${response.status}`);
+}
+
+async function requestBlob(path: string, body: Record<string, unknown>): Promise<Blob> {
+  const response = await fetch(`${BASE}${path}`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    credentials: "same-origin",
+    body: JSON.stringify(body),
+  });
+  if (!response.ok) return responseError(response);
+  return response.blob();
+}
+
 export interface AuthStatus {
   auth_enabled: boolean;
   configured: boolean;
@@ -116,6 +139,23 @@ export interface ShellAllowResponse {
   default: string[];
 }
 
+export interface VoiceProfileResponse {
+  status?: string;
+  enrolled: boolean;
+  samples?: number;
+}
+
+export interface VoicePreviewOptions {
+  engine: "kokoro" | "piper" | "openai";
+  voice: string;
+  language?: "es" | "en";
+  text?: string;
+  speed?: number;
+  model?: string;
+  instructions?: string;
+  timeout_s?: number;
+}
+
 interface OllamaModel {
   name: string;
   size_gb: number;
@@ -188,6 +228,24 @@ export const api = {
       method: "PATCH",
       body: JSON.stringify(data),
     }),
+
+  enrollVoice: async (samples: Blob[]) => {
+    const form = new FormData();
+    samples.forEach((sample, index) => form.append("samples", sample, `voice-${index + 1}.wav`));
+    const response = await fetch(`${BASE}/voice/enroll`, {
+      method: "POST",
+      credentials: "same-origin",
+      body: form,
+    });
+    if (!response.ok) return responseError(response);
+    return response.json() as Promise<VoiceProfileResponse>;
+  },
+
+  deleteVoiceProfile: () =>
+    request<VoiceProfileResponse>("/voice/profile", { method: "DELETE" }),
+
+  previewVoice: (options: VoicePreviewOptions) =>
+    requestBlob("/voice/preview", options as unknown as Record<string, unknown>),
 
   updateWhatsApp: (data: Record<string, unknown>) =>
     request("/config/whatsapp", {

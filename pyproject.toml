@@ -22,6 +22,7 @@ dependencies = [
     "structlog>=25.1",
     "python-dotenv>=1.1",
     "fastapi>=0.115",
+    "python-multipart>=0.0.20",
     "uvicorn[standard]>=0.34",
     # LLM provider SDKs (official) + universal fallback
     "anthropic>=0.40",
@@ -50,6 +51,9 @@ voice = [
     "noisereduce>=3.0",
     # Speaker verification (Voice ID) — lightweight, optional at runtime.
     "resemblyzer>=0.1.4",
+    # Resemblyzer's 2017 webrtcvad dependency still imports pkg_resources,
+    # which setuptools 81 removed.
+    "setuptools<81",
 ]
 dev = [
     "ruff>=0.11",
