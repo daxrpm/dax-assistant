@@ -12,6 +12,7 @@ The channel is bidirectional:
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import logging
 from typing import TYPE_CHECKING, Any
 
@@ -71,10 +72,10 @@ class TelegramChannel:
     async def stop(self) -> None:
         if self._poll_task and not self._poll_task.done():
             self._poll_task.cancel()
-            try:
+            # Awaiting a task we just cancelled always raises; that is the
+            # expected shutdown path, not an error.
+            with contextlib.suppress(asyncio.CancelledError):
                 await self._poll_task
-            except asyncio.CancelledError:
-                pass
         if self._client:
             await self._client.aclose()
             self._client = None

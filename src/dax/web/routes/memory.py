@@ -7,6 +7,7 @@ These files are read back into the agent's system prompt (see
 
 from __future__ import annotations
 
+import logging
 import re
 from pathlib import Path
 from typing import Any
@@ -15,6 +16,8 @@ from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel
 
 router = APIRouter(tags=["memory"])
+
+logger = logging.getLogger(__name__)
 
 _MEMORY_TYPES = {"user", "feedback", "project", "reference"}
 
@@ -106,7 +109,9 @@ def _refresh_memory_index(mem_dir: Path) -> None:
         try:
             entries.append(_parse_memory_file(p))
         except Exception:
-            pass
+            # A malformed file must not take the whole index down, but dropping
+            # it silently would make the memory look mysteriously incomplete.
+            logger.warning("Skipping unparseable memory file %s", p.name, exc_info=True)
     lines = ["# Dax Memory", ""]
     if entries:
         lines.extend(
@@ -143,7 +148,7 @@ async def list_memory(request: Request) -> list[dict[str, Any]]:
         try:
             entries.append(_parse_memory_file(p))
         except Exception:
-            pass
+            logger.warning("Skipping unparseable memory file %s", p.name, exc_info=True)
     return entries
 
 

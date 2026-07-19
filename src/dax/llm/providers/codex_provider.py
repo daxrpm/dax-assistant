@@ -97,7 +97,7 @@ class CodexProvider:
             stdout, stderr = await asyncio.wait_for(
                 proc.communicate(), timeout=self._timeout
             )
-        except asyncio.TimeoutError as e:
+        except TimeoutError as e:
             proc.kill()
             raise LLMTimeoutError(f"Codex timed out after {self._timeout}s") from e
 
