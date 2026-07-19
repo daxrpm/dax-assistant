@@ -18,6 +18,7 @@ from dax.web.routes import (
     auth,
     chat,
     conversations,
+    devices,
     logs,
     mcp,
     memory,
@@ -56,7 +57,11 @@ def create_app(
         app.state.config = config
         app.state.bus = bus
         app.state.voice_listening = config.voice.enabled
-        app.state.auth = AuthManager(config.security)
+        # Reuse the eagerly-built manager rather than constructing a second
+        # one: by the time the lifespan runs, DaxApp.start() may already have
+        # attached the device registry and `/auth/setup` may have set the
+        # password hash in place. Replacing the instance would drop both.
+        app.state.auth = _auth
         yield
 
     # Build auth eagerly too so routes work under TestClient (which may not
@@ -97,6 +102,10 @@ def create_app(
 
     # Public auth endpoints (login/logout/status) — how you get a session.
     app.include_router(auth.router, prefix="/api")
+    # Device pairing/enrolment carries its own gating: pairing and revocation
+    # need a session, enrolment needs a one-time code, token exchange needs the
+    # device secret. So it must not sit behind the blanket `protected` list.
+    app.include_router(devices.router, prefix="/api")
     # Protected API + OAuth routes require a valid session. The former api.py
     # god-module is now split into cohesive domain routers.
     protected = [Depends(require_auth)]

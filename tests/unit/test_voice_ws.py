@@ -26,9 +26,13 @@ class FakePipeline:
     def __init__(self) -> None:
         self.source = None
         self.cancelled = 0
+        self.output_owner: str | None = None
 
     def select_audio_source(self, source) -> None:
         self.source = source
+
+    def set_output_owner(self, owner: str | None) -> None:
+        self.output_owner = owner
 
     def push_to_talk_press(self) -> str:
         return "listening"
@@ -270,3 +274,108 @@ def test_owner_lease_is_released_after_disconnect():
         ws.receive_json()
         ws.send_json(acquire)
         assert ws.receive_json()["type"] == "remote_audio.acquired"
+
+
+# -- Client-owned output ------------------------------------------------------
+#
+# A phone is not in the same room as the backend, so answering on the backend's
+# speakers answers nobody. These cover the negotiation and, more importantly,
+# that a client which drops while owning output cannot leave the host mute.
+
+_ACQUIRE_FORMAT = {"sample_rate": 16_000, "channels": 1, "sample_format": "pcm_s16le"}
+
+
+def _acquire(output_mode: str | None = None) -> dict:
+    frame: dict = {"type": "remote_audio.acquire", "format": dict(_ACQUIRE_FORMAT)}
+    if output_mode is not None:
+        frame["output"] = {"mode": output_mode}
+    return frame
+
+
+def test_output_defaults_to_the_server_host():
+    """Omitting `output` must preserve the pre-existing behaviour exactly."""
+    pipeline = FakePipeline()
+    app, _hub = _make_app(pipeline=pipeline)
+    client = TestClient(app)
+    with client.websocket_connect(f"/ws/voice?token={_token(app)}") as ws:
+        ws.receive_json()
+        ws.send_json(_acquire())
+        acquired = ws.receive_json()
+
+        assert acquired["data"]["output"]["mode"] == "server"
+        assert pipeline.output_owner is None
+
+
+def test_client_can_claim_text_output():
+    pipeline = FakePipeline()
+    app, _hub = _make_app(pipeline=pipeline)
+    client = TestClient(app)
+    with client.websocket_connect(f"/ws/voice?token={_token(app)}") as ws:
+        ws.receive_json()
+        ws.send_json(_acquire("client_text"))
+        acquired = ws.receive_json()
+
+        assert acquired["data"]["output"]["mode"] == "client_text"
+        assert acquired["data"]["output"]["client_audio_supported"] is False
+        assert "client_text" in acquired["data"]["output"]["supported_modes"]
+        assert pipeline.output_owner is not None
+
+
+def test_releasing_the_lease_returns_output_to_the_host():
+    pipeline = FakePipeline()
+    app, _hub = _make_app(pipeline=pipeline)
+    client = TestClient(app)
+    with client.websocket_connect(f"/ws/voice?token={_token(app)}") as ws:
+        ws.receive_json()
+        ws.send_json(_acquire("client_text"))
+        ws.receive_json()
+        assert pipeline.output_owner is not None
+
+        ws.send_json({"type": "remote_audio.release"})
+        assert ws.receive_json()["type"] == "remote_audio.released"
+
+        assert pipeline.output_owner is None
+
+
+def test_disconnect_while_owning_output_restores_the_host():
+    """The failure that would otherwise mute the backend permanently."""
+    pipeline = FakePipeline()
+    app, _hub = _make_app(pipeline=pipeline)
+    client = TestClient(app)
+    with client.websocket_connect(f"/ws/voice?token={_token(app)}") as ws:
+        ws.receive_json()
+        ws.send_json(_acquire("client_text"))
+        ws.receive_json()
+        assert pipeline.output_owner is not None
+
+    assert pipeline.output_owner is None
+
+
+def test_unsupported_output_mode_is_rejected_not_downgraded():
+    pipeline = FakePipeline()
+    app, _hub = _make_app(pipeline=pipeline)
+    client = TestClient(app)
+    with client.websocket_connect(f"/ws/voice?token={_token(app)}") as ws:
+        ws.receive_json()
+        ws.send_json(_acquire("client_audio"))
+        error = ws.receive_json()
+
+        assert error["type"] == "remote_audio.error"
+        assert error["data"]["code"] == "unsupported_output_mode"
+        assert pipeline.output_owner is None
+
+
+def test_malformed_output_object_is_rejected():
+    pipeline = FakePipeline()
+    app, _hub = _make_app(pipeline=pipeline)
+    client = TestClient(app)
+    with client.websocket_connect(f"/ws/voice?token={_token(app)}") as ws:
+        ws.receive_json()
+        ws.send_json({
+            "type": "remote_audio.acquire",
+            "format": dict(_ACQUIRE_FORMAT),
+            "output": "client_text",
+        })
+        error = ws.receive_json()
+
+        assert error["data"]["code"] == "malformed_control"

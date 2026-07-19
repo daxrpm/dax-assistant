@@ -29,6 +29,9 @@ class ApprovalManager:
     def __init__(self, timeout_seconds: int = 120) -> None:
         self._timeout = timeout_seconds
         self._pending: dict[str, asyncio.Future[str]] = {}
+        # approval_id -> owning session, so a resolution can be checked against
+        # the conversation that raised it.
+        self._owners: dict[str, str] = {}
         self._notifier: Callable[[dict[str, Any]], Awaitable[None]] | None = None
         self._voice_approver: VoiceApprover | None = None
 
@@ -101,6 +104,7 @@ class ApprovalManager:
         }
         if session_id:
             payload["session_id"] = session_id
+            self._owners[approval_id] = session_id
         try:
             await self._notifier(payload)
             return await asyncio.wait_for(future, timeout=self._timeout)
@@ -112,13 +116,27 @@ class ApprovalManager:
             return "deny"
         finally:
             self._pending.pop(approval_id, None)
+            self._owners.pop(approval_id, None)
+
+    def session_for(self, approval_id: str) -> str | None:
+        """The session that raised ``approval_id``, or None if unscoped/unknown.
+
+        Transports use this to check that a resolution comes from the client
+        that owns the conversation.
+        """
+        return self._owners.get(approval_id)
 
     def resolve(self, approval_id: str, decision: str) -> bool:
-        """Resolve a pending request. Returns True if it matched a pending one."""
+        """Resolve a pending request. Returns True if it matched a pending one.
+
+        Resolution is single-use: the future is settled once, so a replayed or
+        duplicated confirmation frame cannot run a gated tool a second time.
+        """
         future = self._pending.get(approval_id)
         if future is not None and not future.done():
             future.set_result(decision)
             return True
+        logger.debug("Ignored resolution for unknown or settled approval %s", approval_id)
         return False
 
     @property

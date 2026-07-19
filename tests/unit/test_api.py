@@ -646,10 +646,12 @@ class TestNewEndpoints:
 
 
 async def test_web_channel_correlates_response_frame(monkeypatch):
-    broadcast = AsyncMock()
+    # Replies dispatch by session so they reach the client that asked, rather
+    # than every attached client.
+    dispatch = AsyncMock()
     monkeypatch.setattr(
         "dax.channels.web_channel.ws_manager",
-        SimpleNamespace(connection_count=1, broadcast=broadcast),
+        SimpleNamespace(connection_count=1, dispatch=dispatch),
     )
     message = Message(
         role=MessageRole.ASSISTANT,
@@ -660,5 +662,5 @@ async def test_web_channel_correlates_response_frame(monkeypatch):
 
     await WebChannel().send(message)
 
-    frame = broadcast.await_args.args[0]
+    frame = dispatch.await_args.args[0]
     assert frame["session_id"] == "client-session"

@@ -65,11 +65,43 @@ human-readable `message`, followed by a policy/size/retry close code. Binary dat
 before `start`, duplicate/out-of-order controls, unsupported formats, malformed
 JSON, oversized frames, duration overflow, and a busy lease are rejected.
 
-Remote input is PTT-only in v1. It does not run remote wake-word detection or
-continuous capture. TTS output remains on the server host's speakers. The
-`remote_audio.acquired.data.output` capability object currently reports
-`{"mode":"server","client_audio_supported":false}` so future client audio can
-be negotiated without pretending it exists today.
+Remote input is PTT-only. It does not run remote wake-word detection or
+continuous capture.
+
+## Output ownership
+
+`remote_audio.acquire` may include an optional `output` object choosing which
+side speaks the reply. Omit it and nothing changes from v1.
+
+```json
+{
+  "type": "remote_audio.acquire",
+  "format": {"sample_rate": 16000, "channels": 1, "sample_format": "pcm_s16le"},
+  "output": {"mode": "client_text"}
+}
+```
+
+| Mode | Behaviour |
+| --- | --- |
+| `server` (default) | The backend host synthesizes and plays the reply on its own speakers. |
+| `client_text` | The backend emits `speech` events per sentence and does **no** synthesis, playback, or earcon. The client synthesizes locally. |
+
+`client_text` exists for clients that are not in the same room as the backend —
+a phone, primarily. It is also the cheaper path on the server: Kokoro never
+runs. Spoken tool confirmations follow output ownership too, so a voice-gated
+tool asks the person actually holding the device instead of timing out into a
+denial.
+
+Ownership is held for the lifetime of the lease, not one utterance, because the
+reply arrives asynchronously. It is released on `remote_audio.release` and on
+disconnect — including crash paths, so a dropped client cannot leave the
+backend permanently mute.
+
+An unsupported mode is rejected with `unsupported_output_mode` rather than
+silently downgraded, so a client can distinguish "not supported" from
+"ignored". Streaming server-synthesized PCM to the client is **not**
+implemented; `client_audio_supported` stays `false` and `supported_modes` lists
+what the server actually honours.
 
 Desktop clients permit `ws://` only for loopback hosts. Non-loopback backend
 URLs must use HTTPS and the derived voice socket must use WSS.

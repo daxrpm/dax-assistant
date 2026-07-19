@@ -46,7 +46,8 @@ The desktop UI talks directly to FastAPI over HTTP/WebSocket. HTTP uses `Authori
 
 ## Realtime contracts
 
-- `/ws/chat`: messages, agent activity, tool results, and approvals are correlated with `session_id`. Never merge frames from another session.
+- `/ws/chat`: messages, agent activity, tool results, and approvals are correlated with `session_id`. Never merge frames from another session. Delivery is session-scoped: a client claims a session by publishing on it, and frames route only to claimants. Tool confirmations never fall back to a broadcast, and only a client that owns the session may resolve them.
+- Clients authenticate with a password session or an enrolled-device token (`/api/auth/devices/*`). Device tokens are short-lived, salt-separated from session tokens, and stop validating the moment the device is revoked.
 - `/ws/logs`: one-way bounded log stream. Keep buffers bounded and virtualize long views.
 - `/ws/voice`: state, input/output levels, transcript, speaker verdict, and errors. The inbound direction accepts an authenticated, exclusively leased PCM16LE 16 kHz mono stream for remote push-to-talk.
 - Voice level frames identify `source: input|output`. Preserve this distinction through stores and visualizers so microphone and TTS/Kokoro activity are represented independently.
@@ -60,7 +61,7 @@ The desktop UI talks directly to FastAPI over HTTP/WebSocket. HTTP uses `Authori
 - Authentication tokens are isolated by backend origin. Never reuse or copy a token when the active backend changes.
 - First-run onboarding must complete before backend authentication. It explains privacy, validates URLs, checks connectivity, and asks before starting the local systemd service.
 - The local backend is the systemd user service `dax-assistant.service`; service actions are a fixed allowlist, never arbitrary shell commands.
-- Remote audio is push-to-talk only. TTS currently plays on the server host; do not imply client playback until an authenticated output-audio contract exists.
+- Remote audio is push-to-talk only. TTS plays on the server host unless a client claims `output.mode = "client_text"` on `remote_audio.acquire`, in which case the server emits `speech` events and synthesizes nothing. Streaming server-synthesized audio to a client is still not implemented; do not imply it.
 - The main window defaults to the compact custom frame. Users may switch live to native decorations in Desktop Settings; the HUD never uses the main frame.
 - The target packages are Fedora RPM and Debian/Ubuntu deb. Fedora/GNOME/Wayland is the primary runtime.
 

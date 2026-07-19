@@ -199,6 +199,9 @@ class VoicePipeline:
         self._audio_source: AudioSource = self._capture
         self._source_lock = threading.Lock()
         self._player = AudioPlayer()
+        # Lease id of the client that owns spoken output, or None when the
+        # backend host's own speakers do. See set_output_owner().
+        self._output_owner: str | None = None
         self._wakeword = WakeWordDetector(
             model_names=[config.wake_word_model] if config.wake_word_model else None,
             threshold=config.wake_word_threshold,
@@ -382,6 +385,25 @@ class VoicePipeline:
     def push_to_talk_cancel(self, timeout: float = 2.0) -> PipelineState:
         """Abort an incomplete PTT utterance without sending it to STT."""
         return self._request_ptt("cancel", timeout)
+
+    def set_output_owner(self, owner: str | None) -> None:
+        """Hand spoken output to a remote client, or take it back with ``None``.
+
+        A phone is the case this exists for: the user is not standing next to
+        the backend host, so synthesising and playing there would answer into
+        an empty room. While a client owns output the pipeline still emits
+        ``speech`` events per sentence — the client synthesises them locally —
+        and skips synthesis and playback entirely. That makes the remote case
+        *cheaper* on the server than the local one, not more expensive.
+        """
+        self._output_owner = owner
+        logger.info(
+            "Voice output owned by %s", owner if owner is not None else "the backend host"
+        )
+
+    @property
+    def output_owner(self) -> str | None:
+        return self._output_owner
 
     def select_audio_source(self, source: AudioSource | None) -> None:
         """Select a source while idle; ``None`` restores the local microphone."""
@@ -864,6 +886,15 @@ class VoicePipeline:
         """Synthesise and play *text*. Returns True if interrupted (barge-in)."""
         sentences = _split_sentences(_clean_for_speech(text))
 
+        if self._output_owner is not None:
+            # A remote client owns output. Publish the sentences it should
+            # speak and do no local work: no synthesis, no playback, and no
+            # mic muting, because the microphone in question is not ours.
+            # Barge-in is the client's to detect for the same reason.
+            for sentence in sentences:
+                self._events.emit_speech(sentence, tts_lang)
+            return False
+
         if not self._barge_in:
             # Mute the mic during playback to prevent echo/feedback.
             self._capture.stop()
@@ -964,6 +995,12 @@ class VoicePipeline:
 
     def _speak_now(self, text: str, lang: str) -> None:
         """Synthesise and play *text* immediately, mic muted (no barge-in)."""
+        if self._output_owner is not None:
+            # Spoken confirmations have to reach the person who is actually
+            # being asked. Publishing lets the owning client speak it; playing
+            # here would ask an empty room and then time out into a denial.
+            self._events.emit_speech(text, lang)
+            return
         self._capture.stop()
         self._drain_mic_buffer()
         try:
@@ -1157,6 +1194,10 @@ class VoicePipeline:
         word fires, so the user knows to start speaking. Best-effort: any audio
         error is swallowed so it never blocks the conversation.
         """
+        if self._output_owner is not None:
+            # The owning client plays its own earcon next to the user's ear;
+            # one here would only be audible to the backend host.
+            return
         try:
             tone = self._earcon_samples(kind)
             self._capture.stop()

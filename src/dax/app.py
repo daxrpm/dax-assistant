@@ -30,6 +30,7 @@ from dax.orchestrator.approval import ApprovalManager
 from dax.orchestrator.bus import MessageBus
 from dax.orchestrator.dispatcher import Dispatcher
 from dax.storage.database import Database
+from dax.storage.devices import DeviceRegistry
 from dax.storage.repository import ConversationRepository
 from dax.storage.secrets import SecretStore
 from dax.web.server import create_app
@@ -165,6 +166,18 @@ class DaxApp:
         await self._database.start()
         log.info("Storage ready")
 
+        # Enrolled devices back the short-lived tokens the mobile client uses.
+        # Loaded into memory here because token validation runs inside the
+        # WebSocket handshake, where awaiting SQLite is not an option.
+        self._devices = DeviceRegistry(self._database)
+        await self._devices.load()
+        if hasattr(self._web_app, "state"):
+            auth_manager = getattr(self._web_app.state, "auth", None)
+            if auth_manager is not None:
+                auth_manager.attach_devices(self._devices)
+            self._web_app.state.devices = self._devices
+        log.info("Device registry ready", devices=self._devices.count)
+
         # Deliver live log records to web subscribers on this loop.
         self._log_buffer.bind_loop(asyncio.get_running_loop())
         if hasattr(self._web_app, "state"):
@@ -247,7 +260,10 @@ class DaxApp:
         # chat WebSocket, and let the WS route resolve them.
         from dax.web.routes.chat import ws_manager
 
-        self._approval.set_notifier(ws_manager.broadcast)
+        # Confirmations carry tool arguments and authorize a side effect, so
+        # they go only to the client that owns the conversation — never to
+        # every attached client.
+        self._approval.set_notifier(ws_manager.deliver_approval)
 
         # Stream agent events (tool calls, thinking) to the web UI in real time.
         async def _broadcast_event(event: dict[str, Any]) -> None:
@@ -255,7 +271,7 @@ class DaxApp:
             session_id = event.get("session_id")
             if isinstance(session_id, str) and session_id:
                 frame["session_id"] = session_id
-            await ws_manager.broadcast(frame)
+            await ws_manager.dispatch(frame)
 
         self._agent.set_event_broadcaster(_broadcast_event)
         if hasattr(self._web_app, "state"):

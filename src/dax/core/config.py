@@ -262,6 +262,14 @@ class SecurityConfig(BaseModel):
     cookie_name: str = "dax_session"
     # Mark the session cookie Secure (HTTPS only). Leave false for local http.
     cookie_secure: bool = False
+    # Lifetime of a device access token. Enrolled clients (the phone) hold a
+    # long-lived secret in hardware-backed storage and mint one of these on
+    # demand, so it can be short: a captured token expires quickly, and
+    # revoking the device kills it immediately regardless.
+    device_token_ttl_minutes: int = 15
+    # How long a pairing code stays redeemable. Codes are typed by hand from
+    # one screen to another, so this is the window between the two.
+    pairing_code_ttl_minutes: int = 5
 
 
 class WhatsAppConfig(BaseModel):

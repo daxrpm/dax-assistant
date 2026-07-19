@@ -53,4 +53,6 @@ class WebChannel:
         session_id = message.metadata.get("session_id")
         if isinstance(session_id, str) and session_id:
             frame["session_id"] = session_id
-        await ws_manager.broadcast(frame)
+        # Session-scoped so a reply lands on the client that asked, not on
+        # every attached client.
+        await ws_manager.dispatch(frame)

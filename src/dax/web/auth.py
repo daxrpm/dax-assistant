@@ -28,6 +28,7 @@ if TYPE_CHECKING:
     from fastapi import Response, WebSocket
 
     from dax.core.config import SecurityConfig
+    from dax.storage.devices import DeviceRegistry
 
 logger = logging.getLogger(__name__)
 
@@ -37,6 +38,12 @@ _hasher = PasswordHasher()
 # cross-used to forge Dax sessions.
 _SIGNER_SALT = "dax.session.v1"
 _SESSION_SUBJECT = "dax-user"
+
+# Device access tokens are signed under a different salt, so a browser session
+# token can never be presented as a device token (or the reverse) even though
+# both derive from the same session secret. Their lifetimes differ by orders of
+# magnitude, and that difference has to be unforgeable.
+_DEVICE_SALT = "dax.device.v1"
 
 
 def hash_password(password: str) -> str:
@@ -79,6 +86,9 @@ class AuthManager:
                     "secret; sessions will be invalidated on restart."
                 )
         self._serializer = URLSafeTimedSerializer(secret, salt=_SIGNER_SALT)
+        self._device_serializer = URLSafeTimedSerializer(secret, salt=_DEVICE_SALT)
+        self._device_ttl_seconds = max(60, config.device_token_ttl_minutes * 60)
+        self._devices: DeviceRegistry | None = None
 
         if self._enabled and not self._password_hash:
             logger.warning(
@@ -99,17 +109,59 @@ class AuthManager:
     def verify_login(self, password: str) -> bool:
         return verify_password(self._password_hash, password)
 
+    def attach_devices(self, devices: DeviceRegistry) -> None:
+        """Wire the enrolled-device registry used to validate device tokens.
+
+        Optional: with no registry attached the manager behaves exactly as it
+        did before device enrolment existed, and device tokens are rejected.
+        """
+        self._devices = devices
+
+    @property
+    def devices(self) -> DeviceRegistry | None:
+        return self._devices
+
+    @property
+    def device_token_ttl_seconds(self) -> int:
+        return self._device_ttl_seconds
+
     def issue_token(self) -> str:
         return self._serializer.dumps({"sub": _SESSION_SUBJECT})
 
+    def issue_device_token(self, device_id: str) -> str:
+        """Mint a short-lived access token for an enrolled device."""
+        return self._device_serializer.dumps({"sub": device_id})
+
     def validate_token(self, token: str | None) -> bool:
+        """True when *token* is a live user session or a live device token."""
         if not token:
             return False
         try:
             self._serializer.loads(token, max_age=self._ttl_seconds)
         except (BadSignature, SignatureExpired):
-            return False
+            return self.device_from_token(token) is not None
         return True
+
+    def device_from_token(self, token: str | None) -> str | None:
+        """Return the device id for a valid device token, else None.
+
+        Revocation is enforced here rather than at issue time: a token minted
+        before a phone was lost must stop working the moment it is revoked,
+        not when it eventually expires.
+        """
+        if not token or self._devices is None:
+            return None
+        try:
+            payload = self._device_serializer.loads(token, max_age=self._device_ttl_seconds)
+        except (BadSignature, SignatureExpired):
+            return None
+        device_id = payload.get("sub") if isinstance(payload, dict) else None
+        if not isinstance(device_id, str) or not device_id:
+            return None
+        if not self._devices.is_active(device_id):
+            logger.info("Rejected token for revoked or unknown device %s", device_id)
+            return None
+        return device_id
 
     def set_cookie(self, response: Response, token: str) -> None:
         response.set_cookie(

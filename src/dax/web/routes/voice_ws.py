@@ -30,6 +30,11 @@ logger = logging.getLogger(__name__)
 
 _REMOTE_MAX_BYTES = 16_000 * 2 * 30
 
+# "client_audio" (server-synthesised PCM streamed to the client) is deliberately
+# absent: it is not implemented, and advertising it would be a lie a client
+# could not detect until it was already waiting for audio that never arrives.
+_SUPPORTED_OUTPUT_MODES = frozenset({"server", "client_text"})
+
 
 class VoiceProtocolError(Exception):
     def __init__(self, code: str, message: str, close_code: int = 1008) -> None:
@@ -81,6 +86,33 @@ def _validate_acquire(frame: dict[str, object]) -> None:
         )
 
 
+def _requested_output_mode(frame: dict[str, object]) -> str:
+    """Which side plays the reply. Defaults to the historical server behaviour.
+
+    ``server``      — the backend host synthesises and plays (default, v1).
+    ``client_text`` — the server publishes ``speech`` events and the client
+                      synthesises locally. This is what a phone wants: the
+                      user is not in the room with the backend.
+
+    Streaming synthesised audio down to the client is a third mode that does
+    not exist yet; it is rejected here rather than silently downgraded, so a
+    client can tell the difference between "not supported" and "ignored".
+    """
+    output = frame.get("output")
+    if output is None:
+        return "server"
+    if not isinstance(output, dict):
+        raise VoiceProtocolError("malformed_control", "output must be an object")
+    mode = output.get("mode", "server")
+    if mode not in _SUPPORTED_OUTPUT_MODES:
+        raise VoiceProtocolError(
+            "unsupported_output_mode",
+            f"Unsupported output mode {mode!r}; supported: "
+            f"{', '.join(sorted(_SUPPORTED_OUTPUT_MODES))}",
+        )
+    return str(mode)
+
+
 def _idle_state() -> dict[str, object]:
     """Synthetic idle frame for when no pipeline has ever run.
 
@@ -125,6 +157,7 @@ async def websocket_voice(websocket: WebSocket) -> None:
     source: Any = None
     acquired = False
     active = False
+    output_owned = False
     received_bytes = 0
     send_lock = asyncio.Lock()
 
@@ -138,7 +171,7 @@ async def websocket_voice(websocket: WebSocket) -> None:
             await send_json(event.to_json())
 
     async def cleanup_remote() -> None:
-        nonlocal acquired, active, source
+        nonlocal acquired, active, source, output_owned
         if not acquired:
             return
         try:
@@ -153,16 +186,26 @@ async def websocket_voice(websocket: WebSocket) -> None:
                     pipeline.select_audio_source(None)
                 except Exception:
                     logger.debug("Failed to restore local audio source", exc_info=True)
+                if output_owned:
+                    # Must run even on a crash path: a client that dropped
+                    # while owning output would otherwise leave the backend
+                    # permanently silent for every later local turn.
+                    try:
+                        if pipeline.output_owner == owner:
+                            pipeline.set_output_owner(None)
+                    except Exception:
+                        logger.debug("Failed to restore local audio output", exc_info=True)
             if source is not None:
                 source.stop()
         finally:
             active = False
             acquired = False
+            output_owned = False
             source = None
             lease.release(owner)
 
     async def handle_control(frame: dict[str, object]) -> None:
-        nonlocal acquired, active, source, received_bytes
+        nonlocal acquired, active, source, received_bytes, output_owned
         kind = frame.get("type")
         if not isinstance(kind, str):
             raise VoiceProtocolError("malformed_control", "Control frame requires a string type")
@@ -170,6 +213,7 @@ async def websocket_voice(websocket: WebSocket) -> None:
             if acquired:
                 raise VoiceProtocolError("invalid_order", "Remote audio is already acquired")
             _validate_acquire(frame)
+            output_mode = _requested_output_mode(frame)
             pipeline = _pipeline_from_app(websocket.app)
             if not await lease.acquire(owner):
                 raise VoiceProtocolError(
@@ -186,13 +230,23 @@ async def websocket_voice(websocket: WebSocket) -> None:
             except Exception:
                 lease.release(owner)
                 raise
+            if output_mode == "client_text":
+                # Held for the lifetime of the lease, not just one utterance:
+                # the reply arrives asynchronously and must not be spoken on
+                # the backend host in the gap between turns.
+                pipeline.set_output_owner(owner)
+                output_owned = True
             await send_json({
                 "type": "remote_audio.acquired",
                 "data": {
                     "format": frame["format"],
                     "max_frame_bytes": 3_200,
                     "max_duration_seconds": 30,
-                    "output": {"mode": "server", "client_audio_supported": False},
+                    "output": {
+                        "mode": output_mode,
+                        "client_audio_supported": False,
+                        "supported_modes": sorted(_SUPPORTED_OUTPUT_MODES),
+                    },
                 },
             })
             return
