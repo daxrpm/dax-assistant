@@ -75,14 +75,43 @@ class CapabilityProbe(
             }
 
             report = checkHfpProfile(report).also(onProgress)
-            val scoRoute = findScoRoute()
+
+            var scoRoute = findScoRoute()
+
+            // A device can be connected on HFP yet absent here, because
+            // getAvailableCommunicationDevices() only offers a headset once
+            // the profile has made it the *active* device. Devices that
+            // advertise an uncategorized Class of Device — the Redmi Watch 5
+            // Lite reports 0x001F00, with no Audio service-class bit — are not
+            // promoted automatically, and setActiveDevice() is @SystemApi.
+            //
+            // startVoiceRecognition() is the public way out: it sends AT+BVRA
+            // and asks the stack to bring up the audio connection, which
+            // promotes the device as a side effect. Worth trying before
+            // concluding the hardware cannot do it.
+            var openedViaVoiceRecognition = false
+            if (scoRoute == null) {
+                openedViaVoiceRecognition = tryStartVoiceRecognition()
+                if (openedViaVoiceRecognition) {
+                    scoRoute = awaitScoRoute()
+                }
+            }
 
             report = if (scoRoute == null) {
                 report
                     .with(
                         CheckId.SCO_DEVICE_PRESENT,
                         CheckStatus.FAIL,
-                        "No TYPE_BLUETOOTH_SCO device in getAvailableCommunicationDevices()",
+                        buildString {
+                            append("Absent from getAvailableCommunicationDevices()")
+                            if (openedViaVoiceRecognition) {
+                                append(" even after startVoiceRecognition() succeeded")
+                            } else {
+                                append("; startVoiceRecognition() also failed")
+                            }
+                            append(". Audio devices seen: ")
+                            append(describeAllAudioDevices())
+                        },
                     )
                     .skipRemaining(
                         CheckId.COMMUNICATION_DEVICE_SELECTABLE,
@@ -93,7 +122,12 @@ class CapabilityProbe(
                 report.with(
                     CheckId.SCO_DEVICE_PRESENT,
                     CheckStatus.PASS,
-                    "${scoRoute.productName} (id ${scoRoute.id})",
+                    buildString {
+                        append("${scoRoute.productName} (id ${scoRoute.id})")
+                        if (openedViaVoiceRecognition) {
+                            append(" — required startVoiceRecognition() to appear")
+                        }
+                    },
                 ).also(onProgress)
             }
 
@@ -168,12 +202,44 @@ class CapabilityProbe(
                 )
             onProgress(report)
 
-            val spoke = speakThroughRoute()
-            report = report.with(
-                CheckId.SPEAKER_PLAYBACK,
-                if (spoke.first) CheckStatus.PASS else CheckStatus.FAIL,
-                spoke.second,
-            )
+            // The link is short-lived on some devices — the Redmi Watch 5 Lite
+            // tears SCO down about 1.4s after startVoiceRecognition(), because
+            // it has no voice-recognition session of its own to run. Checking
+            // the route is still ours before speaking is what stops a reply
+            // being reported as delivered when it actually came out of the
+            // phone.
+            val routeStillOurs =
+                manager.communicationDevice?.type == AudioDeviceInfo.TYPE_BLUETOOTH_SCO
+            report = if (!routeStillOurs) {
+                report.with(
+                    CheckId.SPEAKER_PLAYBACK,
+                    CheckStatus.FAIL,
+                    "The Bluetooth route dropped before playback — audio would " +
+                        "come out of the phone. Current route: " +
+                        (manager.communicationDevice?.productName?.toString() ?: "none"),
+                )
+            } else {
+                val spoke = speakThroughRoute()
+                val heldThroughout =
+                    manager.communicationDevice?.type == AudioDeviceInfo.TYPE_BLUETOOTH_SCO
+                when {
+                    !spoke.first -> report.with(
+                        CheckId.SPEAKER_PLAYBACK, CheckStatus.FAIL, spoke.second,
+                    )
+                    !heldThroughout -> report.with(
+                        CheckId.SPEAKER_PLAYBACK,
+                        CheckStatus.FAIL,
+                        "The route dropped while speaking, so playback finished on " +
+                            "the phone rather than the Bluetooth device",
+                    )
+                    else -> report.with(
+                        CheckId.SPEAKER_PLAYBACK,
+                        CheckStatus.PASS,
+                        "Rendered with the Bluetooth route held throughout " +
+                            "(confirm you heard it on the device)",
+                    )
+                }
+            }
             onProgress(report)
             return report
         } catch (error: SecurityException) {
@@ -195,6 +261,87 @@ class CapabilityProbe(
             .mapNotNull(AudioRoute::fromDeviceInfo)
             .firstOrNull { it.kind == AudioRouteKind.BLUETOOTH_SCO }
     }.getOrNull()
+
+    /**
+     * Polls for the SCO route to appear after asking the stack to open it.
+     *
+     * Promotion is asynchronous: startVoiceRecognition() returns as soon as
+     * the request is accepted, well before the device shows up as a
+     * communication device.
+     */
+    private suspend fun awaitScoRoute(): AudioRoute? = withTimeoutOrNull(scoSettleTimeoutMillis) {
+        var found: AudioRoute? = null
+        while (found == null) {
+            found = findScoRoute()
+            if (found == null) delay(150)
+        }
+        found
+    }
+
+    /**
+     * Asks the headset profile to open a voice-recognition audio session.
+     *
+     * This is the public equivalent of the privileged setActiveDevice(): the
+     * platform sends AT+BVRA to the headset and brings up SCO. For a wearable
+     * that Android declines to auto-activate, it is the only third-party route
+     * to an audio link outside a call.
+     *
+     * Failure is expected and survivable — the caller falls back to the phone.
+     */
+    @SuppressLint("MissingPermission") // guarded by hasPermission() below
+    private suspend fun tryStartVoiceRecognition(): Boolean {
+        if (!hasPermission(Manifest.permission.BLUETOOTH_CONNECT)) return false
+        val adapter = context.getSystemService(android.bluetooth.BluetoothManager::class.java)
+            ?.adapter ?: return false
+
+        return withTimeoutOrNull(6_000L) {
+            suspendCoroutine { continuation ->
+                val listener = object : BluetoothProfile.ServiceListener {
+                    override fun onServiceConnected(profile: Int, proxy: BluetoothProfile?) {
+                        val headset = proxy as? BluetoothHeadset
+                        val target = runCatching { headset?.connectedDevices?.firstOrNull() }
+                            .getOrNull()
+                        val started = if (headset != null && target != null) {
+                            runCatching { headset.startVoiceRecognition(target) }
+                                .onFailure { DaxLog.w(TAG, "startVoiceRecognition threw", it) }
+                                .getOrDefault(false)
+                        } else {
+                            false
+                        }
+                        DaxLog.i(TAG, "startVoiceRecognition() returned $started")
+                        // The proxy is intentionally left open: closing it here
+                        // can tear down the very SCO link we just asked for.
+                        // It is released when the probe's process scope ends.
+                        continuation.resume(started)
+                    }
+
+                    override fun onServiceDisconnected(profile: Int) = Unit
+                }
+                if (!adapter.getProfileProxy(context, listener, BluetoothProfile.HEADSET)) {
+                    continuation.resume(false)
+                }
+            }
+        } ?: false
+    }
+
+    /**
+     * Every audio device the platform knows about.
+     *
+     * When the SCO check fails this is the difference between "the watch is
+     * invisible to the audio HAL" and "the HAL sees it but will not offer it
+     * for communication" — which point to completely different fixes.
+     */
+    private fun describeAllAudioDevices(): String = runCatching {
+        val manager = audioManager
+        val inputs = manager.getDevices(AudioManager.GET_DEVICES_INPUTS)
+        val outputs = manager.getDevices(AudioManager.GET_DEVICES_OUTPUTS)
+        val relevant = (inputs + outputs)
+            .filter { it.type == AudioDeviceInfo.TYPE_BLUETOOTH_SCO ||
+                it.type == AudioDeviceInfo.TYPE_BLUETOOTH_A2DP ||
+                it.type == AudioDeviceInfo.TYPE_BLE_HEADSET }
+            .joinToString { "${it.productName}/type=${it.type}" }
+        relevant.ifBlank { "no Bluetooth audio device in the HAL at all" }
+    }.getOrDefault("enumeration failed")
 
     /**
      * Waits until the platform reports the requested device as current.
@@ -285,12 +432,28 @@ class CapabilityProbe(
             recorder.stop()
 
             val actualRate = recorder.sampleRate
-            val routedTo = recorder.routedDevice?.productName?.toString().orEmpty()
+            // Where the frames actually came from. Reading this is the whole
+            // point: an AudioRecord whose SCO link dropped keeps delivering
+            // audio from the phone microphone, so frame count and amplitude
+            // alone will happily "prove" a route that is not being used.
+            val routedDevice = recorder.routedDevice
+            val routedToSco = routedDevice?.type == AudioDeviceInfo.TYPE_BLUETOOTH_SCO
+            val routedName = routedDevice?.productName?.toString().orEmpty()
             val formatDetail = buildString {
-                append("${actualRate} Hz mono PCM16")
-                if (routedTo.isNotBlank()) append(", routed to $routedTo")
-                append(" (HFP negotiates CVSD 8 kHz or mSBC 16 kHz; ")
-                append("Android does not expose the codec)")
+                append("$actualRate Hz mono PCM16")
+                append(
+                    when {
+                        routedDevice == null -> ", routed device unknown"
+                        else -> ", routed to $routedName (type ${routedDevice.type})"
+                    },
+                )
+                append(
+                    if (actualRate >= 16_000) {
+                        " — 16 kHz implies wideband mSBC"
+                    } else {
+                        " — 8 kHz implies narrowband CVSD, weaker for recognition"
+                    },
+                )
             }
 
             when {
@@ -300,17 +463,28 @@ class CapabilityProbe(
                     actualRate,
                     formatDetail,
                 )
+                // The failure this probe previously reported as success: the
+                // SCO link dropped mid-capture and the phone microphone
+                // silently took over.
+                !routedToSco -> CaptureOutcome(
+                    CheckStatus.FAIL,
+                    "Captured $frames frames, but from " +
+                        (routedName.ifBlank { "an unknown device" }) +
+                        " — not the Bluetooth route",
+                    actualRate,
+                    formatDetail,
+                )
                 // Silence is a real answer, not a crash. Reported distinctly so
                 // the user knows to check whether the mic was covered or muted.
                 peak == 0 -> CaptureOutcome(
                     CheckStatus.FAIL,
-                    "Captured $frames frames but the signal was pure silence",
+                    "Captured $frames frames from the watch but the signal was pure silence",
                     actualRate,
                     formatDetail,
                 )
                 else -> CaptureOutcome(
                     CheckStatus.PASS,
-                    "Captured $frames frames, peak amplitude $peak",
+                    "Captured $frames frames from $routedName, peak amplitude $peak",
                     actualRate,
                     formatDetail,
                 )
