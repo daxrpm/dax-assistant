@@ -24,7 +24,7 @@ from __future__ import annotations
 import json
 import re
 from enum import Enum
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, cast
 
 import tomli_w
 
@@ -213,7 +213,7 @@ def _secure_config_data(config: DaxConfig, store: SecretStore) -> dict[str, Any]
     for name, srv in servers.items():
         srv["env"] = secure_mcp_env(name, srv.get("env") or {}, store)
         srv["headers"] = secure_headers(name, srv.get("headers") or {}, store)
-    return _strip_none(data)
+    return cast("dict[str, Any]", _strip_none(data))
 
 
 def save_encrypted_config(config: DaxConfig, store: SecretStore) -> None:

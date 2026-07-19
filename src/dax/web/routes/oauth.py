@@ -348,7 +348,9 @@ async def _fetch_as_metadata(
         try:
             resp = await client.get(well_known)
             if resp.status_code == 200:
-                return resp.json()
+                data = resp.json()
+                if isinstance(data, dict):
+                    return data
         except Exception:
             continue
 
@@ -531,7 +533,8 @@ async def refresh_access_token(name: str) -> str | None:
         )
         _store_tokens(name, tokens)
         logger.info("Refreshed OAuth token for '%s'", name)
-        return new["access_token"]
+        access_token = new["access_token"]
+        return access_token if isinstance(access_token, str) else None
     except Exception:
         logger.exception("Token refresh error for '%s'", name)
         return None

@@ -24,6 +24,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import queue
 import re
 import threading
 import time
@@ -31,7 +32,7 @@ import uuid
 from collections import deque
 from enum import StrEnum
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Literal
 
 import numpy as np
 
@@ -39,7 +40,7 @@ from dax.core.exceptions import STTError, TTSError, VoiceError
 from dax.core.models import ChannelType, Language, Message, MessageRole
 from dax.core.voice_events import LevelSource, VoiceEventHub
 from dax.llm.client import sanitize_assistant_text
-from dax.voice.audio_io import CHUNK_SIZE, SAMPLE_RATE, AudioCapture, AudioPlayer
+from dax.voice.audio_io import CHUNK_SIZE, SAMPLE_RATE, AudioCapture, AudioPlayer, AudioSource
 from dax.voice.events import emit_level
 from dax.voice.speaker import SpeakerVerifier
 from dax.voice.stt import build_stt
@@ -101,7 +102,7 @@ def _ends_with_question(text: str) -> bool:
     Used to widen the follow-up window: when Dax asks something he has invited
     a reply, and the default timeout is too short to formulate one.
     """
-    stripped = _clean_for_speech(text).rstrip().rstrip('"\'')
+    stripped = _clean_for_speech(text).rstrip().rstrip("\"'")
     return stripped.endswith("?")
 
 
@@ -133,6 +134,17 @@ class PipelineState(StrEnum):
     PROCESSING = "processing"
     SPEAKING = "speaking"
     CONVERSING = "conversing"
+
+
+class _PTTCommand:
+    """One cross-thread push-to-talk transition and its acknowledgement."""
+
+    def __init__(self, action: Literal["press", "release", "cancel"]) -> None:
+        self.action = action
+        self.done = threading.Event()
+        self.cancelled = threading.Event()
+        self.error: str | None = None
+        self.state = PipelineState.IDLE
 
 
 class VoicePipeline:
@@ -173,14 +185,19 @@ class VoicePipeline:
         # __init__ does not fire a transition event before the object exists.
         self.__state = PipelineState.IDLE
         self._running = False
+        self._ptt_active = False
         self._enabled = True
         self._thread: threading.Thread | None = None
+        self._ptt_commands: queue.SimpleQueue[_PTTCommand] = queue.SimpleQueue()
+        self._ptt_active = False
 
         # Sub-components
         self._capture = AudioCapture(
             sample_rate=SAMPLE_RATE,
             chunk_size=CHUNK_SIZE,
         )
+        self._audio_source: AudioSource = self._capture
+        self._source_lock = threading.Lock()
         self._player = AudioPlayer()
         self._wakeword = WakeWordDetector(
             model_names=[config.wake_word_model] if config.wake_word_model else None,
@@ -205,13 +222,13 @@ class VoicePipeline:
         # In noisy/shared rooms, require the wake word for every turn instead of
         # hands-free follow-up (which can pick up other people).
         self._require_wake_each_turn = getattr(
-            config, "require_wake_word_each_turn", False,
+            config,
+            "require_wake_word_each_turn",
+            False,
         )
         # How long a voice session survives between activations. Beyond this,
         # the next wake word starts a history-free conversation.
-        self._session_ttl_s = max(
-            0.0, getattr(config, "session_ttl_minutes", 10) * 60.0
-        )
+        self._session_ttl_s = max(0.0, getattr(config, "session_ttl_minutes", 10) * 60.0)
 
         # Feature flags (best-practice defaults; see VoiceConfig).
         self._denoise = getattr(config, "denoise", True)
@@ -224,9 +241,7 @@ class VoicePipeline:
             self._conv_timeout,
             getattr(config, "conversation_timeout_question_s", 20),
         )
-        self._followup_activation_ms = max(
-            80, getattr(config, "followup_activation_ms", 320)
-        )
+        self._followup_activation_ms = max(80, getattr(config, "followup_activation_ms", 320))
         self._thinking_pause_s = max(
             0.0, min(3.0, getattr(config, "thinking_pause_ms", 900) / 1000)
         )
@@ -285,7 +300,14 @@ class VoicePipeline:
         if value == self.__state:
             return
         self.__state = value
-        self._events.emit_state(str(value), self._conversation_id)
+        expires_at: float | None = None
+        if self._conversation_id is not None and self._session_ttl_s > 0:
+            remaining = max(
+                0.0,
+                self._session_last_activity + self._session_ttl_s - time.monotonic(),
+            )
+            expires_at = time.time() + remaining
+        self._events.emit_state(str(value), self._conversation_id, session_expires_at=expires_at)
 
     @property
     def state(self) -> PipelineState:
@@ -326,7 +348,9 @@ class VoicePipeline:
 
         self._running = True
         self._thread = threading.Thread(
-            target=self._run_loop, daemon=True, name="voice-pipeline",
+            target=self._run_loop,
+            daemon=True,
+            name="voice-pipeline",
         )
         self._thread.start()
         logger.info("Voice pipeline started")
@@ -334,6 +358,7 @@ class VoicePipeline:
     def stop(self) -> None:
         """Stop the pipeline thread and all components."""
         self._running = False
+        self._fail_pending_ptt("Voice pipeline is stopping")
         if self._thread is not None:
             self._thread.join(timeout=5)
             self._thread = None
@@ -346,6 +371,48 @@ class VoicePipeline:
             self._speaker.stop()
         logger.info("Voice pipeline stopped")
 
+    def push_to_talk_press(self, timeout: float = 2.0) -> PipelineState:
+        """Start local capture without a wake word, safely on the voice thread."""
+        return self._request_ptt("press", timeout)
+
+    def push_to_talk_release(self, timeout: float = 2.0) -> PipelineState:
+        """Finalize local capture and schedule processing on the voice thread."""
+        return self._request_ptt("release", timeout)
+
+    def push_to_talk_cancel(self, timeout: float = 2.0) -> PipelineState:
+        """Abort an incomplete PTT utterance without sending it to STT."""
+        return self._request_ptt("cancel", timeout)
+
+    def select_audio_source(self, source: AudioSource | None) -> None:
+        """Select a source while idle; ``None`` restores the local microphone."""
+        if self._ptt_active or self._state in {
+            PipelineState.LISTENING,
+            PipelineState.CONVERSING,
+        }:
+            raise VoiceError(f"Cannot switch audio source while pipeline is {self._state}")
+        selected = source if source is not None else self._capture
+        with self._source_lock:
+            self._audio_source = selected
+
+    def _request_ptt(
+        self, action: Literal["press", "release", "cancel"], timeout: float
+    ) -> PipelineState:
+        if not self._running or not self._enabled:
+            raise VoiceError("Voice input is not available")
+        if action == "press":
+            if self._ptt_active:
+                return self._state
+            if self._state != PipelineState.IDLE:
+                raise VoiceError(f"Voice pipeline is busy ({self._state})")
+        command = _PTTCommand(action)
+        self._ptt_commands.put(command)
+        if not command.done.wait(timeout):
+            command.cancelled.set()
+            raise VoiceError("Voice pipeline did not accept push-to-talk in time")
+        if command.error is not None:
+            raise VoiceError(command.error)
+        return command.state
+
     # -- Main loop --
 
     def _run_loop(self) -> None:
@@ -356,6 +423,7 @@ class VoicePipeline:
                 continue
 
             try:
+                self._drain_ptt_commands()
                 if self._state == PipelineState.IDLE:
                     self._handle_idle()
                 elif self._state == PipelineState.LISTENING:
@@ -365,11 +433,72 @@ class VoicePipeline:
             except Exception as exc:
                 logger.exception("Voice pipeline error — resetting to IDLE")
                 self._events.emit_error(str(exc))
+                self._ptt_active = False
                 self._state = PipelineState.IDLE
                 self._vad.reset()
                 self._wakeword.reset()
                 self._drain_mic_buffer()
                 time.sleep(0.5)
+
+        self._fail_pending_ptt("Voice pipeline stopped")
+
+    def _drain_ptt_commands(self) -> None:
+        """Apply external PTT commands only from the state-machine thread."""
+        while True:
+            try:
+                command = self._ptt_commands.get_nowait()
+            except queue.Empty:
+                return
+
+            if command.cancelled.is_set():
+                continue
+
+            process_audio = False
+            try:
+                if command.action == "press":
+                    if self._ptt_active:
+                        pass  # Key-repeat is idempotent.
+                    elif self._state != PipelineState.IDLE:
+                        command.error = f"Voice pipeline is busy ({self._state})"
+                    else:
+                        self._ptt_active = True
+                        self._resume_or_start_session()
+                        self._enter_listening()
+                        logger.info("Push-to-talk capture started")
+                elif command.action == "cancel":
+                    self._ptt_active = False
+                    self._speech_buffer = []
+                    if self._state == PipelineState.LISTENING:
+                        self._state = PipelineState.IDLE
+                    logger.info("Push-to-talk capture cancelled")
+                elif self._ptt_active:
+                    self._ptt_active = False
+                    self._drain_remote_ptt_tail()
+                    if self._state == PipelineState.LISTENING and self._speech_buffer:
+                        self._state = PipelineState.PROCESSING
+                        process_audio = True
+                        logger.info("Push-to-talk capture released; processing audio")
+                    elif self._state == PipelineState.LISTENING:
+                        self._state = PipelineState.IDLE
+                        logger.info("Push-to-talk released without audio")
+                command.state = self._state
+            except Exception as exc:
+                command.error = str(exc)
+            finally:
+                # Release the HTTP request before STT/LLM/TTS starts blocking.
+                command.done.set()
+
+            if process_audio:
+                self._process_speech()
+
+    def _fail_pending_ptt(self, message: str) -> None:
+        while True:
+            try:
+                command = self._ptt_commands.get_nowait()
+            except queue.Empty:
+                return
+            command.error = message
+            command.done.set()
 
     # -- State handlers --
 
@@ -408,6 +537,15 @@ class VoicePipeline:
             return
 
         self._speech_buffer.append(chunk)
+        if self._ptt_active:
+            # PTT owns endpointing: silence and the wake-word timeout must not
+            # end capture while the physical key remains held.
+            max_chunks = SAMPLE_RATE * _MAX_RECORDING_SECONDS // CHUNK_SIZE
+            if len(self._speech_buffer) > max_chunks:
+                self._ptt_active = False
+                self._state = PipelineState.PROCESSING
+                self._process_speech()
+            return
         float_chunk = chunk.astype(np.float32) / 32768.0
 
         if self._adaptive:
@@ -417,17 +555,14 @@ class VoicePipeline:
                 self._process_speech()
                 return
             # If the user never started speaking, don't hang forever.
-            if (
-                self._speech_started_at == 0.0
-                and time.monotonic() - self._listen_started_at > 6.0
-            ):
+            if self._speech_started_at == 0.0 and time.monotonic() - self._listen_started_at > 6.0:
                 logger.info("No speech after wake word — returning to IDLE")
                 self._state = PipelineState.IDLE
                 self._speech_buffer = []
                 return
         else:
             for offset in range(0, len(float_chunk), VAD_CHUNK_SIZE):
-                sub = float_chunk[offset: offset + VAD_CHUNK_SIZE]
+                sub = float_chunk[offset : offset + VAD_CHUNK_SIZE]
                 if len(sub) < VAD_CHUNK_SIZE:
                     sub = np.pad(sub, (0, VAD_CHUNK_SIZE - len(sub)))
                 result = self._vad.process_chunk(sub)
@@ -453,7 +588,7 @@ class VoicePipeline:
         now = time.monotonic()
         voiced = False
         for offset in range(0, len(float_chunk), VAD_CHUNK_SIZE):
-            sub = float_chunk[offset: offset + VAD_CHUNK_SIZE]
+            sub = float_chunk[offset : offset + VAD_CHUNK_SIZE]
             if len(sub) < VAD_CHUNK_SIZE:
                 sub = np.pad(sub, (0, VAD_CHUNK_SIZE - len(sub)))
             if self._vad.speech_prob(sub) >= self._vad.threshold:
@@ -484,9 +619,7 @@ class VoicePipeline:
         If silence timeout, go back to IDLE.
         """
         timeout = (
-            self._conv_timeout_question
-            if self._last_reply_was_question
-            else self._conv_timeout
+            self._conv_timeout_question if self._last_reply_was_question else self._conv_timeout
         )
         elapsed = time.monotonic() - self._conversation_start
         if elapsed > timeout:
@@ -506,7 +639,7 @@ class VoicePipeline:
         float_chunk = chunk.astype(np.float32) / 32768.0
         voiced = False
         for offset in range(0, len(float_chunk), VAD_CHUNK_SIZE):
-            sub = float_chunk[offset: offset + VAD_CHUNK_SIZE]
+            sub = float_chunk[offset : offset + VAD_CHUNK_SIZE]
             if len(sub) < VAD_CHUNK_SIZE:
                 sub = np.pad(sub, (0, VAD_CHUNK_SIZE - len(sub)))
             speaking = (
@@ -528,10 +661,7 @@ class VoicePipeline:
             # intermittently.
             speech_like = self._followup_voiced_ms >= _FOLLOWUP_MIN_SPEECH_MS
             self._followup_silence_ms += chunk_ms
-            if (
-                not speech_like
-                or self._followup_silence_ms >= _FOLLOWUP_GAP_TOLERANCE_MS
-            ):
+            if not speech_like or self._followup_silence_ms >= _FOLLOWUP_GAP_TOLERANCE_MS:
                 self._followup_buffer = []
                 self._followup_voiced_ms = 0
                 self._followup_silence_ms = 0
@@ -626,14 +756,16 @@ class VoicePipeline:
         # so we never speak a stale answer to this new question.
         try:
             asyncio.run_coroutine_threadsafe(
-                self._voice_channel.drain(), self._loop,
+                self._voice_channel.drain(),
+                self._loop,
             ).result(timeout=2)
         except Exception:
             logger.debug("Voice queue drain failed", exc_info=True)
 
         try:
             future = asyncio.run_coroutine_threadsafe(
-                self._bus.publish_inbound(message), self._loop,
+                self._bus.publish_inbound(message),
+                self._loop,
             )
             future.result(timeout=5)
         except Exception:
@@ -689,8 +821,7 @@ class VoicePipeline:
             # log simply stops after "Speaking response" and every diagnosis of
             # "follow-up did not engage" is guesswork.
             logger.info(
-                "Reply spoken — interrupted=%s question=%s farewell=%s "
-                "require_wake_each_turn=%s",
+                "Reply spoken — interrupted=%s question=%s farewell=%s require_wake_each_turn=%s",
                 interrupted,
                 self._last_reply_was_question,
                 self._is_farewell(self._last_user_text),
@@ -716,8 +847,7 @@ class VoicePipeline:
                 # follow-up — this branch hid a config problem for three
                 # debugging rounds.
                 logger.info(
-                    "require_wake_word_each_turn is set — skipping follow-up, "
-                    "returning to IDLE"
+                    "require_wake_word_each_turn is set — skipping follow-up, returning to IDLE"
                 )
                 self._state = PipelineState.IDLE
             else:
@@ -800,7 +930,10 @@ class VoicePipeline:
         ApprovalManager when a gated tool originates from the voice channel.
         """
         return await self._loop.run_in_executor(
-            None, self._confirm_blocking, tool_name, options or [],
+            None,
+            self._confirm_blocking,
+            tool_name,
+            options or [],
         )
 
     def _confirm_blocking(self, tool_name: str, options: list[str]) -> str:
@@ -859,7 +992,7 @@ class VoicePipeline:
             float_chunk = chunk.astype(np.float32) / 32768.0
             voiced = False
             for offset in range(0, len(float_chunk), VAD_CHUNK_SIZE):
-                sub = float_chunk[offset: offset + VAD_CHUNK_SIZE]
+                sub = float_chunk[offset : offset + VAD_CHUNK_SIZE]
                 if len(sub) < VAD_CHUNK_SIZE:
                     sub = np.pad(sub, (0, VAD_CHUNK_SIZE - len(sub)))
                 if self._vad.speech_prob(sub) >= self._vad.threshold:
@@ -880,13 +1013,39 @@ class VoicePipeline:
         """Map a spoken answer to a decision string (es/en)."""
         lower = text.lower().strip()
         yes = {
-            "sí", "si", "claro", "dale", "hazlo", "ok", "okay", "vale",
-            "adelante", "confirmo", "confirmar", "yes", "yeah", "yep",
-            "sure", "go ahead", "do it", "confirm", "affirmative",
+            "sí",
+            "si",
+            "claro",
+            "dale",
+            "hazlo",
+            "ok",
+            "okay",
+            "vale",
+            "adelante",
+            "confirmo",
+            "confirmar",
+            "yes",
+            "yeah",
+            "yep",
+            "sure",
+            "go ahead",
+            "do it",
+            "confirm",
+            "affirmative",
         }
         no = {
-            "no", "nop", "negativo", "cancela", "cancelar", "para", "detente",
-            "nope", "cancel", "stop", "don't", "negative",
+            "no",
+            "nop",
+            "negativo",
+            "cancela",
+            "cancelar",
+            "para",
+            "detente",
+            "nope",
+            "cancel",
+            "stop",
+            "don't",
+            "negative",
         }
         tokens = set(re.findall(r"[\wáéíóúñ']+", lower))
         is_yes = bool(tokens & yes) or any(p in lower for p in ("go ahead", "do it"))
@@ -928,11 +1087,7 @@ class VoicePipeline:
         idle_for = now - self._session_last_activity
 
         current = self._conversation_id
-        expired = (
-            current is None
-            or self._session_ttl_s <= 0
-            or idle_for > self._session_ttl_s
-        )
+        expired = current is None or self._session_ttl_s <= 0 or idle_for > self._session_ttl_s
         if expired:
             self._conversation_id = uuid.uuid4().hex
             self._recent_turns.clear()
@@ -987,9 +1142,7 @@ class VoicePipeline:
         self._drain_mic_buffer()  # discard any TTS tail before listening
         logger.info(
             "Conversation mode — listening for follow-up (%ds timeout, question=%s)",
-            self._conv_timeout_question
-            if self._last_reply_was_question
-            else self._conv_timeout,
+            self._conv_timeout_question if self._last_reply_was_question else self._conv_timeout,
             self._last_reply_was_question,
         )
 
@@ -1044,7 +1197,9 @@ class VoicePipeline:
         state handler having to remember to publish. Metering is skipped
         entirely when nobody is subscribed.
         """
-        chunk = self._capture.read_chunk(timeout=timeout)
+        with self._source_lock:
+            source = self._audio_source
+        chunk = source.read_chunk(timeout=timeout)
         if chunk is not None:
             emit_level(self._events, chunk, LevelSource.INPUT)
         return chunk
@@ -1059,8 +1214,23 @@ class VoicePipeline:
 
     def _drain_mic_buffer(self) -> None:
         """Discard any buffered audio chunks from the mic queue."""
-        while self._capture.read_chunk(timeout=0.01) is not None:
+        with self._source_lock:
+            source = self._audio_source
+        while source.read_chunk(timeout=0.01) is not None:
             pass
+
+    def _drain_remote_ptt_tail(self) -> None:
+        """Move accepted remote frames into the utterance before PTT stops."""
+        with self._source_lock:
+            source = self._audio_source
+        if source is self._capture:
+            return
+        while True:
+            chunk = source.read_chunk(timeout=0.0)
+            if chunk is None:
+                return
+            self._speech_buffer.append(chunk)
+            emit_level(self._events, chunk, LevelSource.INPUT)
 
     @staticmethod
     def _map_language(detected: str) -> Language:
@@ -1081,14 +1251,30 @@ class VoicePipeline:
         """
         farewell_patterns = {
             # Spanish
-            "chao", "chau", "adiós", "adios", "hasta luego",
-            "hasta pronto", "nos vemos", "buenas noches",
+            "chao",
+            "chau",
+            "adiós",
+            "adios",
+            "hasta luego",
+            "hasta pronto",
+            "nos vemos",
+            "buenas noches",
             # English
-            "bye", "goodbye", "good bye", "see you", "see ya",
-            "take care", "good night", "that's all", "thats all",
+            "bye",
+            "goodbye",
+            "good bye",
+            "see you",
+            "see ya",
+            "take care",
+            "good night",
+            "that's all",
+            "thats all",
             # Polite closers (user-side only; "listo" removed — Dax says it
             # constantly as filler and it must not end the conversation).
-            "gracias", "thanks", "thank you", "eso es todo",
+            "gracias",
+            "thanks",
+            "thank you",
+            "eso es todo",
         }
         lower = text.lower().strip()
         # Check if the response is short AND contains a farewell

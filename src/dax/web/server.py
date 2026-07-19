@@ -42,6 +42,7 @@ if TYPE_CHECKING:
 # Webview origins used by the bundled desktop app. WebKitGTK (Linux) and WKWebView
 # (macOS) serve from the custom protocol; WebView2 (Windows) uses the http form.
 _DESKTOP_ORIGINS = ("tauri://localhost", "http://tauri.localhost")
+_LOCAL_DEV_ORIGIN_PATTERN = r"^http://(?:localhost|127\.0\.0\.1):(?:5173|5273)$"
 
 
 def create_app(
@@ -86,6 +87,9 @@ def create_app(
     app.add_middleware(
         CORSMiddleware,
         allow_origins=origins,
+        # Vite serves the browser and Tauri development clients on fixed local
+        # ports. Keep this narrow: arbitrary localhost origins are not trusted.
+        allow_origin_regex=_LOCAL_DEV_ORIGIN_PATTERN,
         allow_credentials=True,
         allow_methods=["GET", "POST", "PUT", "PATCH", "DELETE"],
         allow_headers=["Content-Type", "Authorization", "apikey"],

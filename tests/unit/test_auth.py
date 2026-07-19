@@ -73,6 +73,14 @@ class TestAuthFlow:
         resp = await auth_client.get("/api/status")
         assert resp.status_code == 401
 
+    async def test_host_metrics_require_auth(self, auth_client: AsyncClient):
+        resp = await auth_client.get("/api/system/metrics")
+        assert resp.status_code == 401
+
+    async def test_push_to_talk_requires_auth(self, auth_client: AsyncClient):
+        resp = await auth_client.post("/api/voice/push-to-talk/press")
+        assert resp.status_code == 401
+
     async def test_status_endpoint_is_public(self, auth_client: AsyncClient):
         resp = await auth_client.get("/api/auth/status")
         assert resp.status_code == 200
@@ -116,9 +124,7 @@ class TestBearerToken:
         assert resp.status_code == 401
         assert resp.json()["token"] is None
 
-    async def test_bearer_token_authenticates_without_cookie(
-        self, auth_app: FastAPI
-    ) -> None:
+    async def test_bearer_token_authenticates_without_cookie(self, auth_app: FastAPI) -> None:
         transport = ASGITransport(app=auth_app)
         async with AsyncClient(transport=transport, base_url="http://test") as ac:
             login = await ac.post("/api/auth/login", json={"password": PASSWORD})
@@ -127,22 +133,36 @@ class TestBearerToken:
         # A brand-new client — no cookie jar at all, only the bearer header.
         async with AsyncClient(transport=transport, base_url="http://test") as bare:
             assert (await bare.get("/api/status")).status_code == 401
-            resp = await bare.get(
-                "/api/status", headers={"Authorization": f"Bearer {token}"}
-            )
+            resp = await bare.get("/api/status", headers={"Authorization": f"Bearer {token}"})
             assert resp.status_code == 200
+
+    async def test_bearer_authenticates_push_to_talk(self, auth_app: FastAPI) -> None:
+        from types import SimpleNamespace
+        from unittest.mock import MagicMock
+
+        transport = ASGITransport(app=auth_app)
+        async with AsyncClient(transport=transport, base_url="http://test") as ac:
+            token = (await ac.post("/api/auth/login", json={"password": PASSWORD})).json()["token"]
+        auth_app.state.voice_pipeline = SimpleNamespace(
+            push_to_talk_press=MagicMock(return_value="listening")
+        )
+
+        async with AsyncClient(transport=transport, base_url="http://test") as bare:
+            response = await bare.post(
+                "/api/voice/push-to-talk/press",
+                headers={"Authorization": f"Bearer {token}"},
+            )
+
+        assert response.status_code == 200
+        assert response.json()["state"] == "listening"
 
     async def test_bearer_reported_in_auth_status(self, auth_app: FastAPI) -> None:
         transport = ASGITransport(app=auth_app)
         async with AsyncClient(transport=transport, base_url="http://test") as ac:
-            token = (
-                await ac.post("/api/auth/login", json={"password": PASSWORD})
-            ).json()["token"]
+            token = (await ac.post("/api/auth/login", json={"password": PASSWORD})).json()["token"]
         async with AsyncClient(transport=transport, base_url="http://test") as bare:
             data = (
-                await bare.get(
-                    "/api/auth/status", headers={"Authorization": f"Bearer {token}"}
-                )
+                await bare.get("/api/auth/status", headers={"Authorization": f"Bearer {token}"})
             ).json()
             assert data["authenticated"] is True
 
@@ -156,27 +176,19 @@ class TestBearerToken:
         bearer token — auth accepts if *any* offered credential validates."""
         transport = ASGITransport(app=auth_app)
         async with AsyncClient(transport=transport, base_url="http://test") as ac:
-            token = (
-                await ac.post("/api/auth/login", json={"password": PASSWORD})
-            ).json()["token"]
+            token = (await ac.post("/api/auth/login", json={"password": PASSWORD})).json()["token"]
 
         auth: AuthManager = auth_app.state.auth
         async with AsyncClient(transport=transport, base_url="http://test") as bare:
             bare.cookies.set(auth.cookie_name, "stale-and-invalid")
             assert (await bare.get("/api/status")).status_code == 401
-            resp = await bare.get(
-                "/api/status", headers={"Authorization": f"Bearer {token}"}
-            )
+            resp = await bare.get("/api/status", headers={"Authorization": f"Bearer {token}"})
             assert resp.status_code == 200
 
-    async def test_cookie_still_works_when_bearer_is_junk(
-        self, auth_client: AsyncClient
-    ) -> None:
+    async def test_cookie_still_works_when_bearer_is_junk(self, auth_client: AsyncClient) -> None:
         """Regression guard: the existing web UI must keep working."""
         await auth_client.post("/api/auth/login", json={"password": PASSWORD})
-        resp = await auth_client.get(
-            "/api/status", headers={"Authorization": "Bearer nonsense"}
-        )
+        resp = await auth_client.get("/api/status", headers={"Authorization": "Bearer nonsense"})
         assert resp.status_code == 200
 
 
@@ -237,7 +249,15 @@ class TestWebSocketAuthCredentials:
         assert mgr.authenticate_websocket(self._fake_ws())  # type: ignore[arg-type]
 
 
-def test_desktop_webview_origin_is_allowed_by_default():
+@pytest.mark.parametrize(
+    "origin",
+    [
+        "tauri://localhost",
+        "http://localhost:5273",
+        "http://127.0.0.1:5273",
+    ],
+)
+def test_desktop_webview_origin_is_allowed_by_default(origin: str):
     """A fresh install must serve the desktop app without config changes.
 
     The webview's origin is not configurable on the client side, so leaving it
@@ -259,10 +279,10 @@ def test_desktop_webview_origin_is_allowed_by_default():
     response = client.options(
         "/api/health",
         headers={
-            "Origin": "tauri://localhost",
+            "Origin": origin,
             "Access-Control-Request-Method": "GET",
         },
     )
 
     assert response.status_code == 200
-    assert response.headers["access-control-allow-origin"] == "tauri://localhost"
+    assert response.headers["access-control-allow-origin"] == origin

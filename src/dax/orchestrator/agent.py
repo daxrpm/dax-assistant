@@ -51,9 +51,26 @@ MAX_HISTORY_MESSAGES = 20
 _RELEVANCE_CONTEXT_TURNS = 3
 
 _SPANISH_HINTS = {
-    "blanca", "blanco", "cambio", "color", "como", "de", "el", "esta",
-    "la", "las", "lo", "los", "no", "pon", "ponla", "puedes", "que",
-    "quiero", "totalmente", "una",
+    "blanca",
+    "blanco",
+    "cambio",
+    "color",
+    "como",
+    "de",
+    "el",
+    "esta",
+    "la",
+    "las",
+    "lo",
+    "los",
+    "no",
+    "pon",
+    "ponla",
+    "puedes",
+    "que",
+    "quiero",
+    "totalmente",
+    "una",
 }
 
 
@@ -65,11 +82,9 @@ def _relevance_query(content: str, history: list[Message]) -> str:
     server it referred to a turn ago (e.g. Spotify) and its tools drop out of
     the budget. Prepending the last few user turns keeps that intent in scope.
     """
-    recent = [
-        m.content
-        for m in history
-        if m.role is MessageRole.USER and m.content
-    ][-_RELEVANCE_CONTEXT_TURNS:]
+    recent = [m.content for m in history if m.role is MessageRole.USER and m.content][
+        -_RELEVANCE_CONTEXT_TURNS:
+    ]
     return " ".join([*recent, content])
 
 
@@ -80,15 +95,11 @@ def _respond_in_spanish(message: Message) -> bool:
         return False
     words = set(re.findall(r"[a-záéíóúñü]+", message.content.lower()))
     return bool(
-        "¿" in message.content
-        or "¡" in message.content
-        or len(words & _SPANISH_HINTS) >= 2
+        "¿" in message.content or "¡" in message.content or len(words & _SPANISH_HINTS) >= 2
     )
 
 
-def _tool_budget_fallback(
-    message: Message, results: list[tuple[ToolCall, ToolResult]]
-) -> str:
+def _tool_budget_fallback(message: Message, results: list[tuple[ToolCall, ToolResult]]) -> str:
     spanish = _respond_in_spanish(message)
     failed = next(
         ((call, result) for call, result in reversed(results) if result.is_error),
@@ -154,9 +165,9 @@ class Agent:
             storage=storage,
         )
         self._task: asyncio.Task[None] | None = None
-        self._event_broadcaster: (
-            Callable[[dict[str, Any]], Coroutine[Any, Any, None]] | None
-        ) = None
+        self._event_broadcaster: Callable[[dict[str, Any]], Coroutine[Any, Any, None]] | None = (
+            None
+        )
 
     def set_system_prompt(self, prompt: str) -> None:
         """Apply a new base prompt without restarting the agent."""
@@ -202,6 +213,7 @@ class Agent:
                     content="I'm sorry, something went wrong processing your request.",
                     channel=message.channel,
                     language=message.language,
+                    metadata=dict(message.metadata),
                 )
                 await self._bus.publish_outbound(error_response)
 
@@ -232,9 +244,7 @@ class Agent:
         # Load (or start) the conversation for this session and feed recent
         # history back to the model so it has memory across turns.
         session_key = self._session_key(message)
-        conversation = await self._storage.get_or_create_conversation(
-            message.channel, session_key
-        )
+        conversation = await self._storage.get_or_create_conversation(message.channel, session_key)
         history = conversation.messages[-MAX_HISTORY_MESSAGES:]
 
         # Record the user turn in the conversation we'll persist below.
@@ -253,9 +263,7 @@ class Agent:
             )
             openai_tools = mcp_tools_to_openai(relevant) or None
 
-        system_prompt = self._prompt.build(
-            relevant or available_tools, channel=message.channel
-        )
+        system_prompt = self._prompt.build(relevant or available_tools, channel=message.channel)
         llm_messages = build_messages_for_llm(
             message, conversation_history=history, system_prompt=system_prompt
         )
@@ -267,7 +275,9 @@ class Agent:
             [t["name"] for t in relevant[:15]],
         )
 
-        await self._emit({"type": "thinking"})
+        session_id = message.metadata.get("session_id")
+        correlation_id = session_id if isinstance(session_id, str) and session_id else None
+        await self._emit({"type": "thinking", "session_id": correlation_id})
         start_ts = time.monotonic()
         execution_results: list[tuple[ToolCall, ToolResult]] = []
 
@@ -284,7 +294,7 @@ class Agent:
 
             # If no tool calls, we have our final answer.
             if not response.tool_calls:
-                await self._emit_done(start_ts)
+                await self._emit_done(start_ts, correlation_id)
                 return await self._finalize(
                     conversation, self._assistant_reply(message, response.content)
                 )
@@ -300,6 +310,7 @@ class Agent:
                     response.tool_calls,
                     llm_messages,
                     channel=message.channel.value,
+                    session_id=correlation_id,
                 )
             )
 
@@ -307,15 +318,17 @@ class Agent:
         # tool call. Make one tool-free pass so the user hears the real outcome
         # instead of a generic (and potentially false) success message.
         logger.warning("Max tool iterations (%d) reached", self._max_tool_iterations)
-        llm_messages.append({
-            "role": "system",
-            "content": (
-                "The tool execution budget is exhausted. Do not request any more "
-                "tools. Briefly tell the user what succeeded, what failed, and "
-                "what they need to do next. Never claim an action succeeded when "
-                "a tool result reported an error."
-            ),
-        })
+        llm_messages.append(
+            {
+                "role": "system",
+                "content": (
+                    "The tool execution budget is exhausted. Do not request any more "
+                    "tools. Briefly tell the user what succeeded, what failed, and "
+                    "what they need to do next. Never claim an action succeeded when "
+                    "a tool result reported an error."
+                ),
+            }
+        )
         try:
             final_response = await self._llm.complete(
                 messages=llm_messages,
@@ -328,7 +341,7 @@ class Agent:
 
         if not content:
             content = _tool_budget_fallback(message, execution_results)
-        await self._emit_done(start_ts)
+        await self._emit_done(start_ts, correlation_id)
         return await self._finalize(
             conversation,
             self._assistant_reply(message, content),
@@ -340,30 +353,39 @@ class Agent:
         llm_messages: list[dict[str, Any]],
         *,
         channel: str | None = None,
+        session_id: str | None = None,
     ) -> list[tuple[ToolCall, ToolResult]]:
         """Execute each tool call via the gate, emitting UI events + feeding
         results back into the LLM message list."""
         results: list[tuple[ToolCall, ToolResult]] = []
         for tool_call in tool_calls:
-            await self._emit({
-                "type": "tool_call",
-                "tool": tool_call.tool_name,
-                "server": tool_call.server_name or "",
-                "args": dict(tool_call.arguments),
-            })
-            result = await self._gate.execute(tool_call, channel=channel)
+            await self._emit(
+                {
+                    "type": "tool_call",
+                    "tool": tool_call.tool_name,
+                    "server": tool_call.server_name or "",
+                    "args": dict(tool_call.arguments),
+                    "session_id": session_id,
+                }
+            )
+            result = await self._gate.execute(tool_call, channel=channel, session_id=session_id)
             results.append((tool_call, result))
-            await self._emit({
-                "type": "tool_result",
-                "tool": tool_call.tool_name,
-                "preview": result.content[:300] if result.content else "",
-                "error": result.is_error,
-            })
-            llm_messages.append({
-                "role": "tool",
-                "tool_call_id": tool_call.id,
-                "content": result.content,
-            })
+            await self._emit(
+                {
+                    "type": "tool_result",
+                    "tool": tool_call.tool_name,
+                    "preview": result.content[:300] if result.content else "",
+                    "error": result.is_error,
+                    "session_id": session_id,
+                }
+            )
+            llm_messages.append(
+                {
+                    "role": "tool",
+                    "tool_call_id": tool_call.id,
+                    "content": result.content,
+                }
+            )
         return results
 
     def _assistant_reply(self, source: Message, content: str) -> Message:
@@ -383,8 +405,14 @@ class Agent:
             metadata=dict(source.metadata),
         )
 
-    async def _emit_done(self, start_ts: float) -> None:
-        await self._emit({"type": "done", "elapsed_s": round(time.monotonic() - start_ts, 1)})
+    async def _emit_done(self, start_ts: float, session_id: str | None = None) -> None:
+        await self._emit(
+            {
+                "type": "done",
+                "elapsed_s": round(time.monotonic() - start_ts, 1),
+                "session_id": session_id,
+            }
+        )
 
     async def _finalize(self, conversation: Conversation, assistant: Message) -> Message:
         """Append the assistant turn, persist the conversation, and return it."""

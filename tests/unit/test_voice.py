@@ -8,16 +8,19 @@ from __future__ import annotations
 
 import asyncio
 import io
+import threading
 import time
 import wave
 from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
 import numpy as np
+import pytest
 
 from dax.channels.voice_channel import VoiceChannel
+from dax.core.exceptions import VoiceError
 from dax.core.models import ChannelType, Language, Message, MessageRole
-from dax.voice.audio_io import AudioCapture, AudioPlayer
+from dax.voice.audio_io import AudioCapture, AudioPlayer, RemoteAudioSource
 from dax.voice.pipeline import PipelineState, VoicePipeline
 
 
@@ -65,6 +68,28 @@ class TestAudioCapture:
         result = capture.read_chunk(timeout=1.0)
         assert result is not None
         assert len(result) == 1280
+
+
+class TestRemoteAudioSource:
+    def test_decodes_little_endian_pcm(self):
+        source = RemoteAudioSource()
+        source.start()
+        source.feed_pcm(b"\x01\x00\xff\x7f\x00\x80")
+        assert source.read_chunk(timeout=0.01).tolist() == [1, 32767, -32768]
+
+    @pytest.mark.parametrize("frame", [b"", b"\x00", b"\x00" * 3202])
+    def test_rejects_invalid_frames(self, frame: bytes):
+        source = RemoteAudioSource()
+        source.start()
+        with pytest.raises(ValueError):
+            source.feed_pcm(frame)
+
+    def test_queue_is_bounded_and_non_blocking(self):
+        source = RemoteAudioSource(max_frames=1)
+        source.start()
+        source.feed_pcm(b"\x00\x00")
+        with pytest.raises(BufferError, match="full"):
+            source.feed_pcm(b"\x00\x00")
 
 
 class TestAudioPlayer:
@@ -143,6 +168,20 @@ class TestPipelineEnabled:
     def test_initial_state_is_idle(self):
         pipeline = self._make_pipeline()
         assert pipeline.state == PipelineState.IDLE
+
+    def test_pipeline_switches_to_pluggable_source_and_back(self):
+        pipeline = self._make_pipeline()
+        remote = RemoteAudioSource()
+        pipeline.select_audio_source(remote)
+        assert pipeline._audio_source is remote
+        pipeline.select_audio_source(None)
+        assert pipeline._audio_source is pipeline._capture
+
+    def test_pipeline_refuses_source_switch_during_capture(self):
+        pipeline = self._make_pipeline()
+        pipeline._ptt_active = True
+        with pytest.raises(VoiceError, match="Cannot switch"):
+            pipeline.select_audio_source(RemoteAudioSource())
 
     def test_barge_in_preserves_queued_command_audio(self):
         pipeline = self._make_pipeline()
@@ -230,9 +269,7 @@ class TestOpenAIHostedSTT:
     def test_encodes_audio_as_16khz_mono_wav(self):
         from dax.voice.stt import OpenAISpeechToText
 
-        payload = OpenAISpeechToText._wav_bytes(
-            np.array([-1.0, 0.0, 1.0], dtype=np.float32)
-        )
+        payload = OpenAISpeechToText._wav_bytes(np.array([-1.0, 0.0, 1.0], dtype=np.float32))
         with wave.open(io.BytesIO(payload), "rb") as wav:
             assert wav.getnchannels() == 1
             assert wav.getsampwidth() == 2
@@ -272,13 +309,9 @@ class TestOpenAIHostedSTT:
         )
 
         assert isinstance(build_stt(VoiceConfig(stt_backend="local")), SpeechToText)
+        assert isinstance(build_stt(VoiceConfig(stt_backend="openai")), FallbackSpeechToText)
         assert isinstance(
-            build_stt(VoiceConfig(stt_backend="openai")), FallbackSpeechToText
-        )
-        assert isinstance(
-            build_stt(VoiceConfig(
-                stt_backend="openai", stt_fallback_to_local=False
-            )),
+            build_stt(VoiceConfig(stt_backend="openai", stt_fallback_to_local=False)),
             OpenAISpeechToText,
         )
 
@@ -351,9 +384,7 @@ class TestSpeakerVerifier:
     def test_can_fail_closed_without_profile(self, tmp_path):
         from dax.voice.speaker import SpeakerVerifier
 
-        verifier = SpeakerVerifier(
-            profile_path=str(tmp_path / "missing.npy"), fail_open=False
-        )
+        verifier = SpeakerVerifier(profile_path=str(tmp_path / "missing.npy"), fail_open=False)
         assert verifier.verify(np.zeros(16000, dtype=np.float32)) is False
 
 
@@ -417,6 +448,22 @@ class TestVoiceSession:
 
         assert pipeline._conversation_id != first
 
+
+    def test_state_event_uses_configured_session_expiration(self):
+        pipeline = self._make_pipeline(session_ttl_minutes=10)
+        pipeline._resume_or_start_session()
+
+        with (
+            patch("dax.voice.pipeline.time.monotonic", return_value=1000.0),
+            patch("dax.voice.pipeline.time.time", return_value=1_800_000_000.0),
+        ):
+            pipeline._session_last_activity = 970.0
+            pipeline._state = PipelineState.LISTENING
+
+        event = pipeline.events.last_state
+        assert event is not None
+        assert event.data["session_expires_at"] == 1_800_000_570.0
+
     def test_ttl_zero_restores_per_activation_reset(self):
         """session_ttl_minutes=0 opts back into a fresh session every time."""
         pipeline = self._make_pipeline(session_ttl_minutes=0)
@@ -447,6 +494,109 @@ class TestVoiceSession:
         pipeline._resume_or_start_session()
 
         assert pipeline._conversation_id != first
+
+
+class TestPushToTalk:
+    def _make_pipeline(self) -> VoicePipeline:
+        from dax.core.config import VoiceConfig
+        from dax.orchestrator.bus import MessageBus
+
+        bus = MessageBus()
+        bus.start()
+        loop = asyncio.new_event_loop()
+        with (
+            patch("dax.voice.pipeline.AudioCapture"),
+            patch("dax.voice.pipeline.AudioPlayer"),
+            patch("dax.voice.pipeline.WakeWordDetector"),
+            patch("dax.voice.pipeline.VoiceActivityDetector"),
+            patch("dax.voice.pipeline.build_stt"),
+            patch("dax.voice.pipeline.build_tts"),
+        ):
+            pipeline = VoicePipeline(VoiceConfig(), bus, VoiceChannel(), loop)
+        pipeline._running = True
+        loop.close()
+        return pipeline
+
+    @staticmethod
+    def _request(pipeline: VoicePipeline, action: str) -> PipelineState:
+        result: list[PipelineState] = []
+        method = (
+            pipeline.push_to_talk_press
+            if action == "press"
+            else pipeline.push_to_talk_release
+        )
+        worker = threading.Thread(target=lambda: result.append(method()))
+        worker.start()
+        while worker.is_alive():
+            pipeline._drain_ptt_commands()
+            worker.join(timeout=0.01)
+        return result[0]
+
+    def test_press_from_idle_starts_session_and_listening(self):
+        pipeline = self._make_pipeline()
+
+        state = self._request(pipeline, "press")
+
+        assert state == PipelineState.LISTENING
+        assert pipeline._ptt_active is True
+        assert pipeline._conversation_id is not None
+
+    def test_release_with_audio_processes_once(self):
+        pipeline = self._make_pipeline()
+        self._request(pipeline, "press")
+        pipeline._speech_buffer = [np.ones(1280, dtype=np.int16)]
+        pipeline._process_speech = MagicMock()  # type: ignore[method-assign]
+
+        state = self._request(pipeline, "release")
+
+        assert state == PipelineState.PROCESSING
+        assert pipeline._ptt_active is False
+        pipeline._process_speech.assert_called_once()
+
+    def test_release_drains_all_accepted_remote_frames_before_processing(self):
+        pipeline = self._make_pipeline()
+        remote = RemoteAudioSource()
+        remote.start()
+        pipeline.select_audio_source(remote)
+        self._request(pipeline, "press")
+        remote.feed_pcm(b"\x01\x00" * 160)
+        remote.feed_pcm(b"\x02\x00" * 160)
+        captured: list[np.ndarray] = []
+        pipeline._process_speech = lambda: captured.append(  # type: ignore[method-assign]
+            np.concatenate(pipeline._speech_buffer)
+        )
+
+        assert self._request(pipeline, "release") == PipelineState.PROCESSING
+        assert len(captured) == 1
+        assert captured[0].tolist() == [1] * 160 + [2] * 160
+
+    def test_release_without_audio_returns_idle_and_is_idempotent(self):
+        pipeline = self._make_pipeline()
+        self._request(pipeline, "press")
+
+        assert self._request(pipeline, "release") == PipelineState.IDLE
+        assert self._request(pipeline, "release") == PipelineState.IDLE
+
+    def test_ptt_disables_automatic_endpointing_while_held(self):
+        pipeline = self._make_pipeline()
+        self._request(pipeline, "press")
+        pipeline._capture.read_chunk.return_value = np.ones(1280, dtype=np.int16)
+        pipeline._adaptive_endpoint = MagicMock(return_value=True)  # type: ignore[method-assign]
+
+        pipeline._handle_listening()
+
+        assert pipeline.state == PipelineState.LISTENING
+        pipeline._adaptive_endpoint.assert_not_called()
+
+    def test_timed_out_command_cannot_run_late(self):
+        pipeline = self._make_pipeline()
+
+        with pytest.raises(VoiceError, match="did not accept"):
+            pipeline.push_to_talk_press(timeout=0.001)
+        pipeline._drain_ptt_commands()
+
+        assert pipeline.state == PipelineState.IDLE
+        assert pipeline._ptt_active is False
 
 
 class TestFollowUpDetection:

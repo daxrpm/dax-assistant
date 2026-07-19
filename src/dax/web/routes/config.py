@@ -22,6 +22,8 @@ from dax.web.routes.mcp import server_response
 
 router = APIRouter(tags=["config"])
 
+_MASKED_SECRET = "********"
+
 # Secret fields that, when present in a patch, are written to the encrypted
 # store under these env names (kept out of the TOML by config_io too).
 _WHATSAPP_SECRETS = {
@@ -34,22 +36,28 @@ _LLM_FIELD_MAP: dict[str, tuple[str, str]] = {
     "default_provider": ("llm", "default_provider"),
     "fallback_order": ("llm", "fallback_order"),
     "max_tools": ("llm", "max_tools"),
+    "max_tool_iterations": ("llm", "max_tool_iterations"),
     "ollama_model": ("llm.ollama", "model"),
     "ollama_base_url": ("llm.ollama", "base_url"),
     "ollama_timeout": ("llm.ollama", "timeout"),
     "anthropic_model": ("llm.anthropic", "model"),
     "anthropic_api_key": ("llm.anthropic", "api_key"),
+    "anthropic_timeout": ("llm.anthropic", "timeout"),
     "openai_model": ("llm.openai", "model"),
     "openai_base_url": ("llm.openai", "base_url"),
     "openai_api_key": ("llm.openai", "api_key"),
     "openai_reasoning_effort": ("llm.openai", "reasoning_effort"),
+    "openai_timeout": ("llm.openai", "timeout"),
     "gemini_model": ("llm.gemini", "model"),
     "gemini_api_key": ("llm.gemini", "api_key"),
+    "gemini_timeout": ("llm.gemini", "timeout"),
     "deepseek_model": ("llm.deepseek", "model"),
     "deepseek_api_key": ("llm.deepseek", "api_key"),
     "deepseek_base_url": ("llm.deepseek", "base_url"),
+    "deepseek_timeout": ("llm.deepseek", "timeout"),
     "codex_binary": ("llm.codex", "binary"),
     "codex_model": ("llm.codex", "model"),
+    "codex_timeout": ("llm.codex", "timeout"),
 }
 
 
@@ -77,22 +85,28 @@ class LLMConfigUpdate(BaseModel):
     default_provider: str | None = None
     fallback_order: list[str] | None = None
     max_tools: int | None = None
+    max_tool_iterations: int | None = None
     ollama_model: str | None = None
     ollama_base_url: str | None = None
     ollama_timeout: int | None = None
     anthropic_model: str | None = None
     anthropic_api_key: str | None = None
+    anthropic_timeout: int | None = None
     openai_model: str | None = None
     openai_base_url: str | None = None
     openai_api_key: str | None = None
     openai_reasoning_effort: str | None = None
+    openai_timeout: int | None = None
     gemini_model: str | None = None
     gemini_api_key: str | None = None
+    gemini_timeout: int | None = None
     deepseek_model: str | None = None
     deepseek_api_key: str | None = None
     deepseek_base_url: str | None = None
+    deepseek_timeout: int | None = None
     codex_binary: str | None = None
     codex_model: str | None = None
+    codex_timeout: int | None = None
 
 
 class VoiceConfigUpdate(BaseModel):
@@ -129,6 +143,8 @@ class VoiceConfigUpdate(BaseModel):
     barge_in: bool | None = None
     earcon: bool | None = None
     conversation_timeout_s: int | None = None
+    conversation_timeout_question_s: int | None = None
+    session_ttl_minutes: int | None = None
     followup_activation_ms: int | None = None
     thinking_pause_ms: int | None = None
     response_timeout_s: int | None = None
@@ -144,6 +160,7 @@ class WhatsAppConfigUpdate(BaseModel):
     evolution_api_url: str | None = None
     evolution_api_instance: str | None = None
     evolution_api_key: str | None = None
+    webhook_secret: str | None = None
     respond_with_audio: bool | None = None
 
 
@@ -163,6 +180,7 @@ class SecurityConfigUpdate(BaseModel):
     auth_enabled: bool | None = None
     session_ttl_hours: int | None = None
     cookie_secure: bool | None = None
+    cookie_name: str | None = None
 
 
 class WebConfigUpdate(BaseModel):
@@ -170,6 +188,7 @@ class WebConfigUpdate(BaseModel):
     port: int | None = None
     cors_origins: list[str] | None = None
     expose_lan: bool | None = None
+    dev_mode: bool | None = None
 
 
 class TelegramConfigUpdate(BaseModel):
@@ -212,6 +231,11 @@ async def get_config(config: ConfigDep) -> dict[str, Any]:
             "stt_openai_configured": bool(
                 os.environ.get("OPENAI_API_KEY") or config.llm.openai.api_key
             ),
+            "stt_openai_api_key": (
+                _MASKED_SECRET
+                if os.environ.get("OPENAI_API_KEY") or config.llm.openai.api_key
+                else ""
+            ),
             "stt_fallback_to_local": config.voice.stt_fallback_to_local,
             "tts_engine": config.voice.tts_engine,
             "tts_voice_es": config.voice.tts_voice_es,
@@ -232,6 +256,8 @@ async def get_config(config: ConfigDep) -> dict[str, Any]:
             "barge_in": getattr(config.voice, "barge_in", True),
             "earcon": getattr(config.voice, "earcon", True),
             "conversation_timeout_s": getattr(config.voice, "conversation_timeout_s", 8),
+            "conversation_timeout_question_s": config.voice.conversation_timeout_question_s,
+            "session_ttl_minutes": config.voice.session_ttl_minutes,
             "followup_activation_ms": config.voice.followup_activation_ms,
             "thinking_pause_ms": config.voice.thinking_pause_ms,
             "response_timeout_s": config.voice.response_timeout_s,
@@ -248,34 +274,42 @@ async def get_config(config: ConfigDep) -> dict[str, Any]:
             "default_provider": config.llm.default_provider,
             "fallback_order": config.llm.fallback_order,
             "max_tools": getattr(config.llm, "max_tools", 45),
+            "max_tool_iterations": config.llm.max_tool_iterations,
             "ollama_model": config.llm.ollama.model,
             "ollama_base_url": config.llm.ollama.base_url,
             "ollama_timeout": config.llm.ollama.timeout,
             "anthropic_model": config.llm.anthropic.model,
             "anthropic_configured": bool(config.llm.anthropic.api_key),
+            "anthropic_api_key": (_MASKED_SECRET if config.llm.anthropic.api_key else ""),
+            "anthropic_timeout": config.llm.anthropic.timeout,
             "openai_model": config.llm.openai.model,
             "openai_base_url": config.llm.openai.base_url,
             "openai_configured": bool(config.llm.openai.api_key),
-            "openai_reasoning_effort": getattr(
-                config.llm.openai, "reasoning_effort", "low"
-            ),
+            "openai_api_key": _MASKED_SECRET if config.llm.openai.api_key else "",
+            "openai_timeout": config.llm.openai.timeout,
+            "openai_reasoning_effort": getattr(config.llm.openai, "reasoning_effort", "low"),
             "gemini_model": config.llm.gemini.model,
             "gemini_configured": bool(config.llm.gemini.api_key),
-            "deepseek_model": getattr(config.llm, "deepseek", None)
-            and config.llm.deepseek.model,
+            "gemini_api_key": _MASKED_SECRET if config.llm.gemini.api_key else "",
+            "gemini_timeout": config.llm.gemini.timeout,
+            "deepseek_model": getattr(config.llm, "deepseek", None) and config.llm.deepseek.model,
             "deepseek_base_url": getattr(config.llm, "deepseek", None)
             and config.llm.deepseek.base_url,
             "deepseek_configured": bool(
                 getattr(config.llm, "deepseek", None) and config.llm.deepseek.api_key
             ),
+            "deepseek_api_key": (_MASKED_SECRET if config.llm.deepseek.api_key else ""),
+            "deepseek_timeout": config.llm.deepseek.timeout,
             "codex_binary": getattr(config.llm.codex, "binary", "codex"),
             "codex_model": getattr(config.llm.codex, "model", ""),
+            "codex_timeout": config.llm.codex.timeout,
         },
         "web": {
             "host": config.web.host,
             "port": config.web.port,
             "cors_origins": config.web.cors_origins,
             "expose_lan": getattr(config.web, "expose_lan", False),
+            "dev_mode": config.web.dev_mode,
         },
         "whatsapp": {
             "enabled": config.whatsapp.enabled,
@@ -283,18 +317,23 @@ async def get_config(config: ConfigDep) -> dict[str, Any]:
             "evolution_api_instance": config.whatsapp.evolution_api_instance,
             "respond_with_audio": config.whatsapp.respond_with_audio,
             "has_api_key": bool(config.whatsapp.evolution_api_key),
+            "evolution_api_key": (_MASKED_SECRET if config.whatsapp.evolution_api_key else ""),
+            "has_webhook_secret": bool(config.whatsapp.webhook_secret),
+            "webhook_secret": (_MASKED_SECRET if config.whatsapp.webhook_secret else ""),
         },
         "telegram": {
             "enabled": config.telegram.enabled,
             "allowed_user_ids": config.telegram.allowed_user_ids,
             "respond_with_audio": config.telegram.respond_with_audio,
             "has_token": bool(config.telegram.bot_token),
+            "bot_token": _MASKED_SECRET if config.telegram.bot_token else "",
         },
         "security": {
             "auth_enabled": config.security.auth_enabled,
             "configured": bool(config.security.password_hash),
             "session_ttl_hours": config.security.session_ttl_hours,
             "cookie_secure": config.security.cookie_secure,
+            "cookie_name": config.security.cookie_name,
         },
         "tools": {
             "confirm_timeout_seconds": config.tools.confirm_timeout_seconds,
@@ -307,10 +346,11 @@ async def get_config(config: ConfigDep) -> dict[str, Any]:
             },
         },
         "mcp": {
-            "servers": {
-                name: server_response(srv)
-                for name, srv in config.mcp.servers.items()
-            },
+            "servers": {name: server_response(srv) for name, srv in config.mcp.servers.items()},
+        },
+        "storage": {
+            "database_path": config.storage.database_path,
+            "models_path": config.storage.models_path,
         },
     }
 
@@ -332,9 +372,7 @@ async def update_general(
 
 
 @router.post("/config/general/system-prompt/reset")
-async def reset_system_prompt(
-    request: Request, config: ConfigDep
-) -> dict[str, str]:
+async def reset_system_prompt(request: Request, config: ConfigDep) -> dict[str, str]:
     """Restore the maintained prompt and apply it to the next agent turn."""
     object.__setattr__(config, "system_prompt", "")
     persist_config(request)
@@ -345,12 +383,12 @@ async def reset_system_prompt(
 
 
 @router.patch("/config/llm")
-async def update_llm(
-    request: Request, body: LLMConfigUpdate, config: ConfigDep
-) -> dict[str, str]:
+async def update_llm(request: Request, body: LLMConfigUpdate, config: ConfigDep) -> dict[str, str]:
     """Update LLM provider settings and rebuild the live router."""
     for key, value in body.model_dump(exclude_none=True).items():
         if key not in _LLM_FIELD_MAP:
+            continue
+        if key.endswith("_api_key") and value in ("", _MASKED_SECRET):
             continue
         section, attr = _LLM_FIELD_MAP[key]
         obj: Any = config
@@ -370,9 +408,7 @@ async def update_llm(
         try:
             router_obj.set_providers(build_providers(config.llm))
         except Exception as e:
-            raise HTTPException(
-                status_code=400, detail=f"Invalid LLM configuration: {e}"
-            ) from e
+            raise HTTPException(status_code=400, detail=f"Invalid LLM configuration: {e}") from e
 
     return {"status": "ok"}
 
@@ -389,12 +425,8 @@ async def update_voice(
     api_key = updates.pop("stt_openai_api_key", None)
     old_stored_key = store.get("OPENAI_API_KEY")
     old_env_key = os.environ.get("OPENAI_API_KEY")
-    key_changed = bool(api_key) and api_key != old_env_key
-    old_values = {
-        key: getattr(config.voice, key)
-        for key in updates
-        if hasattr(config.voice, key)
-    }
+    key_changed = bool(api_key) and api_key != _MASKED_SECRET and api_key != old_env_key
+    old_values = {key: getattr(config.voice, key) for key in updates if hasattr(config.voice, key)}
     config_changes = {
         key: value
         for key, value in updates.items()
@@ -411,10 +443,7 @@ async def update_voice(
     dax_app = getattr(request.app.state, "dax_app", None)
     reload_needed = bool(config_changes) or (
         key_changed
-        and (
-            config.voice.stt_backend == "openai"
-            or config.voice.tts_engine == "openai"
-        )
+        and (config.voice.stt_backend == "openai" or config.voice.tts_engine == "openai")
     )
     try:
         persist_config(request)
@@ -449,6 +478,8 @@ async def update_whatsapp(
 ) -> dict[str, str]:
     """Update WhatsApp integration settings."""
     for key, value in body.model_dump(exclude_none=True).items():
+        if key in _WHATSAPP_SECRETS and value in ("", _MASKED_SECRET):
+            continue
         if key in _WHATSAPP_SECRETS and isinstance(value, str) and value:
             store.set(_WHATSAPP_SECRETS[key], value)
         if hasattr(config.whatsapp, key):
@@ -458,9 +489,7 @@ async def update_whatsapp(
 
 
 @router.patch("/config/web")
-async def update_web(
-    request: Request, body: WebConfigUpdate, config: ConfigDep
-) -> dict[str, str]:
+async def update_web(request: Request, body: WebConfigUpdate, config: ConfigDep) -> dict[str, str]:
     """Update web server settings (restart required for host/port changes)."""
     for key, value in body.model_dump(exclude_none=True).items():
         if hasattr(config.web, key):
@@ -476,6 +505,8 @@ async def update_telegram(
     """Update Telegram bot settings. Token is stored encrypted in SQLite and
     the channel is reloaded live — no restart needed."""
     for key, value in body.model_dump(exclude_none=True).items():
+        if key == "bot_token" and value in ("", _MASKED_SECRET):
+            continue
         if key == "bot_token" and isinstance(value, str) and value:
             store.set("DAX_TELEGRAM__BOT_TOKEN", value)
             object.__setattr__(config.telegram, "bot_token", value)
@@ -501,9 +532,7 @@ async def update_tools(
 ) -> dict[str, str]:
     """Update the tool confirmation timeout and allow/ask/deny policy."""
     if body.confirm_timeout_seconds is not None:
-        object.__setattr__(
-            config.tools, "confirm_timeout_seconds", body.confirm_timeout_seconds
-        )
+        object.__setattr__(config.tools, "confirm_timeout_seconds", body.confirm_timeout_seconds)
     if body.policy is not None:
         for key, value in body.policy.model_dump(exclude_none=True).items():
             object.__setattr__(config.tools.policy, key, value)
@@ -528,11 +557,17 @@ async def update_security(
         if hasattr(config.security, key):
             object.__setattr__(config.security, key, value)
 
-    # Sync live auth manager with the new auth_enabled flag.
-    if "auth_enabled" in updates:
-        auth = getattr(request.app.state, "auth", None)
-        if auth is not None:
+    # Keep token validation and cookie issuance aligned with the saved settings.
+    auth = getattr(request.app.state, "auth", None)
+    if auth is not None:
+        if "auth_enabled" in updates:
             auth._enabled = updates["auth_enabled"]
+        if "session_ttl_hours" in updates:
+            auth._ttl_seconds = max(1, updates["session_ttl_hours"]) * 3600
+        if "cookie_name" in updates:
+            auth.cookie_name = updates["cookie_name"]
+        if "cookie_secure" in updates:
+            auth.cookie_secure = updates["cookie_secure"]
 
     persist_config(request)
     return {"status": "ok"}

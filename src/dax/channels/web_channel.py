@@ -42,11 +42,15 @@ class WebChannel:
             logger.debug("No WebSocket clients connected, message not delivered")
             return
 
-        await ws_manager.broadcast({
+        frame = {
             "type": "message",
             "content": message.content,
             "role": message.role.value,
             "channel": message.channel.value,
             "language": message.language.value,
             "timestamp": message.timestamp.isoformat(),
-        })
+        }
+        session_id = message.metadata.get("session_id")
+        if isinstance(session_id, str) and session_id:
+            frame["session_id"] = session_id
+        await ws_manager.broadcast(frame)

@@ -108,15 +108,6 @@ class MCPClient:
         """Connect via Streamable HTTP transport (remote server)."""
         assert self._exit_stack is not None
 
-        try:
-            from mcp.client.streamable_http import streamablehttp_client
-        except ImportError:
-            from mcp.client.sse import sse_client as streamablehttp_client
-            logger.info(
-                "streamable_http not available, falling back to SSE for '%s'",
-                self._server_name,
-            )
-
         # Pre-check: follow redirects so we catch 302→401 chains before
         # entering the anyio task group inside streamablehttp_client (a
         # CancelledError from inside anyio is BaseException, not Exception,
@@ -150,17 +141,24 @@ class MCPClient:
             ) from e
 
         try:
-            transport_result = await self._exit_stack.enter_async_context(
-                streamablehttp_client(self._url, headers=self._headers)
-            )
+            try:
+                from mcp.client.streamable_http import streamablehttp_client
+            except ImportError:
+                from mcp.client.sse import sse_client
 
-            # MCP SDK >=1.9 returns (read, write, get_session_id)
-            if isinstance(transport_result, tuple) and len(transport_result) >= 3:
-                read_stream, write_stream = (
-                    transport_result[0], transport_result[1],
+                logger.info(
+                    "streamable_http not available, falling back to SSE for '%s'",
+                    self._server_name,
+                )
+                read_stream, write_stream = await self._exit_stack.enter_async_context(
+                    sse_client(self._url, headers=self._headers)
                 )
             else:
-                read_stream, write_stream = transport_result
+                read_stream, write_stream, _ = (
+                    await self._exit_stack.enter_async_context(
+                        streamablehttp_client(self._url, headers=self._headers)
+                    )
+                )
 
             self._session = await self._exit_stack.enter_async_context(
                 ClientSession(read_stream, write_stream)

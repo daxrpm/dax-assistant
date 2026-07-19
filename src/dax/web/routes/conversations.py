@@ -2,11 +2,14 @@
 
 from __future__ import annotations
 
-from typing import Any
+from typing import TYPE_CHECKING, Any, cast
 
 from fastapi import APIRouter, HTTPException, Request
 
 from dax.web.dependencies import get_repository
+
+if TYPE_CHECKING:
+    from dax.storage.repository import ConversationRepository
 
 router = APIRouter(tags=["conversations"])
 
@@ -14,7 +17,10 @@ router = APIRouter(tags=["conversations"])
 @router.get("/conversations")
 async def list_conversations(request: Request, limit: int = 50) -> list[dict[str, Any]]:
     """List recent web conversations for the sidebar."""
-    repo = getattr(request.app.state, "repository", None)
+    repo = cast(
+        "ConversationRepository | None",
+        getattr(request.app.state, "repository", None),
+    )
     if repo is None:
         return []
     return await repo.list_conversations("web", limit=limit)

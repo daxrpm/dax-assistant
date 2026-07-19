@@ -11,7 +11,7 @@ Evolution API v2 endpoints:
 from __future__ import annotations
 
 import logging
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, cast
 
 import httpx
 
@@ -71,7 +71,7 @@ class WhatsAppChannel:
         if not self._client:
             raise ChannelError("WhatsApp channel not started")
 
-        sender_jid = message.metadata.get("sender_jid", "")
+        sender_jid = cast("str", message.metadata.get("sender_jid", ""))
         if not sender_jid:
             logger.warning("Cannot send WhatsApp message: no sender_jid in metadata")
             return
@@ -100,7 +100,7 @@ class WhatsAppChannel:
                 json=payload,
             )
             response.raise_for_status()
-            result = response.json()
+            result = cast("dict[str, Any]", response.json())
             logger.info("WhatsApp text sent to %s", number)
             return result
         except httpx.HTTPStatusError as e:
@@ -129,7 +129,7 @@ class WhatsAppChannel:
                 json=payload,
             )
             response.raise_for_status()
-            result = response.json()
+            result = cast("dict[str, Any]", response.json())
             logger.info("WhatsApp audio sent to %s", number)
             return result
         except httpx.HTTPStatusError as e:

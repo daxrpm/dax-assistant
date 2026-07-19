@@ -9,7 +9,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import signal
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 import structlog
 import uvicorn
@@ -68,9 +68,7 @@ class DaxApp:
         await app.run()
     """
 
-    def __init__(
-        self, config: DaxConfig, config_path: Path | None = None
-    ) -> None:
+    def __init__(self, config: DaxConfig, config_path: Path | None = None) -> None:
         self._config = config
         self._shutdown_event = asyncio.Event()
 
@@ -99,9 +97,7 @@ class DaxApp:
 
         # Tool execution policy + human-in-the-loop confirmation gate.
         self._policy = ToolPolicy.from_config(config.tools.policy)
-        self._approval = ApprovalManager(
-            timeout_seconds=config.tools.confirm_timeout_seconds
-        )
+        self._approval = ApprovalManager(timeout_seconds=config.tools.confirm_timeout_seconds)
 
         # Authoritative shell-command allowlist. Mutations update the encrypted
         # configuration document in SQLite.
@@ -172,8 +168,8 @@ class DaxApp:
         # Deliver live log records to web subscribers on this loop.
         self._log_buffer.bind_loop(asyncio.get_running_loop())
         if hasattr(self._web_app, "state"):
-            self._web_app.state.log_buffer = self._log_buffer  # type: ignore[union-attr]
-            self._web_app.state.tool_policy = self._policy  # type: ignore[union-attr]
+            self._web_app.state.log_buffer = self._log_buffer
+            self._web_app.state.tool_policy = self._policy
             # The live shell allowlist the agent consults, so the Commands page
             # can read/edit it.
             self._web_app.state.shell_allow = self._shell_allow
@@ -190,11 +186,11 @@ class DaxApp:
         await self._mcp.start()
         # Expose manager + repository on web app state for API endpoints.
         if hasattr(self._web_app, "state"):
-            self._web_app.state.mcp_manager = self._mcp  # type: ignore[union-attr]
-            self._web_app.state.repository = self._repository  # type: ignore[union-attr]
+            self._web_app.state.mcp_manager = self._mcp
+            self._web_app.state.repository = self._repository
             # Expose the router so the settings API can rebuild it in place
             # when the LLM config changes (no restart needed).
-            self._web_app.state.llm_router = self._llm  # type: ignore[union-attr]
+            self._web_app.state.llm_router = self._llm
         log.info(
             "MCP ready",
             servers=len(self._mcp._clients),
@@ -234,9 +230,9 @@ class DaxApp:
         # 6. Agent
         self._agent = Agent(
             bus=self._bus,
-            llm=self._llm,  # type: ignore[arg-type]
-            tools=self._mcp,  # type: ignore[arg-type]
-            storage=self._repository,  # type: ignore[arg-type]
+            llm=self._llm,
+            tools=self._mcp,
+            storage=self._repository,
             policy=self._policy,
             approval=self._approval,
             shell_allow=self._shell_allow,
@@ -252,13 +248,18 @@ class DaxApp:
         from dax.web.routes.chat import ws_manager
 
         self._approval.set_notifier(ws_manager.broadcast)
-        # Stream agent events (tool calls, thinking) to the web UI in real time.
-        async def _broadcast_event(event: dict) -> None:
-            await ws_manager.broadcast({"type": "agent_event", "event": event})
 
-        self._agent.set_event_broadcaster(_broadcast_event)  # type: ignore[union-attr]
+        # Stream agent events (tool calls, thinking) to the web UI in real time.
+        async def _broadcast_event(event: dict[str, Any]) -> None:
+            frame = {"type": "agent_event", "event": event}
+            session_id = event.get("session_id")
+            if isinstance(session_id, str) and session_id:
+                frame["session_id"] = session_id
+            await ws_manager.broadcast(frame)
+
+        self._agent.set_event_broadcaster(_broadcast_event)
         if hasattr(self._web_app, "state"):
-            self._web_app.state.approval = self._approval  # type: ignore[union-attr]
+            self._web_app.state.approval = self._approval
         log.info("Agent ready")
 
         # 7. Dispatcher (routes outbound messages to ALL channels)
@@ -293,9 +294,7 @@ class DaxApp:
                     self._web_app.state.voice_listening = True
                 log.info("Voice pipeline ready")
             except Exception:
-                log.exception(
-                    "Voice pipeline failed to start — continuing without voice"
-                )
+                log.exception("Voice pipeline failed to start — continuing without voice")
                 self._voice_pipeline = None
                 if hasattr(self._web_app, "state"):
                     self._web_app.state.voice_pipeline = None

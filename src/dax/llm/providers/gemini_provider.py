@@ -9,7 +9,7 @@ from __future__ import annotations
 import json
 import logging
 import uuid
-from typing import Any
+from typing import Any, cast
 
 from google import genai
 from google.genai import types
@@ -60,7 +60,7 @@ class GeminiProvider:
         try:
             response = await self._client.aio.models.generate_content(
                 model=self._model,
-                contents=contents,
+                contents=cast("types.ContentListUnion", contents),
                 config=types.GenerateContentConfig(**config_kwargs),
             )
         except Exception as e:
@@ -88,11 +88,15 @@ class GeminiProvider:
         declarations: list[types.FunctionDeclaration] = []
         for t in tools:
             fn = t.get("function", t)
+            parameters = fn.get("parameters") or {
+                "type": "object",
+                "properties": {},
+            }
             declarations.append(
                 types.FunctionDeclaration(
                     name=fn.get("name", ""),
                     description=fn.get("description", ""),
-                    parameters=fn.get("parameters") or {"type": "object", "properties": {}},
+                    parameters=types.Schema.model_validate(parameters),
                 )
             )
         return [types.Tool(function_declarations=declarations)]

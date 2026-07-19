@@ -32,7 +32,7 @@ class TestApprovalManager:
         assert await task == "approve"
         assert m.pending_count == 0
 
-    async def test_resolve_denied(self):
+    async def test_request_carries_session_id(self):
         m = ApprovalManager(timeout_seconds=5)
         seen: dict[str, Any] = {}
 
@@ -41,8 +41,27 @@ class TestApprovalManager:
 
         m.set_notifier(notifier)
         task = asyncio.create_task(
-            m.request(tool_name="fs_write", server_name="s", arguments={})
+            m.request(
+                tool_name="fs_write",
+                server_name="s",
+                arguments={},
+                session_id="client-session",
+            )
         )
+        await asyncio.sleep(0.01)
+        assert seen["session_id"] == "client-session"
+        m.resolve(seen["approval_id"], "deny")
+        assert await task == "deny"
+
+    async def test_resolve_denied(self):
+        m = ApprovalManager(timeout_seconds=5)
+        seen: dict[str, Any] = {}
+
+        async def notifier(payload: dict[str, Any]) -> None:
+            seen.update(payload)
+
+        m.set_notifier(notifier)
+        task = asyncio.create_task(m.request(tool_name="fs_write", server_name="s", arguments={}))
         await asyncio.sleep(0.01)
         m.resolve(seen["approval_id"], "deny")
         assert await task == "deny"

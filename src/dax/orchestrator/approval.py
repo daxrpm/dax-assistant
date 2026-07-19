@@ -53,6 +53,7 @@ class ApprovalManager:
         arguments: dict[str, Any],
         options: list[str] | None = None,
         channel: str | None = None,
+        session_id: str | None = None,
     ) -> str:
         """Ask the user to confirm a tool call.
 
@@ -98,6 +99,8 @@ class ApprovalManager:
             "options": options or ["approve"],
             "timeout_seconds": self._timeout,
         }
+        if session_id:
+            payload["session_id"] = session_id
         try:
             await self._notifier(payload)
             return await asyncio.wait_for(future, timeout=self._timeout)

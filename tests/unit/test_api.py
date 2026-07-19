@@ -12,8 +12,11 @@ import numpy as np
 import pytest
 from httpx import ASGITransport, AsyncClient
 
+from dax.channels.web_channel import WebChannel
 from dax.core.config import DaxConfig
+from dax.core.models import ChannelType, Message, MessageRole
 from dax.orchestrator.bus import MessageBus
+from dax.voice.pipeline import PipelineState
 from dax.web.server import create_app
 
 if TYPE_CHECKING:
@@ -68,10 +71,50 @@ class TestStatusEndpoint:
         response = await client.get("/api/status")
         data = response.json()
         required_fields = {
-            "name", "version", "status", "voice_listening",
-            "llm_provider", "mcp_servers", "mcp_tools",
+            "name",
+            "version",
+            "status",
+            "voice_listening",
+            "llm_provider",
+            "mcp_servers",
+            "mcp_tools",
         }
         assert required_fields.issubset(data.keys())
+
+    async def test_host_metrics_are_aggregate(self, client: AsyncClient, monkeypatch):
+        monkeypatch.setattr("dax.web.routes.system.psutil.cpu_percent", lambda **_: 12.5)
+        monkeypatch.setattr("dax.web.routes.system.psutil.cpu_count", lambda: 8)
+        monkeypatch.setattr(
+            "dax.web.routes.system.psutil.virtual_memory",
+            lambda: SimpleNamespace(total=1000, used=600, available=400, percent=60.0),
+        )
+        monkeypatch.setattr(
+            "dax.web.routes.system.psutil.disk_usage",
+            lambda _path: SimpleNamespace(total=2000, used=500, free=1500, percent=25.0),
+        )
+        monkeypatch.setattr("dax.web.routes.system.psutil.boot_time", lambda: 100.0)
+        monkeypatch.setattr("dax.web.routes.system.time.time", lambda: 223.5)
+
+        response = await client.get("/api/system/metrics")
+
+        assert response.status_code == 200
+        assert response.json() == {
+            "cpu_percent": 12.5,
+            "cpu_count": 8,
+            "memory": {
+                "total_bytes": 1000,
+                "used_bytes": 600,
+                "available_bytes": 400,
+                "percent": 60.0,
+            },
+            "disk": {
+                "total_bytes": 2000,
+                "used_bytes": 500,
+                "available_bytes": 1500,
+                "percent": 25.0,
+            },
+            "uptime_seconds": 123.5,
+        }
 
 
 class TestVoiceToggle:
@@ -97,6 +140,30 @@ class TestVoiceToggle:
             json={"wrong_field": True},
         )
         assert response.status_code == 422
+
+
+class TestPushToTalkAPI:
+    async def test_press_and_release_reach_local_pipeline(self, client: AsyncClient):
+        app = client._transport.app  # type: ignore[union-attr]
+        pipeline = SimpleNamespace(
+            push_to_talk_press=MagicMock(return_value=PipelineState.LISTENING),
+            push_to_talk_release=MagicMock(return_value=PipelineState.PROCESSING),
+        )
+        app.state.voice_pipeline = pipeline
+
+        pressed = await client.post("/api/voice/push-to-talk/press")
+        released = await client.post("/api/voice/push-to-talk/release")
+
+        assert pressed.json() == {"status": "ok", "state": "listening"}
+        assert released.json() == {"status": "ok", "state": "processing"}
+        pipeline.push_to_talk_press.assert_called_once_with()
+        pipeline.push_to_talk_release.assert_called_once_with()
+
+    async def test_unavailable_voice_degrades_with_clear_503(self, client: AsyncClient):
+        response = await client.post("/api/voice/push-to-talk/press")
+
+        assert response.status_code == 503
+        assert "Local voice input is unavailable" in response.json()["detail"]
 
 
 def _wav_recording(sample_rate: int = 16_000, seconds: int = 2) -> bytes:
@@ -131,8 +198,7 @@ class TestVoiceStudio:
         response = await client.post(
             "/api/voice/enroll",
             files=[
-                ("samples", (f"sample-{index}.wav", recording, "audio/wav"))
-                for index in range(3)
+                ("samples", (f"sample-{index}.wav", recording, "audio/wav")) for index in range(3)
             ],
         )
 
@@ -146,8 +212,7 @@ class TestVoiceStudio:
         response = await client.post(
             "/api/voice/enroll",
             files=[
-                ("samples", (f"sample-{index}.wav", recording, "audio/wav"))
-                for index in range(3)
+                ("samples", (f"sample-{index}.wav", recording, "audio/wav")) for index in range(3)
             ],
         )
 
@@ -155,7 +220,9 @@ class TestVoiceStudio:
         assert "16 kHz" in response.json()["detail"]
 
     async def test_profile_status_and_delete(
-        self, client: AsyncClient, tmp_path: Path,
+        self,
+        client: AsyncClient,
+        tmp_path: Path,
     ):
         app = client._transport.app  # type: ignore[union-attr]
         object.__setattr__(app.state.config.storage, "models_path", str(tmp_path))
@@ -170,7 +237,9 @@ class TestVoiceStudio:
         assert not profile.exists()
 
     async def test_returns_wav_voice_preview(
-        self, client: AsyncClient, monkeypatch: pytest.MonkeyPatch,
+        self,
+        client: AsyncClient,
+        monkeypatch: pytest.MonkeyPatch,
     ):
         engine = MagicMock()
         engine.sample_rate = 24_000
@@ -208,15 +277,19 @@ class TestConfigEndpoint:
         assert data["general"]["system_prompt_custom"] is False
 
     async def test_config_hides_secrets(self, client: AsyncClient):
+        app = client._transport.app  # type: ignore[union-attr]
+        object.__setattr__(app.state.config.llm.openai, "api_key", "sk-private")
+        object.__setattr__(app.state.config.whatsapp, "evolution_api_key", "wa-private")
         response = await client.get("/api/config")
         data = response.json()
 
-        # Raw API key values should NOT be in the response
         config_str = str(data)
-        assert "evolution_api_key" not in config_str
-        # gemini_configured and has_api_key are booleans, not key values
+        assert "sk-private" not in config_str
+        assert "wa-private" not in config_str
+        assert data["llm"]["openai_api_key"] == "********"
+        assert data["whatsapp"]["evolution_api_key"] == "********"
         assert data["llm"]["gemini_configured"] is False
-        assert data["whatsapp"]["has_api_key"] is False
+        assert data["whatsapp"]["has_api_key"] is True
 
 
 class TestConfigUpdate:
@@ -255,9 +328,7 @@ class TestConfigUpdate:
         dax_app.set_system_prompt.assert_called_with("")
 
     async def test_system_prompt_rejects_blank(self, client: AsyncClient):
-        response = await client.patch(
-            "/api/config/general", json={"system_prompt": "   "}
-        )
+        response = await client.patch("/api/config/general", json={"system_prompt": "   "})
         assert response.status_code == 422
 
     async def test_update_llm(self, client: AsyncClient, tmp_path: Path):
@@ -272,8 +343,44 @@ class TestConfigUpdate:
         cfg = await client.get("/api/config")
         assert cfg.json()["llm"]["ollama_model"] == "qwen3.5:4b"
 
+    async def test_update_registry_config_fields(self, client: AsyncClient):
+        voice = await client.patch(
+            "/api/config/voice",
+            json={"conversation_timeout_question_s": 35, "session_ttl_minutes": 15},
+        )
+        llm = await client.patch(
+            "/api/config/llm",
+            json={"max_tool_iterations": 12, "openai_timeout": 90},
+        )
+        web = await client.patch("/api/config/web", json={"dev_mode": True})
+
+        assert voice.status_code == llm.status_code == web.status_code == 200
+        data = (await client.get("/api/config")).json()
+        assert data["voice"]["conversation_timeout_question_s"] == 35
+        assert data["voice"]["session_ttl_minutes"] == 15
+        assert data["llm"]["max_tool_iterations"] == 12
+        assert data["llm"]["openai_timeout"] == 90
+        assert data["web"]["dev_mode"] is True
+        assert "database_path" in data["storage"]
+
+    @pytest.mark.parametrize("submitted", ["", "********"])
+    async def test_masked_secret_patch_preserves_key(
+        self, client: AsyncClient, submitted: str
+    ):
+        app = client._transport.app  # type: ignore[union-attr]
+        object.__setattr__(app.state.config.llm.openai, "api_key", "sk-existing")
+
+        response = await client.patch(
+            "/api/config/llm", json={"openai_api_key": submitted}
+        )
+
+        assert response.status_code == 200
+        assert app.state.config.llm.openai.api_key == "sk-existing"
+
     async def test_update_llm_rebuilds_router(
-        self, client: AsyncClient, tmp_path: Path,
+        self,
+        client: AsyncClient,
+        tmp_path: Path,
     ):
         from dax.llm.factory import build_router
 
@@ -298,14 +405,15 @@ class TestConfigUpdate:
         assert "ollama" not in router.provider_names
 
     async def test_update_hosted_voice_config_and_encrypt_key(
-        self, client: AsyncClient, tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+        self,
+        client: AsyncClient,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
     ):
         monkeypatch.delenv("OPENAI_API_KEY", raising=False)
         app = client._transport.app  # type: ignore[union-attr]
         app.state.config_path = tmp_path / "dax.toml"
-        object.__setattr__(
-            app.state.config.storage, "database_path", str(tmp_path / "dax.db")
-        )
+        object.__setattr__(app.state.config.storage, "database_path", str(tmp_path / "dax.db"))
 
         response = await client.patch(
             "/api/config/voice",
@@ -329,9 +437,7 @@ class TestConfigUpdate:
         assert not (tmp_path / "dax.toml").exists()
 
     async def test_rejects_unknown_voice_backend(self, client: AsyncClient):
-        response = await client.patch(
-            "/api/config/voice", json={"stt_backend": "unknown"}
-        )
+        response = await client.patch("/api/config/voice", json={"stt_backend": "unknown"})
         assert response.status_code == 422
 
     async def test_identical_voice_patch_does_not_reload(self, client: AsyncClient):
@@ -339,16 +445,16 @@ class TestConfigUpdate:
         dax_app = SimpleNamespace(reload_voice=AsyncMock())
         app.state.dax_app = dax_app
 
-        response = await client.patch(
-            "/api/config/voice", json={"stt_backend": "local"}
-        )
+        response = await client.patch("/api/config/voice", json={"stt_backend": "local"})
 
         assert response.status_code == 200
         assert response.json()["note"] == "Voice configuration unchanged"
         dax_app.reload_voice.assert_not_awaited()
 
     async def test_voice_patch_reloads_live_pipeline(
-        self, client: AsyncClient, tmp_path: Path,
+        self,
+        client: AsyncClient,
+        tmp_path: Path,
     ):
         from dax.storage.secrets import SecretStore
 
@@ -376,7 +482,9 @@ class TestConfigUpdate:
         assert voice["speaker_threshold"] == 0.72
 
     async def test_failed_voice_reload_rolls_back_config(
-        self, client: AsyncClient, tmp_path: Path,
+        self,
+        client: AsyncClient,
+        tmp_path: Path,
     ):
         from dax.storage.secrets import SecretStore
 
@@ -387,9 +495,7 @@ class TestConfigUpdate:
             reload_voice=AsyncMock(side_effect=RuntimeError("audio busy"))
         )
 
-        response = await client.patch(
-            "/api/config/voice", json={"stt_language": "en"}
-        )
+        response = await client.patch("/api/config/voice", json={"stt_language": "en"})
 
         assert response.status_code == 400
         voice = (await client.get("/api/config")).json()["voice"]
@@ -422,7 +528,9 @@ class TestMCPServers:
         assert "shell" in servers.json()
 
     async def test_add_duplicate_server(
-        self, client: AsyncClient, tmp_path: Path,
+        self,
+        client: AsyncClient,
+        tmp_path: Path,
     ):
         client._transport.app.state.config_path = tmp_path / "dax.toml"  # type: ignore[union-attr]
 
@@ -432,7 +540,9 @@ class TestMCPServers:
         assert response.status_code == 409
 
     async def test_delete_server(
-        self, client: AsyncClient, tmp_path: Path,
+        self,
+        client: AsyncClient,
+        tmp_path: Path,
     ):
         client._transport.app.state.config_path = tmp_path / "dax.toml"  # type: ignore[union-attr]
 
@@ -456,7 +566,8 @@ class TestMCPServers:
         assert response.status_code == 404
 
     async def test_mcp_secrets_are_masked_and_preserved(
-        self, client: AsyncClient,
+        self,
+        client: AsyncClient,
     ):
         await client.post(
             "/api/config/mcp/servers",
@@ -474,9 +585,7 @@ class TestMCPServers:
         assert listed["headers"] == {"Authorization": "********"}
 
         listed["enabled"] = False
-        response = await client.patch(
-            "/api/config/mcp/servers/private", json=listed
-        )
+        response = await client.patch("/api/config/mcp/servers/private", json=listed)
 
         assert response.status_code == 200
         app = client._transport.app  # type: ignore[union-attr]
@@ -519,9 +628,37 @@ class TestNewEndpoints:
         client._transport.app.state.config_path = tmp_path / "dax.toml"  # type: ignore[union-attr]
         resp = await client.patch(
             "/api/config/security",
-            json={"session_ttl_hours": 48, "cookie_secure": True},
+            json={
+                "session_ttl_hours": 48,
+                "cookie_secure": True,
+                "cookie_name": "custom_session",
+            },
         )
         assert resp.status_code == 200
         cfg = (await client.get("/api/config")).json()
         assert cfg["security"]["session_ttl_hours"] == 48
         assert cfg["security"]["cookie_secure"] is True
+        assert cfg["security"]["cookie_name"] == "custom_session"
+        app = client._transport.app  # type: ignore[union-attr]
+        assert app.state.auth._ttl_seconds == 48 * 3600
+        assert app.state.auth.cookie_name == "custom_session"
+        assert app.state.auth.cookie_secure is True
+
+
+async def test_web_channel_correlates_response_frame(monkeypatch):
+    broadcast = AsyncMock()
+    monkeypatch.setattr(
+        "dax.channels.web_channel.ws_manager",
+        SimpleNamespace(connection_count=1, broadcast=broadcast),
+    )
+    message = Message(
+        role=MessageRole.ASSISTANT,
+        content="respuesta",
+        channel=ChannelType.WEB,
+        metadata={"session_id": "client-session"},
+    )
+
+    await WebChannel().send(message)
+
+    frame = broadcast.await_args.args[0]
+    assert frame["session_id"] == "client-session"

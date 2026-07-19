@@ -159,10 +159,13 @@ def _extract_text(message_data: dict[str, Any], message_type: str) -> str:
     - extendedTextMessage: text with URL preview or formatting
     """
     if message_type == "conversation":
-        return message_data.get("conversation", "")
+        conversation = message_data.get("conversation", "")
+        return conversation if isinstance(conversation, str) else ""
 
     if message_type == "extendedTextMessage":
         ext = message_data.get("extendedTextMessage", {})
-        return ext.get("text", "")
+        if isinstance(ext, dict):
+            text = ext.get("text", "")
+            return text if isinstance(text, str) else ""
 
     return ""

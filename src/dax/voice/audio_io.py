@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import logging
 import queue
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Protocol
 
 import numpy as np
 import sounddevice as sd
@@ -26,12 +26,24 @@ PLAYBACK_RATE = 22_050  # Piper TTS native output rate.
 CHANNELS = 1
 CAPTURE_DTYPE = "int16"
 CHUNK_SIZE = 1_280  # 80 ms at 16 kHz — good balance for OpenWakeWord frames.
+REMOTE_MAX_FRAME_BYTES = 3_200  # 100 ms of mono PCM16 at 16 kHz.
+REMOTE_QUEUE_FRAMES = 50  # At most five seconds may wait behind the consumer.
 
 
 # ── Capture ────────────────────────────────────────────────────────────────────
 
 
-class AudioCapture:
+class AudioSource(Protocol):
+    """Pluggable mono int16 input consumed by the voice pipeline."""
+
+    def start(self) -> None: ...
+
+    def stop(self) -> None: ...
+
+    def read_chunk(self, timeout: float = 1.0) -> np.ndarray | None: ...
+
+
+class LocalAudioSource:
     """Capture audio from the default microphone in fixed-size chunks.
 
     Chunks are enqueued via sounddevice's callback and consumed by the
@@ -109,6 +121,56 @@ class AudioCapture:
         # indata is (frames, channels); flatten to mono and copy out of the
         # callback buffer before it gets reused.
         self._queue.put(indata[:, 0].copy())
+
+
+class RemoteAudioSource:
+    """Bounded source fed by authenticated WebSocket PCM frames."""
+
+    def __init__(self, max_frames: int = REMOTE_QUEUE_FRAMES) -> None:
+        self._queue: queue.Queue[np.ndarray] = queue.Queue(maxsize=max_frames)
+        self._closed = False
+
+    def start(self) -> None:
+        self._closed = False
+        self.clear()
+
+    def stop(self) -> None:
+        self._closed = True
+        self.clear()
+
+    def clear(self) -> None:
+        while True:
+            try:
+                self._queue.get_nowait()
+            except queue.Empty:
+                return
+
+    def feed_pcm(self, frame: bytes) -> None:
+        """Validate and enqueue one little-endian PCM16 frame without blocking."""
+        if self._closed:
+            raise ValueError("remote audio source is closed")
+        if not frame:
+            raise ValueError("PCM frame must not be empty")
+        if len(frame) > REMOTE_MAX_FRAME_BYTES:
+            raise ValueError(f"PCM frame exceeds {REMOTE_MAX_FRAME_BYTES} bytes")
+        if len(frame) % 2:
+            raise ValueError("PCM frame must contain complete 16-bit samples")
+        samples = np.frombuffer(frame, dtype="<i2").astype(np.int16, copy=True)
+        try:
+            self._queue.put_nowait(samples)
+        except queue.Full as exc:
+            raise BufferError("remote audio buffer is full") from exc
+
+    def read_chunk(self, timeout: float = 1.0) -> np.ndarray | None:
+        try:
+            return self._queue.get(timeout=timeout)
+        except queue.Empty:
+            return None
+
+
+# Shipped name retained for callers and tests; the implementation is the local
+# sounddevice adapter behind the new source contract.
+AudioCapture = LocalAudioSource
 
 
 # ── Playback ───────────────────────────────────────────────────────────────────

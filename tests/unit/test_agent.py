@@ -74,9 +74,7 @@ class _MockTools:
     async def list_tools(self) -> list[dict[str, Any]]:
         return self._tools
 
-    def get_relevant_tools(
-        self, query: str, max_tools: int
-    ) -> list[dict[str, Any]]:
+    def get_relevant_tools(self, query: str, max_tools: int) -> list[dict[str, Any]]:
         return self._tools[:max_tools]
 
     def get_server_for_tool(self, tool_name: str) -> str | None:
@@ -113,9 +111,7 @@ class _MockStorage:
     ) -> Conversation:
         return Conversation(channel=channel, session_key=session_key)
 
-    async def get_recent_conversations(
-        self, channel: str, limit: int = 5
-    ) -> list[object]:
+    async def get_recent_conversations(self, channel: str, limit: int = 5) -> list[object]:
         return []
 
 
@@ -125,9 +121,11 @@ class TestAgentSimpleResponse:
         bus = MessageBus()
         bus.start()
 
-        llm = _MockLLM(responses=[
-            Message(role=MessageRole.ASSISTANT, content="Hello! I'm Dax."),
-        ])
+        llm = _MockLLM(
+            responses=[
+                Message(role=MessageRole.ASSISTANT, content="Hello! I'm Dax."),
+            ]
+        )
 
         agent = Agent(
             bus=bus,
@@ -149,13 +147,48 @@ class TestAgentSimpleResponse:
 
         await agent.stop()
 
+    async def test_agent_events_and_response_preserve_session_id(self):
+        bus = MessageBus()
+        bus.start()
+        agent = Agent(
+            bus=bus,
+            llm=_MockLLM(responses=[Message(role=MessageRole.ASSISTANT, content="Hello!")]),  # type: ignore[arg-type]
+            tools=_MockTools(),  # type: ignore[arg-type]
+            storage=_MockStorage(),  # type: ignore[arg-type]
+        )
+        events: list[dict[str, object]] = []
+
+        async def collect(event: dict[str, object]) -> None:
+            events.append(event)
+
+        agent.set_event_broadcaster(collect)  # type: ignore[arg-type]
+        await agent.start()
+        await bus.publish_inbound(
+            Message(
+                content="Hello",
+                channel=ChannelType.WEB,
+                metadata={"session_id": "client-session"},
+            )
+        )
+
+        response = await asyncio.wait_for(bus.consume_outbound(), timeout=2.0)
+
+        assert response.metadata["session_id"] == "client-session"
+        assert [event["session_id"] for event in events] == [
+            "client-session",
+            "client-session",
+        ]
+        await agent.stop()
+
     async def test_preserves_channel_and_language(self):
         bus = MessageBus()
         bus.start()
 
-        llm = _MockLLM(responses=[
-            Message(role=MessageRole.ASSISTANT, content="Hola!"),
-        ])
+        llm = _MockLLM(
+            responses=[
+                Message(role=MessageRole.ASSISTANT, content="Hola!"),
+            ]
+        )
 
         agent = Agent(
             bus=bus,
@@ -183,24 +216,26 @@ class TestAgentToolCalling:
         bus.start()
 
         # LLM first returns a tool call, then the final answer
-        llm = _MockLLM(responses=[
-            Message(
-                role=MessageRole.ASSISTANT,
-                content="",
-                tool_calls=(
-                    ToolCall(
-                        id="call_1",
-                        server_name="shell",
-                        tool_name="execute",
-                        arguments={"command": "date"},
+        llm = _MockLLM(
+            responses=[
+                Message(
+                    role=MessageRole.ASSISTANT,
+                    content="",
+                    tool_calls=(
+                        ToolCall(
+                            id="call_1",
+                            server_name="shell",
+                            tool_name="execute",
+                            arguments={"command": "date"},
+                        ),
                     ),
                 ),
-            ),
-            Message(
-                role=MessageRole.ASSISTANT,
-                content="The current date is March 19, 2026.",
-            ),
-        ])
+                Message(
+                    role=MessageRole.ASSISTANT,
+                    content="The current date is March 19, 2026.",
+                ),
+            ]
+        )
 
         mock_tools = _MockTools(
             results={"execute": ToolResult(call_id="call_1", content="Thu Mar 19 2026")}
@@ -228,24 +263,26 @@ class TestAgentToolCalling:
         bus = MessageBus()
         bus.start()
 
-        llm = _MockLLM(responses=[
-            Message(
-                role=MessageRole.ASSISTANT,
-                content="",
-                tool_calls=(
-                    ToolCall(
-                        id="call_1",
-                        server_name="shell",
-                        tool_name="bad_tool",
-                        arguments={},
+        llm = _MockLLM(
+            responses=[
+                Message(
+                    role=MessageRole.ASSISTANT,
+                    content="",
+                    tool_calls=(
+                        ToolCall(
+                            id="call_1",
+                            server_name="shell",
+                            tool_name="bad_tool",
+                            arguments={},
+                        ),
                     ),
                 ),
-            ),
-            Message(
-                role=MessageRole.ASSISTANT,
-                content="Sorry, that tool failed.",
-            ),
-        ])
+                Message(
+                    role=MessageRole.ASSISTANT,
+                    content="Sorry, that tool failed.",
+                ),
+            ]
+        )
 
         mock_tools = _MockTools(
             results={
@@ -284,13 +321,15 @@ class TestAgentToolCalling:
                 ),
             ),
         )
-        llm = _MockLLM(responses=[
-            *[tool_response for _ in range(MAX_TOOL_ITERATIONS)],
-            Message(
-                role=MessageRole.ASSISTANT,
-                content="No pude reproducirla porque no hay dispositivos disponibles.",
-            ),
-        ])
+        llm = _MockLLM(
+            responses=[
+                *[tool_response for _ in range(MAX_TOOL_ITERATIONS)],
+                Message(
+                    role=MessageRole.ASSISTANT,
+                    content="No pude reproducirla porque no hay dispositivos disponibles.",
+                ),
+            ]
+        )
         agent = Agent(
             bus=MessageBus(),
             llm=llm,  # type: ignore[arg-type]
@@ -306,9 +345,7 @@ class TestAgentToolCalling:
             )
         )
 
-        assert response.content == (
-            "No pude reproducirla porque no hay dispositivos disponibles."
-        )
+        assert response.content == ("No pude reproducirla porque no hay dispositivos disponibles.")
         assert llm.last_tools is None
         assert llm.last_messages[-1]["role"] == "system"
         assert "Never claim an action succeeded" in llm.last_messages[-1]["content"]
@@ -316,21 +353,23 @@ class TestAgentToolCalling:
     async def test_tool_limit_never_returns_deepseek_dsml(self):
         tool_response = Message(
             role=MessageRole.ASSISTANT,
-            tool_calls=(ToolCall(
-                id="call_1", server_name="spotify", tool_name="skip", arguments={}
-            ),),
+            tool_calls=(
+                ToolCall(id="call_1", server_name="spotify", tool_name="skip", arguments={}),
+            ),
         )
         bars = "\N{FULLWIDTH VERTICAL LINE}" * 2
         dsml = (
-            f'<{bars}DSML{bars}tool_calls>'
+            f"<{bars}DSML{bars}tool_calls>"
             f'<{bars}DSML{bars}invoke name="skipToNext">'
-            f'</{bars}DSML{bars}invoke>'
-            f'</{bars}DSML{bars}tool_calls>'
+            f"</{bars}DSML{bars}invoke>"
+            f"</{bars}DSML{bars}tool_calls>"
         )
-        llm = _MockLLM(responses=[
-            *[tool_response for _ in range(MAX_TOOL_ITERATIONS)],
-            Message(role=MessageRole.ASSISTANT, content=dsml),
-        ])
+        llm = _MockLLM(
+            responses=[
+                *[tool_response for _ in range(MAX_TOOL_ITERATIONS)],
+                Message(role=MessageRole.ASSISTANT, content=dsml),
+            ]
+        )
         agent = Agent(
             bus=MessageBus(),
             llm=llm,  # type: ignore[arg-type]
@@ -338,9 +377,9 @@ class TestAgentToolCalling:
             storage=_MockStorage(),  # type: ignore[arg-type]
         )
 
-        response = await agent._handle_message(Message(
-            content="Pon otra", channel=ChannelType.VOICE, language=Language.SPANISH
-        ))
+        response = await agent._handle_message(
+            Message(content="Pon otra", channel=ChannelType.VOICE, language=Language.SPANISH)
+        )
 
         assert "DSML" not in response.content
         assert response.content == (
@@ -350,26 +389,32 @@ class TestAgentToolCalling:
     async def test_tool_limit_reports_last_error_in_auto_detected_spanish(self):
         tool_response = Message(
             role=MessageRole.ASSISTANT,
-            tool_calls=(ToolCall(
-                id="call_1",
-                server_name="home-assistant",
-                tool_name="HassLightSet",
-                arguments={"name": "Bedroom Light", "color": "#FFFFFF"},
-            ),),
+            tool_calls=(
+                ToolCall(
+                    id="call_1",
+                    server_name="home-assistant",
+                    tool_name="HassLightSet",
+                    arguments={"name": "Bedroom Light", "color": "#FFFFFF"},
+                ),
+            ),
         )
         bars = "\N{FULLWIDTH VERTICAL LINE}" * 2
         dsml = f"<{bars}DSML{bars}tool_calls></{bars}DSML{bars}tool_calls>"
-        llm = _MockLLM(responses=[
-            *[tool_response for _ in range(MAX_TOOL_ITERATIONS)],
-            Message(role=MessageRole.ASSISTANT, content=dsml),
-        ])
-        tools = _MockTools(results={
-            "HassLightSet": ToolResult(
-                call_id="call_1",
-                content="Error: Received invalid slot info for HassLightSet",
-                is_error=True,
-            )
-        })
+        llm = _MockLLM(
+            responses=[
+                *[tool_response for _ in range(MAX_TOOL_ITERATIONS)],
+                Message(role=MessageRole.ASSISTANT, content=dsml),
+            ]
+        )
+        tools = _MockTools(
+            results={
+                "HassLightSet": ToolResult(
+                    call_id="call_1",
+                    content="Error: Received invalid slot info for HassLightSet",
+                    is_error=True,
+                )
+            }
+        )
         agent = Agent(
             bus=MessageBus(),
             llm=llm,  # type: ignore[arg-type]
@@ -377,11 +422,13 @@ class TestAgentToolCalling:
             storage=_MockStorage(),  # type: ignore[arg-type]
         )
 
-        response = await agent._handle_message(Message(
-            content="No cambió de color, ponla totalmente blanca",
-            channel=ChannelType.WEB,
-            language=Language.AUTO,
-        ))
+        response = await agent._handle_message(
+            Message(
+                content="No cambió de color, ponla totalmente blanca",
+                channel=ChannelType.WEB,
+                language=Language.AUTO,
+            )
+        )
 
         assert response.content.startswith(
             "Algunos pasos sí se ejecutaron, pero HassLightSet falló:"
@@ -424,10 +471,12 @@ class TestAgentMemory:
         bus = MessageBus()
         bus.start()
         storage = _StatefulStorage()
-        llm = _MockLLM(responses=[
-            Message(role=MessageRole.ASSISTANT, content="Nice to meet you, Dax."),
-            Message(role=MessageRole.ASSISTANT, content="Your name is Dax."),
-        ])
+        llm = _MockLLM(
+            responses=[
+                Message(role=MessageRole.ASSISTANT, content="Nice to meet you, Dax."),
+                Message(role=MessageRole.ASSISTANT, content="Your name is Dax."),
+            ]
+        )
         agent = Agent(
             bus=bus,
             llm=llm,  # type: ignore[arg-type]
@@ -451,16 +500,18 @@ class TestAgentMemory:
 
 
 def _tool_then_text(tool_name: str) -> _MockLLM:
-    return _MockLLM(responses=[
-        Message(
-            role=MessageRole.ASSISTANT,
-            content="",
-            tool_calls=(
-                ToolCall(id="c1", server_name="dax-system", tool_name=tool_name, arguments={}),
+    return _MockLLM(
+        responses=[
+            Message(
+                role=MessageRole.ASSISTANT,
+                content="",
+                tool_calls=(
+                    ToolCall(id="c1", server_name="dax-system", tool_name=tool_name, arguments={}),
+                ),
             ),
-        ),
-        Message(role=MessageRole.ASSISTANT, content="all done"),
-    ])
+            Message(role=MessageRole.ASSISTANT, content="all done"),
+        ]
+    )
 
 
 class TestAgentPolicyGate:
@@ -540,21 +591,23 @@ class TestAgentPolicyGate:
 
 
 def _shell_then_text(command: str) -> _MockLLM:
-    return _MockLLM(responses=[
-        Message(
-            role=MessageRole.ASSISTANT,
-            content="",
-            tool_calls=(
-                ToolCall(
-                    id="c1",
-                    server_name="dax-system",
-                    tool_name="shell_run",
-                    arguments={"command": command},
+    return _MockLLM(
+        responses=[
+            Message(
+                role=MessageRole.ASSISTANT,
+                content="",
+                tool_calls=(
+                    ToolCall(
+                        id="c1",
+                        server_name="dax-system",
+                        tool_name="shell_run",
+                        arguments={"command": command},
+                    ),
                 ),
             ),
-        ),
-        Message(role=MessageRole.ASSISTANT, content="all done"),
-    ])
+            Message(role=MessageRole.ASSISTANT, content="all done"),
+        ]
+    )
 
 
 class TestAgentShellGate:

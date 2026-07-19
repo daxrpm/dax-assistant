@@ -21,7 +21,7 @@ from dax.mcp.client import MCPClient
 from dax.mcp.registry import ToolRegistry
 
 if TYPE_CHECKING:
-    from dax.core.config import MCPConfig
+    from dax.core.config import MCPConfig, MCPServerConfig
 
 logger = logging.getLogger(__name__)
 
@@ -108,7 +108,12 @@ class MCPManager:
         self._lock = asyncio.Lock()
         self._stopping = False
         self._ops: asyncio.Queue[
-            tuple[str, str | None, Any, asyncio.Future[Any]]
+            tuple[
+                str,
+                str | None,
+                MCPServerConfig | None,
+                asyncio.Future[int | None],
+            ]
         ] | None = None
         self._worker: asyncio.Task[None] | None = None
 
@@ -116,7 +121,9 @@ class MCPManager:
     def registry(self) -> ToolRegistry:
         return self._registry
 
-    def _make_client(self, name: str, server_config: Any) -> MCPClient | None:
+    def _make_client(
+        self, name: str, server_config: MCPServerConfig
+    ) -> MCPClient | None:
         """Build an unconnected client for a server config (env resolved)."""
         transport = server_config.transport
 
@@ -185,15 +192,18 @@ class MCPManager:
             self._registry.tool_count,
         )
 
-    async def add_server(self, name: str, server_config: Any) -> int:
+    async def add_server(self, name: str, server_config: MCPServerConfig) -> int:
         """Connect to a server and register its tools live. Returns tool count.
 
         Reconnects cleanly if the server was already connected. Raises on
         connection failure so callers can surface the error.
         """
-        return await self._submit("add", name, server_config)
+        result = await self._submit("add", name, server_config)
+        if result is None:
+            raise RuntimeError("MCP add operation returned no tool count")
+        return result
 
-    async def _add_server_now(self, name: str, server_config: Any) -> int:
+    async def _add_server_now(self, name: str, server_config: MCPServerConfig) -> int:
         if self._stopping:
             raise RuntimeError("MCP manager is stopping")
 
@@ -277,11 +287,16 @@ class MCPManager:
                 name="mcp-lifecycle-worker",
             )
 
-    async def _submit(self, op: str, name: str | None, payload: Any) -> Any:
+    async def _submit(
+        self,
+        op: str,
+        name: str | None,
+        payload: MCPServerConfig | None,
+    ) -> int | None:
         self._ensure_worker()
         assert self._ops is not None
         loop = asyncio.get_running_loop()
-        future: asyncio.Future[Any] = loop.create_future()
+        future: asyncio.Future[int | None] = loop.create_future()
         await self._ops.put((op, name, payload, future))
         return await future
 
@@ -290,14 +305,18 @@ class MCPManager:
         while True:
             op, name, payload, future = await self._ops.get()
             try:
+                result: int | None
                 if op == "add":
                     assert name is not None
+                    assert payload is not None
                     result = await self._add_server_now(name, payload)
                 elif op == "remove":
                     assert name is not None
-                    result = await self._remove_server_now(name)
+                    await self._remove_server_now(name)
+                    result = None
                 elif op == "stop":
-                    result = await self._stop_now()
+                    await self._stop_now()
+                    result = None
                     if not future.done():
                         future.set_result(result)
                     break

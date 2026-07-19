@@ -12,7 +12,7 @@ import numpy as np
 from fastapi import APIRouter, File, HTTPException, Request, Response, UploadFile
 from pydantic import BaseModel, Field
 
-from dax.core.exceptions import TTSError
+from dax.core.exceptions import TTSError, VoiceError
 from dax.voice.speaker import SpeakerVerifier
 from dax.web.dependencies import ConfigDep
 
@@ -31,6 +31,27 @@ _PREVIEW_LOCK = asyncio.Lock()
 _PROFILE_LOCK = asyncio.Lock()
 
 
+def _voice_pipeline(request: Request) -> object:
+    pipeline = getattr(request.app.state, "voice_pipeline", None)
+    if pipeline is None:
+        raise HTTPException(
+            status_code=503,
+            detail="Local voice input is unavailable; enable voice and check the audio device",
+        )
+    return pipeline
+
+
+async def _push_to_talk(request: Request, action: Literal["press", "release"]) -> dict[str, str]:
+    pipeline = _voice_pipeline(request)
+    method = getattr(pipeline, f"push_to_talk_{action}")
+    try:
+        state = await asyncio.to_thread(method)
+    except VoiceError as exc:
+        status_code = 503 if "not available" in str(exc).lower() else 409
+        raise HTTPException(status_code=status_code, detail=str(exc)) from exc
+    return {"status": "ok", "state": str(state)}
+
+
 class VoicePreviewRequest(BaseModel):
     engine: Literal["kokoro", "piper", "openai"]
     voice: str = Field(min_length=1, max_length=100)
@@ -44,6 +65,18 @@ class VoicePreviewRequest(BaseModel):
     model: str = Field(default="gpt-4o-mini-tts", min_length=1, max_length=100)
     instructions: str = Field(default="", max_length=500)
     timeout_s: int = Field(default=30, ge=1, le=120)
+
+
+@router.post("/push-to-talk/press")
+async def push_to_talk_press(request: Request) -> dict[str, str]:
+    """Begin backend-local microphone capture without wake-word detection."""
+    return await _push_to_talk(request, "press")
+
+
+@router.post("/push-to-talk/release")
+async def push_to_talk_release(request: Request) -> dict[str, str]:
+    """Finalize backend-local microphone capture and process buffered audio."""
+    return await _push_to_talk(request, "release")
 
 
 def _decode_enrollment_wav(data: bytes) -> np.ndarray:

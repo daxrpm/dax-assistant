@@ -119,9 +119,7 @@ class VoiceEventHub:
     def unsubscribe(self, queue: asyncio.Queue[VoiceEvent]) -> None:
         """Remove a subscriber's queue."""
         self._subscribers.discard(queue)
-        logger.debug(
-            "Voice event subscriber removed (total: %d)", len(self._subscribers)
-        )
+        logger.debug("Voice event subscriber removed (total: %d)", len(self._subscribers))
 
     # -- Emission (pipeline thread side) --
 
@@ -158,11 +156,21 @@ class VoiceEventHub:
 
     # -- Convenience emitters --
 
-    def emit_state(self, state: str, conversation_id: str | None = None) -> None:
+    def emit_state(
+        self,
+        state: str,
+        conversation_id: str | None = None,
+        *,
+        session_expires_at: float | None = None,
+    ) -> None:
         self.emit(
             VoiceEvent(
                 type=VoiceEventType.STATE,
-                data={"state": state, "conversation_id": conversation_id},
+                data={
+                    "state": state,
+                    "conversation_id": conversation_id,
+                    "session_expires_at": session_expires_at,
+                },
             )
         )
 

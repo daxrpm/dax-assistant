@@ -5,10 +5,12 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
-from typing import Any
+import time
+from typing import Any, cast
 
 import aiohttp
 import httpx
+import psutil
 from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel
 
@@ -35,6 +37,21 @@ class ToggleResponse(BaseModel):
     voice_listening: bool
 
 
+class ResourceUsage(BaseModel):
+    total_bytes: int
+    used_bytes: int
+    available_bytes: int
+    percent: float
+
+
+class HostMetricsResponse(BaseModel):
+    cpu_percent: float
+    cpu_count: int
+    memory: ResourceUsage
+    disk: ResourceUsage
+    uptime_seconds: float
+
+
 @router.get("/status", response_model=StatusResponse)
 async def get_status(request: Request, config: ConfigDep) -> StatusResponse:
     """Get the current system status."""
@@ -51,15 +68,34 @@ async def get_status(request: Request, config: ConfigDep) -> StatusResponse:
     )
 
 
+@router.get("/system/metrics", response_model=HostMetricsResponse)
+async def get_host_metrics() -> HostMetricsResponse:
+    """Return aggregate host utilization without process or identity details."""
+    memory = psutil.virtual_memory()
+    disk = psutil.disk_usage("/")
+    return HostMetricsResponse(
+        cpu_percent=psutil.cpu_percent(interval=None),
+        cpu_count=psutil.cpu_count() or 1,
+        memory=ResourceUsage(
+            total_bytes=memory.total,
+            used_bytes=memory.used,
+            available_bytes=memory.available,
+            percent=memory.percent,
+        ),
+        disk=ResourceUsage(
+            total_bytes=disk.total,
+            used_bytes=disk.used,
+            available_bytes=disk.free,
+            percent=disk.percent,
+        ),
+        uptime_seconds=max(0.0, time.time() - psutil.boot_time()),
+    )
+
+
 @router.post("/voice/toggle", response_model=ToggleResponse)
-async def toggle_voice(
-    request: Request, body: ToggleRequest, config: ConfigDep
-) -> ToggleResponse:
+async def toggle_voice(request: Request, body: ToggleRequest, config: ConfigDep) -> ToggleResponse:
     """Toggle voice listening on or off."""
-    if (
-        config.voice.enabled == body.enabled
-        and request.app.state.voice_listening == body.enabled
-    ):
+    if config.voice.enabled == body.enabled and request.app.state.voice_listening == body.enabled:
         return ToggleResponse(voice_listening=request.app.state.voice_listening)
 
     previous = config.voice.enabled
@@ -91,7 +127,7 @@ async def get_logs(request: Request, limit: int = 200) -> list[dict[str, Any]]:
     buffer = getattr(request.app.state, "log_buffer", None)
     if buffer is None:
         return []
-    return buffer.recent(limit=limit)
+    return cast("list[dict[str, Any]]", buffer.recent(limit=limit))
 
 
 @router.get("/mcp/status")
@@ -100,7 +136,7 @@ async def get_mcp_status(request: Request) -> list[dict[str, Any]]:
     manager = getattr(request.app.state, "mcp_manager", None)
     if manager is None:
         return []
-    return manager.server_status()
+    return cast("list[dict[str, Any]]", manager.server_status())
 
 
 @router.get("/tools/audit")
@@ -109,7 +145,7 @@ async def get_tool_audit(request: Request, limit: int = 50) -> list[dict[str, An
     repo = getattr(request.app.state, "repository", None)
     if repo is None:
         return []
-    return await repo.get_tool_audit(limit=limit)
+    return cast("list[dict[str, Any]]", await repo.get_tool_audit(limit=limit))
 
 
 @router.get("/tools/policy")
@@ -163,11 +199,14 @@ async def list_llm_models(config: ConfigDep, provider: str = "") -> dict[str, li
         base = (config.llm.openai.base_url or "https://api.openai.com/v1").rstrip("/")
         if not key:
             return []
-        async with aiohttp.ClientSession() as session, session.get(
-            f"{base}/models",
-            headers={"Authorization": f"Bearer {key}"},
-            timeout=aiohttp.ClientTimeout(total=10),
-        ) as r:
+        async with (
+            aiohttp.ClientSession() as session,
+            session.get(
+                f"{base}/models",
+                headers={"Authorization": f"Bearer {key}"},
+                timeout=aiohttp.ClientTimeout(total=10),
+            ) as r,
+        ):
             if r.status != 200:
                 return []
             data = await r.json()
@@ -179,11 +218,14 @@ async def list_llm_models(config: ConfigDep, provider: str = "") -> dict[str, li
         key = config.llm.anthropic.api_key or ""
         if not key:
             return []
-        async with aiohttp.ClientSession() as session, session.get(
-            "https://api.anthropic.com/v1/models",
-            headers={"x-api-key": key, "anthropic-version": "2023-06-01"},
-            timeout=aiohttp.ClientTimeout(total=10),
-        ) as r:
+        async with (
+            aiohttp.ClientSession() as session,
+            session.get(
+                "https://api.anthropic.com/v1/models",
+                headers={"x-api-key": key, "anthropic-version": "2023-06-01"},
+                timeout=aiohttp.ClientTimeout(total=10),
+            ) as r,
+        ):
             if r.status != 200:
                 return []
             data = await r.json()
@@ -193,10 +235,13 @@ async def list_llm_models(config: ConfigDep, provider: str = "") -> dict[str, li
         key = config.llm.gemini.api_key or ""
         if not key:
             return []
-        async with aiohttp.ClientSession() as session, session.get(
-            f"https://generativelanguage.googleapis.com/v1beta/models?key={key}&pageSize=1000",
-            timeout=aiohttp.ClientTimeout(total=10),
-        ) as r:
+        async with (
+            aiohttp.ClientSession() as session,
+            session.get(
+                f"https://generativelanguage.googleapis.com/v1beta/models?key={key}&pageSize=1000",
+                timeout=aiohttp.ClientTimeout(total=10),
+            ) as r,
+        ):
             if r.status != 200:
                 return []
             data = await r.json()
@@ -209,10 +254,13 @@ async def list_llm_models(config: ConfigDep, provider: str = "") -> dict[str, li
     async def _ollama() -> list[str]:
         base = (config.llm.ollama.base_url or "http://localhost:11434").rstrip("/")
         try:
-            async with aiohttp.ClientSession() as session, session.get(
-                f"{base}/api/tags",
-                timeout=aiohttp.ClientTimeout(total=5),
-            ) as r:
+            async with (
+                aiohttp.ClientSession() as session,
+                session.get(
+                    f"{base}/api/tags",
+                    timeout=aiohttp.ClientTimeout(total=5),
+                ) as r,
+            ):
                 if r.status != 200:
                     return []
                 data = await r.json()
@@ -231,11 +279,14 @@ async def list_llm_models(config: ConfigDep, provider: str = "") -> dict[str, li
         if not key:
             return []
         try:
-            async with aiohttp.ClientSession() as session, session.get(
-                f"{base}/models",
-                headers={"Authorization": f"Bearer {key}"},
-                timeout=aiohttp.ClientTimeout(total=10),
-            ) as r:
+            async with (
+                aiohttp.ClientSession() as session,
+                session.get(
+                    f"{base}/models",
+                    headers={"Authorization": f"Bearer {key}"},
+                    timeout=aiohttp.ClientTimeout(total=10),
+                ) as r,
+            ):
                 if r.status != 200:
                     return []
                 data = await r.json()
@@ -252,9 +303,7 @@ async def list_llm_models(config: ConfigDep, provider: str = "") -> dict[str, li
     }
     chosen = {provider: targets[provider]} if provider in targets else targets
 
-    fetched = await asyncio.gather(
-        *[fn() for fn in chosen.values()], return_exceptions=True
-    )
+    fetched = await asyncio.gather(*[fn() for fn in chosen.values()], return_exceptions=True)
     for prov, res in zip(chosen.keys(), fetched, strict=True):
         results[prov] = res if isinstance(res, list) else []
 
