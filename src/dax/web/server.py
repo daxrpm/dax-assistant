@@ -39,6 +39,11 @@ if TYPE_CHECKING:
     from dax.orchestrator.bus import MessageBus
 
 
+# Webview origins used by the bundled desktop app. WebKitGTK (Linux) and WKWebView
+# (macOS) serve from the custom protocol; WebView2 (Windows) uses the http form.
+_DESKTOP_ORIGINS = ("tauri://localhost", "http://tauri.localhost")
+
+
 def create_app(
     config: DaxConfig,
     bus: MessageBus,
@@ -71,6 +76,13 @@ def create_app(
     origins = list(config.web.cors_origins)
     if config.web.dev_mode:
         origins.append("http://localhost:5173")
+    # The bundled desktop app is a first-class client shipped from this repo,
+    # so its webview origins belong in the allowlist by construction rather
+    # than in user config. Leaving it configurable meant a fresh install was
+    # dead on arrival, and any settings save from the running app rewrites the
+    # whole config document — silently clobbering a hand-edited entry.
+    # WebKitGTK uses tauri://localhost; Windows/WebView2 uses the http form.
+    origins.extend(o for o in _DESKTOP_ORIGINS if o not in origins)
     app.add_middleware(
         CORSMiddleware,
         allow_origins=origins,

@@ -5,6 +5,7 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 
 import pytest
+from fastapi.testclient import TestClient
 from httpx import ASGITransport, AsyncClient
 
 from dax.core.config import DaxConfig
@@ -234,3 +235,34 @@ class TestWebSocketAuthCredentials:
         cfg = DaxConfig(security={"auth_enabled": False})
         mgr = AuthManager(cfg.security)
         assert mgr.authenticate_websocket(self._fake_ws())  # type: ignore[arg-type]
+
+
+def test_desktop_webview_origin_is_allowed_by_default():
+    """A fresh install must serve the desktop app without config changes.
+
+    The webview's origin is not configurable on the client side, so leaving it
+    to `web.cors_origins` made a clean install fail every request with 400
+    "Disallowed CORS origin" — and any settings save from the running app
+    rewrites the whole config document, silently reverting a manual entry.
+    """
+    bus = MessageBus()
+    bus.start()
+    config = DaxConfig(
+        security={"password_hash": hash_password(PASSWORD), "session_secret": "x" * 40}
+    )
+    # Deliberately does NOT list any desktop origin.
+    assert "tauri://localhost" not in config.web.cors_origins
+
+    app = create_app(config=config, bus=bus)
+    client = TestClient(app)
+
+    response = client.options(
+        "/api/health",
+        headers={
+            "Origin": "tauri://localhost",
+            "Access-Control-Request-Method": "GET",
+        },
+    )
+
+    assert response.status_code == 200
+    assert response.headers["access-control-allow-origin"] == "tauri://localhost"
