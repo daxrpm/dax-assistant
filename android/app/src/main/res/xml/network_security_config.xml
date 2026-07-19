@@ -1,0 +1,27 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Dax is self-hosted. The backend is normally a machine on the same LAN reached
+  over plain HTTP, which Android has blocked by default since API 28.
+
+  Android's network security config cannot express CIDR ranges — <domain> takes
+  hostnames and literal addresses only — so there is no way to write "permit
+  cleartext to RFC1918 and nowhere else" here. The choice is therefore between
+  blocking every LAN backend or permitting cleartext and enforcing the private
+  range in the app.
+
+  The enforcement lives in AppViewModel.enrol(), which refuses any URL that is
+  not HTTPS, loopback, or an RFC1918 address before a request is ever made. That
+  is a weaker guarantee than platform enforcement and it is stated plainly
+  rather than hidden: a compromised build could bypass it, whereas the platform
+  policy could not.
+
+  The application validates and stores only HTTPS, loopback, and literal private
+  network endpoints before any credentialed request is made.
+-->
+<network-security-config>
+    <base-config cleartextTrafficPermitted="true">
+        <trust-anchors>
+            <certificates src="system" />
+        </trust-anchors>
+    </base-config>
+</network-security-config>

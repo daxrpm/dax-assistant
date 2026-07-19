@@ -82,4 +82,41 @@ describe("log store", () => {
     ]);
     store.shutdown();
   });
+
+  it("batches live frames and ignores stale socket callbacks", () => {
+    vi.useFakeTimers();
+    const store = createLogStore();
+    const unsubscribe = store.subscribe(() => undefined);
+    const first = FakeWebSocket.instances[0]!;
+    first.onmessage?.(new MessageEvent("message", {
+      data: JSON.stringify({ level: "info", message: "one" }),
+    }));
+    first.onmessage?.(new MessageEvent("message", {
+      data: JSON.stringify({ level: "info", message: "two" }),
+    }));
+    expect(store.getSnapshot().logs).toEqual([]);
+    vi.advanceTimersByTime(16);
+    expect(store.getSnapshot().logs.map((entry) => entry.message)).toEqual(["one", "two"]);
+
+    first.onclose?.({ code: 1006 } as CloseEvent);
+    vi.advanceTimersByTime(2000);
+    const second = FakeWebSocket.instances[1]!;
+    second.onopen?.();
+    first.onclose?.({ code: 1008 } as CloseEvent);
+    expect(store.getSnapshot().connected).toBe(true);
+    unsubscribe();
+    store.shutdown();
+    vi.useRealTimers();
+  });
+
+  it("closes a log socket that never opens", () => {
+    vi.useFakeTimers();
+    const store = createLogStore();
+    const unsubscribe = store.subscribe(() => undefined);
+    vi.advanceTimersByTime(5000);
+    expect(FakeWebSocket.instances[0]?.close).toHaveBeenCalledOnce();
+    unsubscribe();
+    store.shutdown();
+    vi.useRealTimers();
+  });
 });

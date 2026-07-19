@@ -355,13 +355,13 @@ src/dax/
 
 ## Remote access
 
-Dax binds to loopback. To reach it from another device, prefer a private overlay
-(Tailscale, WireGuard) or an authenticated reverse proxy over HTTPS rather than exposing
-the port. If you must listen on the LAN, set `[web] expose_lan = true` and
-`[security] cookie_secure = true` behind TLS; auth is still enforced. Allow TCP port 8420
-in the host firewall only for the trusted subnet and never expose it directly to the
-internet. When using a reverse proxy, preserve WebSocket upgrades for `/api/chat/ws` and
-proxy to `http://127.0.0.1:8420`.
+`uv run dax` binds to `0.0.0.0` by default so first-party mobile clients can pair over
+the LAN. Authentication is still enforced, but the first-run setup endpoint is reachable:
+pair and configure the owner account only on a trusted network. Restrict TCP port 8420 to
+the trusted subnet in the host firewall and never forward it directly to the internet.
+Set `[web] expose_lan = false` to return to loopback-only operation. For access beyond the
+LAN, prefer a private overlay (Tailscale, WireGuard) or an authenticated HTTPS reverse
+proxy. Preserve WebSocket upgrades and proxy to `http://127.0.0.1:8420`.
 
 For desktop remote voice, microphone PCM travels from the client to
 `/ws/voice` as bounded PTT-only mono 16 kHz PCM. In protocol v1, synthesized

@@ -4,6 +4,7 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.dax.assistant.assistant.AssistantController
 import com.dax.assistant.audio.SpeechRecognition
+import com.dax.assistant.core.network.BackendEndpointPolicy
 import com.dax.assistant.data.auth.BackendAuth
 import com.dax.assistant.data.auth.CredentialStore
 import com.dax.assistant.data.auth.EnrolResult
@@ -53,19 +54,14 @@ class AppViewModel @Inject constructor(
 
     fun enrol() {
         val current = _setup.value
-        val url = current.backendUrl.trim().trimEnd('/')
-        if (url.isBlank()) {
+        if (current.backendUrl.isBlank()) {
             _setup.update { it.copy(error = "Enter the backend URL first") }
             return
         }
-        // Cleartext outside loopback would put a device credential on the wire
-        // in the clear. Refused rather than warned about.
-        if (!url.startsWith("https://") && !url.contains("127.0.0.1") &&
-            !url.contains("localhost") && !url.startsWith("http://192.168.") &&
-            !url.startsWith("http://10.")
-        ) {
+        val url = BackendEndpointPolicy.normalize(current.backendUrl)
+        if (url == null) {
             _setup.update {
-                it.copy(error = "Use HTTPS, or a private-network address")
+                it.copy(error = "Use HTTPS or a literal private-network address without a path")
             }
             return
         }

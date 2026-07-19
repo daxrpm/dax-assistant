@@ -1,10 +1,14 @@
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   createRemotePtt,
   encodePcm16,
+  PcmFrameBatcher,
+  RemoteMicrophone,
   resampleMono,
   StreamingMonoResampler,
 } from "./remoteAudio";
+
+afterEach(() => vi.unstubAllGlobals());
 
 describe("remote audio encoding", () => {
   it("resamples mono audio to 16 kHz", () => {
@@ -25,6 +29,37 @@ describe("remote audio encoding", () => {
     expect(Array.from({ length: 5 }, (_, index) => view.getInt16(index * 2, true))).toEqual([
       -32768, -32768, 0, 32767, 32767,
     ]);
+  });
+
+  it("batches worklet chunks into 20 ms PCM frames", () => {
+    const batcher = new PcmFrameBatcher();
+    expect(batcher.push(new Float32Array(200))).toEqual([]);
+    const frames = batcher.push(new Float32Array(440));
+    expect(frames).toHaveLength(2);
+    expect(frames[0]?.byteLength).toBe(640);
+  });
+});
+
+describe("remote microphone lifecycle", () => {
+  it("stops a stream whose permission request resolves after cancellation", async () => {
+    let resolvePermission!: (stream: MediaStream) => void;
+    const permission = new Promise<MediaStream>((resolve) => {
+      resolvePermission = resolve;
+    });
+    const stopTrack = vi.fn();
+    const getUserMedia = vi.fn(() => permission);
+    vi.stubGlobal("navigator", {
+      mediaDevices: { getUserMedia },
+    });
+    const microphone = new RemoteMicrophone();
+    const starting = microphone.start(vi.fn());
+
+    await vi.waitFor(() => expect(getUserMedia).toHaveBeenCalledOnce());
+    await microphone.stop();
+    resolvePermission({ getTracks: () => [{ stop: stopTrack }] } as unknown as MediaStream);
+    await starting;
+
+    expect(stopTrack).toHaveBeenCalledOnce();
   });
 });
 

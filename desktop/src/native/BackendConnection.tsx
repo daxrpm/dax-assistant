@@ -2,6 +2,7 @@ import { useState } from "react";
 import { resolveConnection } from "../api/connection";
 import { Button } from "../design/primitives";
 import { useI18n } from "../i18n/I18n";
+import { shutdownRealtimeStores } from "../stores/realtime";
 import s from "./BackendConnection.module.css";
 
 export function BackendConnection({
@@ -20,7 +21,7 @@ export function BackendConnection({
   const reevaluate = async () => {
     setBusy(true);
     try {
-      const result = await resolveConnection(false);
+      const result = await resolveConnection(false, shutdownRealtimeStores);
       setMessage(
         result.healthy
           ? text(`Backend seleccionado: ${result.active_url}`, `Selected backend: ${result.active_url}`)

@@ -47,31 +47,50 @@ export function createLogStore() {
   let snapshot: LogSnapshot = { logs: [], connected: false };
   let socket: WebSocket | null = null;
   let retry: ReturnType<typeof setTimeout> | null = null;
+  let connectionTimer: ReturnType<typeof setTimeout> | null = null;
+  let flushTimer: ReturnType<typeof setTimeout> | null = null;
+  let pending: NormalizedLog[] = [];
   let stopped = true;
 
   const update = (patch: Partial<LogSnapshot>) => {
     snapshot = { ...snapshot, ...patch };
     lifecycle.emit();
   };
+  const flush = () => {
+    flushTimer = null;
+    if (pending.length === 0) return;
+    const next = [...snapshot.logs, ...pending].slice(-LOG_BUFFER_LIMIT);
+    pending = [];
+    update({ logs: next });
+  };
   const append = (entry: NormalizedLog) => {
-    const current = snapshot.logs;
-    const kept = current.length >= LOG_BUFFER_LIMIT
-      ? current.slice(-LOG_BUFFER_LIMIT + 1)
-      : current;
-    update({ logs: [...kept, entry] });
+    pending.push(entry);
+    flushTimer ??= setTimeout(flush, 16);
   };
   const connect = () => {
     if (stopped || socket) return;
     const ws = new WebSocket(getWsUrl("/ws/logs", currentToken()));
     socket = ws;
-    ws.onopen = () => update({ connected: true });
+    connectionTimer = setTimeout(() => {
+      if (socket === ws) ws.close();
+    }, 5_000);
+    ws.onopen = () => {
+      if (socket !== ws) return;
+      if (connectionTimer) clearTimeout(connectionTimer);
+      connectionTimer = null;
+      update({ connected: true });
+    };
     ws.onclose = (event) => {
-      if (socket === ws) socket = null;
+      if (socket !== ws) return;
+      socket = null;
+      if (connectionTimer) clearTimeout(connectionTimer);
+      connectionTimer = null;
       update({ connected: false });
       if (event.code !== 1008 && !stopped) retry = setTimeout(connect, 2000);
     };
     ws.onerror = () => ws.close();
     ws.onmessage = (event) => {
+      if (socket !== ws) return;
       try {
         append(normalize(JSON.parse(event.data as string) as LogEntry));
       } catch {
@@ -87,7 +106,12 @@ export function createLogStore() {
     () => {
       stopped = true;
       if (retry) clearTimeout(retry);
+      if (connectionTimer) clearTimeout(connectionTimer);
+      if (flushTimer) clearTimeout(flushTimer);
       retry = null;
+      connectionTimer = null;
+      flushTimer = null;
+      pending = [];
       const active = socket;
       socket = null;
       active?.close();
@@ -99,8 +123,14 @@ export function createLogStore() {
   return {
     subscribe: lifecycle.subscribe,
     getSnapshot: () => snapshot,
-    clear: () => update({ logs: [] }),
-    seed: (entries: LogEntry[]) => update({ logs: mergeLogSeed(snapshot.logs, entries) }),
+    clear: () => {
+      pending = [];
+      update({ logs: [] });
+    },
+    seed: (entries: LogEntry[]) => {
+      flush();
+      update({ logs: mergeLogSeed(snapshot.logs, entries) });
+    },
     appendSidecar: (line: string, level = "INFO") => append({
       id: ++logSeq,
       ts: new Date().toISOString(),

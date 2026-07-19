@@ -7,6 +7,7 @@ import {
 } from "../api/connection";
 import { Button, TextInput } from "../design/primitives";
 import { useI18n } from "../i18n/I18n";
+import { shutdownRealtimeStores } from "../stores/realtime";
 import type { BackendSettings, BackendStrategy } from "./backend";
 import { controlService, type ServiceStatus } from "./service";
 import s from "./Onboarding.module.css";
@@ -58,7 +59,7 @@ export function Onboarding({
     setBusy(true);
     try {
       await saveDraft(false);
-      const result = await resolveConnection(false);
+      const result = await resolveConnection(false, shutdownRealtimeStores);
       setMessage(
         result.healthy
           ? text(`Conexión comprobada: ${result.active_url}`, `Connection verified: ${result.active_url}`)
@@ -92,7 +93,7 @@ export function Onboarding({
     setBusy(true);
     try {
       await saveDraft(true);
-      await resolveConnection(allowStart);
+      await resolveConnection(allowStart, shutdownRealtimeStores);
       onComplete();
     } catch (error) {
       setMessage(error instanceof Error ? error.message : String(error));

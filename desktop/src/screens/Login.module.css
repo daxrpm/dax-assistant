@@ -18,6 +18,12 @@
   margin-bottom: var(--space-6);
 }
 
+.appIcon {
+  margin-bottom: var(--space-3);
+  border-radius: 16px;
+  box-shadow: var(--shadow-2), 0 0 0 1px rgb(255 255 255 / 8%);
+}
+
 .title {
   font-size: var(--text-title1);
   line-height: var(--text-title1-lh);

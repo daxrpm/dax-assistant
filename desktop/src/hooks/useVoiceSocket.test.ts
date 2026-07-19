@@ -13,6 +13,7 @@ class FakeWebSocket {
   close = vi.fn();
   send = vi.fn();
   readyState = 1;
+  bufferedAmount = 0;
 
   constructor(_url: string) {
     FakeWebSocket.instances.push(this);
@@ -80,6 +81,68 @@ describe("voice store", () => {
     store.sendPcm(pcm);
     expect(ws?.send).toHaveBeenLastCalledWith(pcm);
     store.shutdown();
+  });
+
+  it("drops PCM while the browser socket is backpressured", async () => {
+    const store = createVoiceStore();
+    const acquiring = store.acquireRemoteAudio();
+    const ws = FakeWebSocket.instances[0]!;
+    ws.onopen?.();
+    await vi.waitFor(() => expect(ws.send).toHaveBeenCalledTimes(1));
+    ws.onmessage?.(new MessageEvent("message", {
+      data: JSON.stringify({ type: "remote_audio.acquired", data: {} }),
+    }));
+    await acquiring;
+    const starting = store.startRemoteAudio();
+    await vi.waitFor(() => expect(ws.send).toHaveBeenCalledTimes(2));
+    ws.onmessage?.(new MessageEvent("message", {
+      data: JSON.stringify({ type: "remote_audio.started", data: {} }),
+    }));
+    await starting;
+    ws.send.mockClear();
+    ws.bufferedAmount = 300_000;
+    store.sendPcm(new ArrayBuffer(640));
+    expect(ws.send).not.toHaveBeenCalled();
+    store.shutdown();
+  });
+
+  it("rejects a connection waiter after the connection timeout", async () => {
+    vi.useFakeTimers();
+    const store = createVoiceStore();
+    const acquiring = store.acquireRemoteAudio();
+    const rejected = expect(acquiring).rejects.toThrow("Timed out connecting");
+    await vi.advanceTimersByTimeAsync(5000);
+    await rejected;
+    expect(FakeWebSocket.instances[0]?.close).toHaveBeenCalledOnce();
+    store.shutdown();
+    vi.useRealTimers();
+  });
+
+  it("ignores a stale close after reconnecting", () => {
+    vi.useFakeTimers();
+    const store = createVoiceStore();
+    const unsubscribe = store.subscribe(() => undefined);
+    const first = FakeWebSocket.instances[0]!;
+    first.onclose?.({ code: 1006 } as CloseEvent);
+    vi.advanceTimersByTime(2000);
+    const second = FakeWebSocket.instances[1]!;
+    second.onopen?.();
+    first.onclose?.({ code: 1008, reason: "stale" } as CloseEvent);
+    expect(store.getSnapshot().connected).toBe(true);
+    expect(store.getSnapshot().error).not.toBe("stale");
+    unsubscribe();
+    store.shutdown();
+    vi.useRealTimers();
+  });
+
+  it("notifies remote capture cleanup during explicit shutdown", () => {
+    const store = createVoiceStore();
+    const disconnected = vi.fn();
+    store.onRemoteDisconnect(disconnected);
+
+    store.shutdown();
+
+    expect(disconnected).toHaveBeenCalledOnce();
   });
 
   it("delivers complete source-separated level frames outside snapshot state", () => {

@@ -4,6 +4,7 @@ import {
   useMemo,
   useRef,
   useState,
+  useId,
   type FormEvent,
 } from "react";
 import { api } from "../api/client";
@@ -101,12 +102,19 @@ function StepLine({ ev }: { ev: AgentEvent }) {
 function ThoughtToggle({ events, elapsed }: { events: AgentEvent[]; elapsed?: number }) {
   const { t } = useI18n();
   const [open, setOpen] = useState(false);
+  const disclosureId = useId();
   const toolCalls = events.filter((e) => e.type === "tool_call");
   if (toolCalls.length === 0 && elapsed == null) return null;
 
   return (
     <div>
-      <button type="button" className={s.thoughtToggle} onClick={() => setOpen((v) => !v)}>
+      <button
+        type="button"
+        className={s.thoughtToggle}
+        onClick={() => setOpen((v) => !v)}
+        aria-expanded={open}
+        aria-controls={disclosureId}
+      >
         {open ? <ChevronDownIcon size={12} /> : <ChevronRightIcon size={12} />}
         <span>{elapsed != null ? t("chat.thought", { count: elapsed }) : t("chat.reasoning")}</span>
         {toolCalls.length > 0 && (
@@ -116,7 +124,7 @@ function ThoughtToggle({ events, elapsed }: { events: AgentEvent[]; elapsed?: nu
         )}
       </button>
       {open && (
-        <div className={s.steps}>
+        <div className={s.steps} id={disclosureId}>
           {events.map((ev, i) => (
             <StepLine key={i} ev={ev} />
           ))}
@@ -461,9 +469,20 @@ function ConfirmationModal({
         </p>
       )}
 
-      <div className={cn(s.countdown, urgent && s.countdownUrgent)}>
+      <div
+        className={cn(s.countdown, urgent && s.countdownUrgent)}
+        role="timer"
+        aria-live={urgent ? "assertive" : "off"}
+      >
         <span>{t("chat.autoDeny", { count: remaining })}</span>
-        <span className={s.countdownTrack}>
+        <span
+          className={s.countdownTrack}
+          role="progressbar"
+          aria-label={t("chat.autoDeny", { count: remaining })}
+          aria-valuemin={0}
+          aria-valuemax={total}
+          aria-valuenow={remaining}
+        >
           <span
             className={cn(s.countdownFill, urgent && s.countdownFillUrgent)}
             style={{ width: `${(remaining / total) * 100}%` }}
@@ -504,6 +523,8 @@ export function Chat() {
 
   const scrollRef = useRef<HTMLDivElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
+  const conversationListRequest = useRef(0);
+  const conversationDetailRequest = useRef(0);
 
   const lastAssistant = [...messages].reverse().find((m) => m.role === "assistant");
   const panelEvents: AgentEvent[] =
@@ -545,10 +566,15 @@ export function Chat() {
   }, [input]);
 
   const loadConversations = useCallback(() => {
+    const request = ++conversationListRequest.current;
     api
       .conversations(50)
-      .then(setConversations)
-      .catch(() => setConversations([]));
+      .then((next) => {
+        if (request === conversationListRequest.current) setConversations(next);
+      })
+      .catch(() => {
+        if (request === conversationListRequest.current) setConversations([]);
+      });
   }, []);
 
   useEffect(() => {
@@ -568,8 +594,10 @@ export function Chat() {
 
   const openConversation = async (conv: ConversationSummary) => {
     if (conv.id === activeConvId) return;
+    const request = ++conversationDetailRequest.current;
     try {
       const detail = await api.conversation(conv.id);
+      if (request !== conversationDetailRequest.current) return;
       setInitialMessages(
         detail.messages.map((m) => ({
           id: m.id,
@@ -586,6 +614,7 @@ export function Chat() {
   };
 
   const startNewChat = () => {
+    conversationDetailRequest.current += 1;
     setInitialMessages([]);
     setActiveConvId(null);
     setSessionId(newSessionId());
@@ -593,6 +622,8 @@ export function Chat() {
 
   const deleteConv = async (e: React.MouseEvent, convId: string) => {
     e.stopPropagation();
+    conversationListRequest.current += 1;
+    conversationDetailRequest.current += 1;
     setDeletingId(convId);
     try {
       await api.deleteConversation(convId);

@@ -2,6 +2,7 @@ import { usesRemoteAudio } from "../api/connection";
 import { voiceStore, type VoiceStore } from "../hooks/useVoiceSocket";
 
 const TARGET_RATE = 16_000;
+const PCM_FRAME_SAMPLES = 320;
 
 export function resampleMono(input: Float32Array, sourceRate: number): Float32Array {
   if (sourceRate === TARGET_RATE) return input.slice();
@@ -62,32 +63,68 @@ export class StreamingMonoResampler {
   }
 }
 
+export class PcmFrameBatcher {
+  private pending = new Float32Array(0);
+
+  push(input: Float32Array): ArrayBuffer[] {
+    const combined = new Float32Array(this.pending.length + input.length);
+    combined.set(this.pending);
+    combined.set(input, this.pending.length);
+    const frames: ArrayBuffer[] = [];
+    let offset = 0;
+    while (combined.length - offset >= PCM_FRAME_SAMPLES) {
+      frames.push(encodePcm16(combined.subarray(offset, offset + PCM_FRAME_SAMPLES)));
+      offset += PCM_FRAME_SAMPLES;
+    }
+    this.pending = combined.slice(offset);
+    return frames;
+  }
+}
+
 export class RemoteMicrophone {
   private stream: MediaStream | null = null;
   private context: AudioContext | null = null;
   private source: MediaStreamAudioSourceNode | null = null;
   private processor: AudioWorkletNode | ScriptProcessorNode | null = null;
+  private generation = 0;
 
   async start(send: (frame: ArrayBuffer) => void): Promise<void> {
-    await this.stop();
+    const generation = ++this.generation;
+    await this.cleanup();
+    if (generation !== this.generation) return;
     const stream = await navigator.mediaDevices.getUserMedia({
       audio: { channelCount: 1, echoCancellation: true, noiseSuppression: true },
       video: false,
     });
+    if (generation !== this.generation) {
+      for (const track of stream.getTracks()) track.stop();
+      return;
+    }
     this.stream = stream;
     try {
       const context = new AudioContext();
+      if (generation !== this.generation) {
+        for (const track of stream.getTracks()) track.stop();
+        await context.close();
+        return;
+      }
       this.context = context;
       const source = context.createMediaStreamSource(stream);
       this.source = source;
       const resampler = new StreamingMonoResampler(context.sampleRate);
+      const batcher = new PcmFrameBatcher();
       const forward = (samples: Float32Array) => {
+        if (generation !== this.generation) return;
         const resampled = resampler.process(samples);
-        if (resampled.length) send(encodePcm16(resampled));
+        for (const frame of batcher.push(resampled)) send(frame);
       };
 
       if (context.audioWorklet && typeof AudioWorkletNode !== "undefined") {
         await context.audioWorklet.addModule("/pcm-worklet.js");
+        if (generation !== this.generation) {
+          await this.stop();
+          return;
+        }
         const processor = new AudioWorkletNode(context, "dax-pcm-processor");
         processor.port.onmessage = (event: MessageEvent<Float32Array>) => forward(event.data);
         source.connect(processor);
@@ -108,6 +145,11 @@ export class RemoteMicrophone {
   }
 
   async stop(): Promise<void> {
+    this.generation += 1;
+    await this.cleanup();
+  }
+
+  private async cleanup(): Promise<void> {
     if (this.processor) {
       this.processor.disconnect();
       if ("port" in this.processor) this.processor.port.onmessage = null;

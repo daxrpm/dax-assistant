@@ -1,0 +1,21 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Debug override: permits cleartext so the app can reach a LAN backend.
+
+  This variant additionally trusts user-installed certificate authorities for
+  local development. Release builds permit validated LAN HTTP too, but trust
+  only system certificate authorities for HTTPS.
+
+  AppViewModel.enrol() remains the gate that keeps a device credential off a
+  public network: it refuses anything that is not HTTPS, loopback, or RFC1918.
+-->
+<network-security-config>
+    <base-config cleartextTrafficPermitted="true">
+        <trust-anchors>
+            <certificates src="system" />
+            <!-- Lets a self-signed backend certificate be trusted once the
+                 user installs it, without weakening the release build. -->
+            <certificates src="user" />
+        </trust-anchors>
+    </base-config>
+</network-security-config>

@@ -6,11 +6,11 @@ use std::path::{Path, PathBuf};
 use std::process::Stdio;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 use tauri::{AppHandle, Emitter};
 use tokio::io::AsyncReadExt;
 use tokio::process::Command;
-use tokio::sync::oneshot;
+use tokio::sync::{oneshot, Mutex as AsyncMutex};
 use tokio::time::timeout;
 
 const OUTPUT_LIMIT: u64 = 64 * 1024;
@@ -20,6 +20,7 @@ const SPECTRUM_BANDS: usize = 40;
 const SPECTRUM_FRAMES: usize = 2048;
 const SPECTRUM_RATE: f32 = 48_000.0;
 const ARTWORK_LIMIT: u64 = 5 * 1024 * 1024;
+const STATUS_CACHE_TTL: Duration = Duration::from_millis(400);
 type SpectrumStop = Arc<Mutex<Option<(u64, oneshot::Sender<()>)>>>;
 
 #[derive(Default)]
@@ -29,6 +30,7 @@ pub struct MediaState {
     spectrum_stop: SpectrumStop,
     spectrum_id: AtomicU64,
     artwork_cache: Mutex<Option<(String, String)>>,
+    status_cache: AsyncMutex<Option<(Instant, MediaSnapshot)>>,
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -423,10 +425,6 @@ async fn resolve_art_url(
             }
         }
     }
-    let metadata = tokio::fs::metadata(&source).await.ok()?;
-    if !metadata.is_file() || metadata.len() > ARTWORK_LIMIT {
-        return None;
-    }
     let canonical = tokio::fs::canonicalize(&source).await.ok()?;
     if canonical.parent() != Some(Path::new("/tmp"))
         || !canonical
@@ -436,12 +434,30 @@ async fn resolve_art_url(
     {
         return None;
     }
-    let bytes = tokio::fs::read(&canonical).await.ok()?;
+    let bytes = read_bounded_artwork(&canonical).await?;
     let data_url = artwork_data_url(&bytes)?;
     if let Ok(mut cache) = state.artwork_cache.lock() {
         *cache = Some((source_key.into_owned(), data_url.clone()));
     }
     Some(data_url)
+}
+
+async fn read_bounded_artwork(path: &Path) -> Option<Vec<u8>> {
+    let mut options = tokio::fs::OpenOptions::new();
+    options.read(true);
+    #[cfg(unix)]
+    options.custom_flags(libc::O_NOFOLLOW);
+    let file = options.open(path).await.ok()?;
+    let metadata = file.metadata().await.ok()?;
+    if !metadata.is_file() || metadata.len() > ARTWORK_LIMIT {
+        return None;
+    }
+    let mut bytes = Vec::with_capacity(metadata.len() as usize);
+    file.take(ARTWORK_LIMIT + 1)
+        .read_to_end(&mut bytes)
+        .await
+        .ok()?;
+    (bytes.len() as u64 <= ARTWORK_LIMIT).then_some(bytes)
 }
 
 async fn discover_players() -> Result<Vec<String>, PlayerctlError> {
@@ -454,6 +470,18 @@ async fn discover_players() -> Result<Vec<String>, PlayerctlError> {
 }
 
 pub async fn status(state: &MediaState) -> Result<MediaSnapshot, String> {
+    let mut cache = state.status_cache.lock().await;
+    if let Some((refreshed_at, snapshot)) = cache.as_ref() {
+        if refreshed_at.elapsed() < STATUS_CACHE_TTL {
+            return Ok(snapshot.clone());
+        }
+    }
+    let snapshot = refresh_status(state).await?;
+    *cache = Some((Instant::now(), snapshot.clone()));
+    Ok(snapshot)
+}
+
+async fn refresh_status(state: &MediaState) -> Result<MediaSnapshot, String> {
     let players = match discover_players().await {
         Ok(players) => players,
         Err(PlayerctlError::Missing) => {
@@ -563,6 +591,7 @@ pub async fn control(state: &MediaState, action: MediaAction) -> Result<(), Stri
             PlayerctlError::Failed(error) => error,
         })?;
     if output.success {
+        *state.status_cache.lock().await = None;
         Ok(())
     } else {
         Err("playerctl action failed".into())
@@ -813,6 +842,16 @@ mod tests {
         );
         assert!(artwork_data_url(&[0x89, b'P', b'N', b'G', 0x0d, 0x0a, 0x1a, 0x0a]).is_some());
         assert!(artwork_data_url(b"not an image").is_none());
+    }
+
+    #[tokio::test]
+    async fn bounded_artwork_reader_rejects_oversized_files() {
+        let path = std::env::temp_dir().join(format!("dax-artwork-test-{}", std::process::id()));
+        tokio::fs::write(&path, vec![0_u8; ARTWORK_LIMIT as usize + 1])
+            .await
+            .unwrap();
+        assert!(read_bounded_artwork(&path).await.is_none());
+        let _ = tokio::fs::remove_file(path).await;
     }
 
     #[test]

@@ -63,8 +63,13 @@ pub struct BackendResolution {
 }
 
 pub struct BackendState {
-    inner: Mutex<BackendSettings>,
+    inner: Mutex<BackendStateInner>,
     path: PathBuf,
+}
+
+struct BackendStateInner {
+    settings: BackendSettings,
+    generation: u64,
 }
 
 impl BackendSettings {
@@ -133,7 +138,16 @@ impl BackendState {
     pub fn load(config_dir: &Path) -> Result<Self, String> {
         let path = config_dir.join(SETTINGS_FILE);
         let (settings, migrated) = match fs::read(&path) {
-            Ok(bytes) => decode_settings(&bytes)?,
+            Ok(bytes) => match decode_settings(&bytes) {
+                Ok(decoded) => decoded,
+                Err(err) if err.starts_with("unsupported backend settings version") => {
+                    return Err(err);
+                }
+                Err(err) => {
+                    eprintln!("{err}; using safe backend defaults");
+                    (BackendSettings::defaults(), false)
+                }
+            },
             Err(err) if err.kind() == std::io::ErrorKind::NotFound => {
                 (BackendSettings::defaults(), false)
             }
@@ -143,7 +157,10 @@ impl BackendState {
             persist_settings(&path, &settings)?;
         }
         Ok(Self {
-            inner: Mutex::new(settings),
+            inner: Mutex::new(BackendStateInner {
+                settings,
+                generation: 0,
+            }),
             path,
         })
     }
@@ -151,7 +168,7 @@ impl BackendState {
     pub fn settings(&self) -> Result<BackendSettings, String> {
         self.inner
             .lock()
-            .map(|settings| settings.clone())
+            .map(|inner| inner.settings.clone())
             .map_err(|_| "backend settings lock is poisoned".into())
     }
 
@@ -170,24 +187,58 @@ impl BackendState {
             strategy,
             &local_url,
             remote_url.as_deref(),
-            Some(&guard.active_url),
+            Some(&guard.settings.active_url),
             onboarding_complete,
         )?;
         persist_settings(&self.path, &next)?;
-        *guard = next.clone();
+        guard.settings = next.clone();
+        guard.generation = guard.generation.wrapping_add(1);
         Ok(next)
     }
 
-    fn set_active(&self, active_url: String) -> Result<(), String> {
+    fn snapshot(&self) -> Result<(BackendSettings, u64), String> {
+        self.inner
+            .lock()
+            .map(|inner| (inner.settings.clone(), inner.generation))
+            .map_err(|_| "backend settings lock is poisoned".into())
+    }
+
+    fn set_active_if_current(&self, generation: u64, active_url: String) -> Result<bool, String> {
         let mut guard = self
             .inner
             .lock()
             .map_err(|_| "backend settings lock is poisoned".to_string())?;
-        let mut next = guard.clone();
+        if guard.generation != generation {
+            return Ok(false);
+        }
+        let mut next = guard.settings.clone();
         next.active_url = active_url;
         persist_settings(&self.path, &next)?;
-        *guard = next;
-        Ok(())
+        guard.settings = next;
+        guard.generation = guard.generation.wrapping_add(1);
+        Ok(true)
+    }
+
+    fn is_current(&self, generation: u64) -> Result<bool, String> {
+        self.inner
+            .lock()
+            .map(|inner| inner.generation == generation)
+            .map_err(|_| "backend settings lock is poisoned".into())
+    }
+
+    pub fn token_origin(&self, value: &str) -> Result<String, String> {
+        let requested = token_origin(value)?;
+        let settings = self.settings()?;
+        let allowed = std::iter::once(settings.local_url.as_str())
+            .chain(settings.remote_url.as_deref())
+            .chain(std::iter::once(settings.active_url.as_str()))
+            .filter_map(|url| token_origin(url).ok())
+            .any(|origin| origin == requested);
+        if allowed {
+            Ok(requested)
+        } else {
+            Err("token origin is not a configured backend origin".into())
+        }
     }
 }
 
@@ -252,7 +303,7 @@ pub async fn resolve(
     state: &BackendState,
     allow_service_start: bool,
 ) -> Result<BackendResolution, String> {
-    let settings = state.settings()?;
+    let (settings, generation) = state.snapshot()?;
     let previous_url = settings.active_url.clone();
     let candidates = settings.candidates();
     let mut attempts = Vec::with_capacity(candidates.len() + 1);
@@ -270,6 +321,12 @@ pub async fn resolve(
             && allow_service_start
             && settings.onboarding_complete
         {
+            if !state.is_current(generation)? {
+                return Err(
+                    "backend settings changed during resolution; retry with current settings"
+                        .into(),
+                );
+            }
             service_start_attempted = true;
             if crate::service::control(crate::service::ServiceAction::Start)
                 .await
@@ -292,7 +349,15 @@ pub async fn resolve(
     let active_url = selected.unwrap_or_else(|| previous_url.clone());
     let changed = active_url != previous_url;
     if changed {
-        state.set_active(active_url.clone())?;
+        if !state.set_active_if_current(generation, active_url.clone())? {
+            return Err(
+                "backend settings changed during resolution; retry with current settings".into(),
+            );
+        }
+    } else if !state.is_current(generation)? {
+        return Err(
+            "backend settings changed during resolution; retry with current settings".into(),
+        );
     }
     Ok(BackendResolution {
         strategy: settings.strategy,
@@ -325,6 +390,9 @@ pub fn validate_remote_url(value: &str) -> Result<String, String> {
     if parsed.query().is_some() || parsed.fragment().is_some() {
         return Err("backend URL must not contain a query or fragment".into());
     }
+    if !parsed.path().trim_matches('/').is_empty() {
+        return Err("backend URL must not contain a path".into());
+    }
     let loopback = is_loopback_host(parsed.host());
     match parsed.scheme() {
         "https" => {}
@@ -342,9 +410,10 @@ pub fn validate_remote_url(value: &str) -> Result<String, String> {
 }
 
 pub fn token_origin(value: &str) -> Result<String, String> {
-    let parsed = Url::parse(&validate_remote_url(value)?)
-        .map_err(|err| format!("invalid backend URL: {err}"))?;
-    Ok(parsed.origin().ascii_serialization())
+    let parsed = Url::parse(value.trim()).map_err(|err| format!("invalid backend URL: {err}"))?;
+    let origin = parsed.origin().ascii_serialization();
+    validate_remote_url(&origin)?;
+    Ok(origin)
 }
 
 fn is_loopback_url(value: &str) -> Result<bool, String> {
@@ -425,7 +494,11 @@ fn restrict_file(_path: &Path) -> Result<(), String> {
 
 /// Probe `GET /api/health`. It is intentionally unauthenticated.
 pub async fn probe(url: &str) -> bool {
-    let client = match reqwest::Client::builder().timeout(PROBE_TIMEOUT).build() {
+    let client = match reqwest::Client::builder()
+        .timeout(PROBE_TIMEOUT)
+        .redirect(reqwest::redirect::Policy::none())
+        .build()
+    {
         Ok(client) => client,
         Err(_) => return false,
     };
@@ -448,8 +521,8 @@ mod tests {
         assert!(validate_local_url("https://example.com").is_err());
         assert!(validate_remote_url("http://example.com:8420").is_err());
         assert_eq!(
-            validate_remote_url("https://example.com/api/").unwrap(),
-            "https://example.com/api"
+            validate_remote_url("https://example.com/").unwrap(),
+            "https://example.com"
         );
     }
 
@@ -460,6 +533,7 @@ mod tests {
             "https://user:secret@example.com",
             "https://example.com?a=1",
             "https://example.com/#fragment",
+            "https://example.com/api",
         ] {
             assert!(validate_remote_url(value).is_err(), "accepted {value}");
         }
@@ -518,5 +592,71 @@ mod tests {
             token_origin("https://example.com/dax").unwrap(),
             "https://example.com"
         );
+    }
+
+    #[test]
+    fn token_origin_must_match_a_configured_backend() {
+        let directory = std::env::temp_dir().join(format!(
+            "dax-backend-test-{}-{}",
+            std::process::id(),
+            std::thread::current().name().unwrap_or("origin")
+        ));
+        let _ = fs::remove_dir_all(&directory);
+        let state = BackendState::load(&directory).unwrap();
+        assert_eq!(
+            state.token_origin("http://127.0.0.1:8420/path").unwrap(),
+            "http://127.0.0.1:8420"
+        );
+        assert!(state.token_origin("https://attacker.example").is_err());
+        let _ = fs::remove_dir_all(directory);
+    }
+
+    #[test]
+    fn malformed_settings_recover_to_safe_defaults() {
+        let directory =
+            std::env::temp_dir().join(format!("dax-malformed-backend-test-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&directory);
+        fs::create_dir_all(&directory).unwrap();
+        fs::write(directory.join(SETTINGS_FILE), b"not json").unwrap();
+        let state = BackendState::load(&directory).unwrap();
+        assert_eq!(state.settings().unwrap(), BackendSettings::defaults());
+        let _ = fs::remove_dir_all(directory);
+    }
+
+    #[test]
+    fn newer_settings_versions_are_not_silently_overwritten() {
+        let directory =
+            std::env::temp_dir().join(format!("dax-newer-backend-test-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&directory);
+        fs::create_dir_all(&directory).unwrap();
+        fs::write(
+            directory.join(SETTINGS_FILE),
+            br#"{"version":3,"strategy":"local","local_url":"http://127.0.0.1:8420","remote_url":null,"active_url":"http://127.0.0.1:8420","onboarding_complete":true}"#,
+        )
+        .unwrap();
+        assert!(BackendState::load(&directory).is_err());
+        let _ = fs::remove_dir_all(directory);
+    }
+
+    #[test]
+    fn stale_resolution_cannot_replace_newer_settings() {
+        let directory =
+            std::env::temp_dir().join(format!("dax-generation-test-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&directory);
+        let state = BackendState::load(&directory).unwrap();
+        let (_, generation) = state.snapshot().unwrap();
+        let current = state
+            .set(
+                BackendStrategy::Remote,
+                DEFAULT_URL.into(),
+                Some("https://current.example".into()),
+                true,
+            )
+            .unwrap();
+        assert!(!state
+            .set_active_if_current(generation, DEFAULT_URL.into())
+            .unwrap());
+        assert_eq!(state.settings().unwrap(), current);
+        let _ = fs::remove_dir_all(directory);
     }
 }

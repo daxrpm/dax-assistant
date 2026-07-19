@@ -1,6 +1,7 @@
 import { useState, type FormEvent } from "react";
 import { ApiError, api } from "../api/client";
 import { getBaseUrl, storeToken } from "../api/connection";
+import { AppIcon } from "../components/AppIcon";
 import type { AuthStatus } from "../api/types";
 import { Button, Field, TextInput, useToast } from "../design/primitives";
 import s from "./Login.module.css";
@@ -75,6 +76,7 @@ export function Login({
     <div className={s.screen}>
       <form className={s.card} onSubmit={submit}>
         <div className={s.brand}>
+          <AppIcon size={58} className={s.appIcon} />
           <div className={s.title}>{isSetup ? t("login.welcome") : "Dax"}</div>
           <div className={s.subtitle}>
             {isSetup ? t("login.setupSubtitle") : t("login.signInSubtitle")}

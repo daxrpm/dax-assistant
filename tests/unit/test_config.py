@@ -40,10 +40,10 @@ class TestDaxConfig:
     def test_web_defaults(self):
         config = DaxConfig()
         assert config.web.port == 8420
-        # Loopback by default (personal assistant); LAN exposure is opt-in.
+        # The CLI is reachable by first-party LAN clients out of the box.
         assert config.web.host == "127.0.0.1"
-        assert config.web.expose_lan is False
-        assert config.web.effective_host == "127.0.0.1"
+        assert config.web.expose_lan is True
+        assert config.web.effective_host == "0.0.0.0"
 
     def test_whatsapp_disabled_by_default(self):
         config = DaxConfig()

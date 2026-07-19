@@ -4,31 +4,25 @@ use tauri_plugin_global_shortcut::{Code, Modifiers, Shortcut, ShortcutEvent, Sho
 const HUD_LABEL: &str = "voice-hud";
 
 pub fn show<R: Runtime>(app: &AppHandle<R>) -> Result<(), String> {
-    let window = app
-        .get_webview_window(HUD_LABEL)
-        .ok_or_else(|| "voice HUD window is unavailable".to_string())?;
-    window.show().map_err(|err| err.to_string())?;
-    window.set_focus().map_err(|err| err.to_string())
+    let window = crate::window::get_or_create(app, HUD_LABEL)?;
+    window.show().map_err(|err| err.to_string())
 }
 
 pub fn hide<R: Runtime>(app: &AppHandle<R>) -> Result<(), String> {
-    app.get_webview_window(HUD_LABEL)
-        .ok_or_else(|| "voice HUD window is unavailable".to_string())?
-        .hide()
-        .map_err(|err| err.to_string())
+    if let Some(window) = app.get_webview_window(HUD_LABEL) {
+        window.hide().map_err(|err| err.to_string())?;
+    }
+    Ok(())
 }
 
 pub fn toggle<R: Runtime>(app: &AppHandle<R>) -> Result<bool, String> {
-    let window = app
-        .get_webview_window(HUD_LABEL)
-        .ok_or_else(|| "voice HUD window is unavailable".to_string())?;
+    let window = crate::window::get_or_create(app, HUD_LABEL)?;
     let visible = window.is_visible().map_err(|err| err.to_string())?;
     if visible {
         window.hide().map_err(|err| err.to_string())?;
         Ok(false)
     } else {
         window.show().map_err(|err| err.to_string())?;
-        window.set_focus().map_err(|err| err.to_string())?;
         Ok(true)
     }
 }

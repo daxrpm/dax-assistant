@@ -230,14 +230,14 @@ class LLMConfig(BaseModel):
 class WebConfig(BaseModel):
     """Web UI and API server configuration."""
 
-    # Bind to loopback by default — this is a personal assistant. Set
-    # expose_lan=true (and configure auth) to listen on the local network.
+    # Keep loopback as the explicit fallback address. LAN exposure defaults on
+    # so first-party mobile clients can pair with `uv run dax` directly.
     host: str = "127.0.0.1"
     port: int = 8420
     cors_origins: list[str] = Field(default_factory=lambda: ["http://localhost:8420"])
     # When true, host is forced to 0.0.0.0 so other devices on the LAN can
     # reach the UI (auth is still enforced).
-    expose_lan: bool = False
+    expose_lan: bool = True
     # Allow the Vite dev server origin in CORS only when developing.
     dev_mode: bool = False
 

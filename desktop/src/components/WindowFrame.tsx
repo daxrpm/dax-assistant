@@ -19,6 +19,7 @@ import {
   type WindowResizeDirection,
 } from "../native/window";
 import s from "./WindowFrame.module.css";
+import { AppIcon } from "./AppIcon";
 
 interface WindowFrameContextValue {
   frame: WindowFramePreference;
@@ -91,7 +92,10 @@ export function TitleBar({
           <span aria-hidden="true">×</span>
         </button>
       </div>
-      <span className={s.title} data-tauri-drag-region>Dax</span>
+      <span className={s.title} data-tauri-drag-region>
+        <AppIcon size={16} className={s.titleIcon} />
+        Dax
+      </span>
     </header>
   );
 }

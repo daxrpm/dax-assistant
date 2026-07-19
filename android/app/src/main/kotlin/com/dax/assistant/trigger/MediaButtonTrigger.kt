@@ -4,6 +4,7 @@ import android.content.Context
 import android.content.Intent
 import android.media.session.MediaSession
 import android.media.session.PlaybackState
+import android.os.Build
 import android.os.SystemClock
 import android.view.KeyEvent
 import com.dax.assistant.core.log.DaxLog
@@ -38,10 +39,12 @@ class MediaButtonTrigger(private val context: Context) {
         session = MediaSession(context, TAG).apply {
             setCallback(object : MediaSession.Callback() {
                 override fun onMediaButtonEvent(intent: Intent): Boolean {
-                    val event = intent.getParcelableExtra(
-                        Intent.EXTRA_KEY_EVENT,
-                        KeyEvent::class.java,
-                    ) ?: return false
+                    val event = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+                        intent.getParcelableExtra(Intent.EXTRA_KEY_EVENT, KeyEvent::class.java)
+                    } else {
+                        @Suppress("DEPRECATION")
+                        intent.getParcelableExtra(Intent.EXTRA_KEY_EVENT)
+                    } ?: return false
                     if (event.action != KeyEvent.ACTION_DOWN) return false
                     return handle(event.keyCode)
                 }

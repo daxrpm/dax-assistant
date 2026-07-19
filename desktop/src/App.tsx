@@ -6,6 +6,7 @@ import {
   useMemo,
   useState,
   useSyncExternalStore,
+  useRef,
 } from "react";
 import { ApiError, api } from "./api/client";
 import {
@@ -16,6 +17,7 @@ import {
   resolveConnection,
 } from "./api/connection";
 import type { AuthStatus } from "./api/types";
+import { permitsAuthenticatedShell } from "./authState";
 import { AppShell } from "./components/AppShell";
 import { CommandDeck } from "./components/CommandDeck";
 import { WindowFrame } from "./components/WindowFrame";
@@ -63,12 +65,20 @@ function AppInner() {
   const [route, navigate] = useHashRoute("/");
   const { mode, setMode } = useTheme();
   const { locale, setLocale, t } = useI18n();
+  const toast = useToast();
   const [paletteOpen, setPaletteOpen] = useState(false);
+  const authCheckGeneration = useRef(0);
+
+  const openOnboarding = useCallback(() => {
+    authCheckGeneration.current += 1;
+    setPhase("onboarding");
+  }, []);
 
   const togglePalette = useCallback(() => setPaletteOpen((open) => !open), []);
   usePaletteShortcut(togglePalette);
 
   const checkAuth = useCallback(async (resolveBackend = true) => {
+    const generation = ++authCheckGeneration.current;
     try {
       const settings = resolveBackend
         ? await loadConnectionSettings()
@@ -78,7 +88,8 @@ function AppInner() {
         return;
       }
       if (resolveBackend) {
-        const resolution = await resolveConnection(false);
+        const resolution = await resolveConnection(false, shutdownRealtimeStores);
+        if (generation !== authCheckGeneration.current) return;
         if (!resolution.healthy) {
           setBootError(t("backend.failed"));
           setPhase("unreachable");
@@ -87,6 +98,7 @@ function AppInner() {
       }
       await loadToken();
       const status = await api.authStatus();
+      if (generation !== authCheckGeneration.current) return;
       setAuthStatus(status);
       setPhase(
         !status.auth_enabled || status.authenticated
@@ -95,6 +107,8 @@ function AppInner() {
       );
       setBootError(null);
     } catch (err) {
+      if (generation !== authCheckGeneration.current) return;
+      setAuthStatus(null);
       if (err instanceof ApiError && err.isUnreachable) {
         setBootError(err.message);
         setPhase("unreachable");
@@ -110,10 +124,9 @@ function AppInner() {
   }, [checkAuth]);
 
   useEffect(() => {
-    const openOnboarding = () => setPhase("onboarding");
     window.addEventListener("dax:open-onboarding", openOnboarding);
     return () => window.removeEventListener("dax:open-onboarding", openOnboarding);
-  }, []);
+  }, [openOnboarding]);
 
   useEffect(() => {
     if (!isTauriRuntime() || phase !== "authenticated") return;
@@ -126,11 +139,9 @@ function AppInner() {
         ),
       onDisconnected: async () => {
         if (getConnectionSettings()?.strategy !== "hybrid") return;
-        const resolution = await resolveConnection(false);
+        const resolution = await resolveConnection(false, shutdownRealtimeStores);
         if (!resolution.changed) return;
         setPhase("booting");
-        shutdownRealtimeStores();
-        await loadToken();
         await checkAuth(false);
       },
     });
@@ -144,11 +155,16 @@ function AppInner() {
     } catch {
       // Signing out locally matters more than the server round-trip.
     }
+    try {
+      await clearToken();
+    } catch (err) {
+      toast.show(err instanceof Error ? err.message : String(err), "danger");
+      return;
+    }
     shutdownRealtimeStores();
-    await clearToken();
     setPhase("unauthenticated");
     void checkAuth();
-  }, [checkAuth]);
+  }, [checkAuth, toast]);
 
   /**
    * Verbs, as opposed to destinations. They live in the palette because the
@@ -216,14 +232,36 @@ function AppInner() {
         <BackendConnection
           error={bootError}
           onRetry={() => void checkAuth()}
-          onConfigure={() => setPhase("onboarding")}
+          onConfigure={openOnboarding}
         />
       </div>
     );
   }
 
-  if (phase === "unauthenticated" && authStatus) {
-    return <Login status={authStatus} onAuthenticated={() => void checkAuth()} />;
+  if (phase === "unauthenticated") {
+    return authStatus ? (
+      <Login status={authStatus} onAuthenticated={() => void checkAuth()} />
+    ) : (
+      <div className={s.center}>
+        <BackendConnection
+          error={bootError}
+          onRetry={() => void checkAuth()}
+          onConfigure={openOnboarding}
+        />
+      </div>
+    );
+  }
+
+  if (!permitsAuthenticatedShell(authStatus)) {
+    return (
+      <div className={s.center}>
+        <BackendConnection
+          error={bootError}
+          onRetry={() => void checkAuth()}
+          onConfigure={openOnboarding}
+        />
+      </div>
+    );
   }
 
   // Screens that lay out their own full-height chrome opt out of the shell's
@@ -287,7 +325,7 @@ export function App() {
   const windowKind = new URLSearchParams(window.location.search).get("window");
   const isHud = windowKind === "hud" || windowKind === "voice-hud";
   useEffect(() => {
-    if (isTauriRuntime()) void desktopRuntime.start(!isHud);
+    if (isTauriRuntime() && !isHud) void desktopRuntime.start(true);
   }, [isHud]);
   if (isHud) {
     return <HudApp />;

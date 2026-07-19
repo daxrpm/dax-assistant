@@ -18,143 +18,233 @@ use backend::{BackendResolution, BackendSettings, BackendState, BackendStrategy}
 use tauri::Manager;
 use tauri_plugin_global_shortcut::GlobalShortcutExt;
 
+const MAIN_WINDOW: &str = "main";
+const HUD_WINDOW: &str = "voice-hud";
+
+fn authorize_caller(window: &tauri::WebviewWindow, allowed: &[&str]) -> Result<(), String> {
+    authorize_label(window.label(), allowed)
+}
+
+fn authorize_label(label: &str, allowed: &[&str]) -> Result<(), String> {
+    if allowed.contains(&label) {
+        Ok(())
+    } else {
+        Err(format!(
+            "window '{label}' is not authorized for this command"
+        ))
+    }
+}
+
+fn authorize_token_origin(
+    window: &tauri::WebviewWindow,
+    state: &BackendState,
+    requested: &str,
+) -> Result<String, String> {
+    let origin = state.token_origin(requested)?;
+    if window.label() == HUD_WINDOW {
+        let active = state.settings()?.active_url;
+        if origin != state.token_origin(&active)? {
+            return Err("voice HUD may only access the active backend token".into());
+        }
+    }
+    Ok(origin)
+}
+
 /* ---------------- session token ---------------- */
 
 #[tauri::command]
-fn session_token_get(origin: String) -> Result<Option<String>, String> {
-    Ok(secrets::get(&backend::token_origin(&origin)?))
+fn session_token_get(
+    window: tauri::WebviewWindow,
+    state: tauri::State<'_, BackendState>,
+    origin: String,
+) -> Result<Option<String>, String> {
+    authorize_caller(&window, &[MAIN_WINDOW, HUD_WINDOW])?;
+    secrets::get(&authorize_token_origin(&window, &state, &origin)?)
 }
 
 #[tauri::command]
-fn session_token_set(origin: String, token: String) -> Result<(), String> {
-    secrets::set(&backend::token_origin(&origin)?, &token)
+fn session_token_set(
+    window: tauri::WebviewWindow,
+    state: tauri::State<'_, BackendState>,
+    origin: String,
+    token: String,
+) -> Result<(), String> {
+    authorize_caller(&window, &[MAIN_WINDOW])?;
+    secrets::set(&state.token_origin(&origin)?, &token)
 }
 
 #[tauri::command]
-fn session_token_clear(origin: String) -> Result<(), String> {
-    secrets::clear(&backend::token_origin(&origin)?)
+fn session_token_clear(
+    window: tauri::WebviewWindow,
+    state: tauri::State<'_, BackendState>,
+    origin: String,
+) -> Result<(), String> {
+    authorize_caller(&window, &[MAIN_WINDOW])?;
+    secrets::clear(&state.token_origin(&origin)?)
 }
 
 /* ---------------- backend ---------------- */
 
 #[tauri::command]
 async fn backend_resolve(
+    window: tauri::WebviewWindow,
     state: tauri::State<'_, BackendState>,
     allow_service_start: bool,
 ) -> Result<BackendResolution, String> {
+    authorize_caller(&window, &[MAIN_WINDOW])?;
     backend::resolve(&state, allow_service_start).await
 }
 
 #[tauri::command]
 fn backend_settings_set(
+    window: tauri::WebviewWindow,
     state: tauri::State<'_, BackendState>,
     strategy: BackendStrategy,
     local_url: String,
     remote_url: Option<String>,
     onboarding_complete: bool,
 ) -> Result<BackendSettings, String> {
+    authorize_caller(&window, &[MAIN_WINDOW])?;
     state.set(strategy, local_url, remote_url, onboarding_complete)
 }
 
 #[tauri::command]
-fn backend_settings_get(state: tauri::State<'_, BackendState>) -> Result<BackendSettings, String> {
+fn backend_settings_get(
+    window: tauri::WebviewWindow,
+    state: tauri::State<'_, BackendState>,
+) -> Result<BackendSettings, String> {
+    authorize_caller(&window, &[MAIN_WINDOW, HUD_WINDOW])?;
     state.settings()
 }
 
 #[tauri::command]
-async fn system_metrics() -> Result<metrics::SystemMetrics, String> {
-    tauri::async_runtime::spawn_blocking(metrics::collect)
+async fn system_metrics(
+    window: tauri::WebviewWindow,
+    state: tauri::State<'_, metrics::MetricsState>,
+) -> Result<metrics::SystemMetrics, String> {
+    authorize_caller(&window, &[MAIN_WINDOW])?;
+    let state = state.inner().clone();
+    tauri::async_runtime::spawn_blocking(move || state.collect())
         .await
-        .map_err(|err| format!("cannot collect system metrics: {err}"))
+        .map_err(|err| format!("cannot collect system metrics: {err}"))?
 }
 
 #[tauri::command]
 async fn media_status(
+    window: tauri::WebviewWindow,
     state: tauri::State<'_, media::MediaState>,
 ) -> Result<media::MediaSnapshot, String> {
+    authorize_caller(&window, &[MAIN_WINDOW])?;
     media::status(&state).await
 }
 
 #[tauri::command]
 async fn media_control(
+    window: tauri::WebviewWindow,
     state: tauri::State<'_, media::MediaState>,
     action: media::MediaAction,
 ) -> Result<(), String> {
+    authorize_caller(&window, &[MAIN_WINDOW])?;
     media::control(&state, action).await
 }
 
 #[tauri::command]
 async fn media_set_ducking(
+    window: tauri::WebviewWindow,
     state: tauri::State<'_, media::MediaState>,
     ducking_state: media::DuckingState,
     volume_factor: f64,
 ) -> Result<(), String> {
+    authorize_caller(&window, &[MAIN_WINDOW])?;
     media::set_ducking(&state, ducking_state, volume_factor).await
 }
 
 #[tauri::command]
 async fn media_spectrum_start(
+    window: tauri::WebviewWindow,
     app: tauri::AppHandle,
     state: tauri::State<'_, media::MediaState>,
 ) -> Result<(), String> {
+    authorize_caller(&window, &[MAIN_WINDOW])?;
     media::start_spectrum(&state, app).await
 }
 
 #[tauri::command]
-fn media_spectrum_stop(state: tauri::State<'_, media::MediaState>) -> Result<(), String> {
+fn media_spectrum_stop(
+    window: tauri::WebviewWindow,
+    state: tauri::State<'_, media::MediaState>,
+) -> Result<(), String> {
+    authorize_caller(&window, &[MAIN_WINDOW])?;
     media::stop_spectrum(&state)
 }
 
 #[tauri::command]
-async fn service_control(action: service::ServiceAction) -> Result<service::ServiceStatus, String> {
+async fn service_control(
+    window: tauri::WebviewWindow,
+    action: service::ServiceAction,
+) -> Result<service::ServiceStatus, String> {
+    authorize_caller(&window, &[MAIN_WINDOW])?;
     service::control(action).await
 }
 
 #[tauri::command]
-fn voice_hud_show(app: tauri::AppHandle) -> Result<(), String> {
+fn voice_hud_show(window: tauri::WebviewWindow, app: tauri::AppHandle) -> Result<(), String> {
+    authorize_caller(&window, &[MAIN_WINDOW])?;
     hud::show(&app)
 }
 
 #[tauri::command]
-fn voice_hud_hide(app: tauri::AppHandle) -> Result<(), String> {
+fn voice_hud_hide(window: tauri::WebviewWindow, app: tauri::AppHandle) -> Result<(), String> {
+    authorize_caller(&window, &[MAIN_WINDOW, HUD_WINDOW])?;
     hud::hide(&app)
 }
 
 #[tauri::command]
-fn voice_hud_toggle(app: tauri::AppHandle) -> Result<bool, String> {
+fn voice_hud_toggle(window: tauri::WebviewWindow, app: tauri::AppHandle) -> Result<bool, String> {
+    authorize_caller(&window, &[MAIN_WINDOW])?;
     hud::toggle(&app)
 }
 
 #[tauri::command]
 fn window_frame_get(
+    window: tauri::WebviewWindow,
     state: tauri::State<'_, window::WindowState>,
 ) -> Result<window::WindowFrame, String> {
+    authorize_caller(&window, &[MAIN_WINDOW])?;
     state.get()
 }
 
 #[tauri::command]
 fn window_frame_set(
+    window: tauri::WebviewWindow,
     app: tauri::AppHandle,
     state: tauri::State<'_, window::WindowState>,
     frame: window::WindowFrame,
 ) -> Result<window::WindowFrame, String> {
+    authorize_caller(&window, &[MAIN_WINDOW])?;
     let frame = state.set(frame)?;
     window::apply_frame(&app, frame)?;
     Ok(frame)
 }
 
 #[tauri::command]
-fn main_window_minimize(app: tauri::AppHandle) -> Result<(), String> {
+fn main_window_minimize(window: tauri::WebviewWindow, app: tauri::AppHandle) -> Result<(), String> {
+    authorize_caller(&window, &[MAIN_WINDOW])?;
     window::minimize(&app)
 }
 
 #[tauri::command]
-fn main_window_toggle_maximize(app: tauri::AppHandle) -> Result<bool, String> {
+fn main_window_toggle_maximize(
+    window: tauri::WebviewWindow,
+    app: tauri::AppHandle,
+) -> Result<bool, String> {
+    authorize_caller(&window, &[MAIN_WINDOW])?;
     window::toggle_maximize(&app)
 }
 
 #[tauri::command]
-fn main_window_hide(app: tauri::AppHandle) -> Result<(), String> {
+fn main_window_hide(window: tauri::WebviewWindow, app: tauri::AppHandle) -> Result<(), String> {
+    authorize_caller(&window, &[MAIN_WINDOW])?;
     window::hide(&app)
 }
 
@@ -177,6 +267,16 @@ pub fn run() {
                 .with_handler(hud::handle_shortcut)
                 .build(),
         )
+        .on_window_event(|window, event| {
+            if matches!(window.label(), MAIN_WINDOW | HUD_WINDOW) {
+                if let tauri::WindowEvent::CloseRequested { api, .. } = event {
+                    api.prevent_close();
+                    if let Err(err) = window.hide() {
+                        eprintln!("cannot hide {} window on close: {err}", window.label());
+                    }
+                }
+            }
+        })
         .invoke_handler(tauri::generate_handler![
             session_token_get,
             session_token_set,
@@ -207,6 +307,7 @@ pub fn run() {
                 .map_err(|err| format!("cannot resolve app config directory: {err}"))?;
             app.manage(BackendState::load(&config_dir)?);
             app.manage(media::MediaState::default());
+            app.manage(metrics::MetricsState::default());
             let window_state = window::WindowState::load(&config_dir)?;
             window::apply_saved_frame(app.handle(), &window_state)?;
             app.manage(window_state);
@@ -224,4 +325,16 @@ pub fn run() {
         })
         .run(tauri::generate_context!())
         .expect("error while running Dax Desktop");
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn privileged_commands_are_main_window_only() {
+        assert!(authorize_label(MAIN_WINDOW, &[MAIN_WINDOW]).is_ok());
+        assert!(authorize_label(HUD_WINDOW, &[MAIN_WINDOW]).is_err());
+        assert!(authorize_label(HUD_WINDOW, &[MAIN_WINDOW, HUD_WINDOW]).is_ok());
+    }
 }

@@ -1,7 +1,11 @@
 use serde::Serialize;
+use std::sync::{Arc, Mutex};
+use std::time::{Duration, Instant};
 use sysinfo::{Disks, System, MINIMUM_CPU_UPDATE_INTERVAL};
 
-#[derive(Debug, Serialize)]
+const CACHE_TTL: Duration = Duration::from_secs(1);
+
+#[derive(Clone, Debug, Serialize)]
 pub struct DiskMetrics {
     pub name: String,
     pub mount_point: String,
@@ -10,7 +14,7 @@ pub struct DiskMetrics {
     pub removable: bool,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Clone, Debug, Serialize)]
 pub struct SystemMetrics {
     pub cpu_usage_percent: f32,
     pub logical_cpu_count: usize,
@@ -21,7 +25,29 @@ pub struct SystemMetrics {
     pub disks: Vec<DiskMetrics>,
 }
 
-pub fn collect() -> SystemMetrics {
+#[derive(Clone, Default)]
+pub struct MetricsState {
+    cache: Arc<Mutex<Option<(Instant, SystemMetrics)>>>,
+}
+
+impl MetricsState {
+    pub fn collect(&self) -> Result<SystemMetrics, String> {
+        let mut cache = self
+            .cache
+            .lock()
+            .map_err(|_| "system metrics cache is unavailable".to_string())?;
+        if let Some((collected_at, metrics)) = cache.as_ref() {
+            if collected_at.elapsed() < CACHE_TTL {
+                return Ok(metrics.clone());
+            }
+        }
+        let metrics = collect();
+        *cache = Some((Instant::now(), metrics.clone()));
+        Ok(metrics)
+    }
+}
+
+fn collect() -> SystemMetrics {
     let mut system = System::new_all();
     std::thread::sleep(MINIMUM_CPU_UPDATE_INTERVAL);
     system.refresh_cpu_usage();
@@ -47,5 +73,19 @@ pub fn collect() -> SystemMetrics {
         memory_available_bytes: system.available_memory(),
         uptime_seconds: System::uptime(),
         disks,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn recent_metrics_are_cached() {
+        let state = MetricsState::default();
+        let first = state.collect().unwrap();
+        let second = state.collect().unwrap();
+        assert_eq!(first.uptime_seconds, second.uptime_seconds);
+        assert_eq!(first.logical_cpu_count, second.logical_cpu_count);
     }
 }

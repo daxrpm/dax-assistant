@@ -54,6 +54,11 @@
   line-height: 1;
 }
 
+.appIcon {
+  flex: none;
+  border-radius: 6px;
+}
+
 .wordmark {
   font-size: var(--text-title3);
   line-height: var(--text-title3-lh);

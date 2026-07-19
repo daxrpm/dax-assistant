@@ -86,7 +86,7 @@ base_url = "https://api.deepseek.com"
 host = "127.0.0.1"
 port = 8420
 cors_origins = ["http://localhost:8420"]
-expose_lan = false
+expose_lan = true
 dev_mode = false
 
 [security]

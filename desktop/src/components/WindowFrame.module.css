@@ -32,12 +32,19 @@
 }
 
 .title {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
   color: var(--fg-quaternary);
   font-size: var(--text-footnote);
   line-height: 1;
   font-weight: 500;
   letter-spacing: 0.03em;
   pointer-events: none;
+}
+
+.titleIcon {
+  border-radius: 4px;
 }
 
 .controls {

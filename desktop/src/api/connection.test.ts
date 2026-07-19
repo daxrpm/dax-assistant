@@ -15,7 +15,8 @@ describe("validateBaseUrl", () => {
 
   it("requires HTTPS remotely", () => {
     expect(() => validateBaseUrl("http://example.com")).toThrow(/HTTPS/);
-    expect(validateBaseUrl("https://example.com/api/")).toBe("https://example.com/api");
+    expect(validateBaseUrl("https://example.com/")).toBe("https://example.com");
+    expect(() => validateBaseUrl("https://example.com/api/")).toThrow(/path/);
   });
 
   it("rejects credentials, queries and non-HTTP protocols", () => {

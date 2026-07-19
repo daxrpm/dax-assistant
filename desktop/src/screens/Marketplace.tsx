@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState, type FormEvent } from "react";
+import { useEffect, useMemo, useRef, useState, type FormEvent } from "react";
 import { api } from "../api/client";
 import type { MCPPreset, RegistryServer } from "../api/types";
 import { PlusIcon, SearchIcon, StoreIcon } from "../components/icons";
@@ -68,6 +68,11 @@ export function Marketplace() {
   const [searching, setSearching] = useState(false);
   const [registryError, setRegistryError] = useState<string | null>(null);
   const [prefill, setPrefill] = useState<ServerDraft | null>(null);
+  const searchRequest = useRef(0);
+
+  useEffect(() => () => {
+    searchRequest.current += 1;
+  }, []);
 
   useEffect(() => {
     api
@@ -89,10 +94,12 @@ export function Marketplace() {
   const search = async (e: FormEvent) => {
     e.preventDefault();
     if (!query.trim()) return;
+    const request = ++searchRequest.current;
     setSearching(true);
     setRegistryError(null);
     try {
       const data = await api.searchMcpRegistry(query.trim());
+      if (request !== searchRequest.current) return;
       // The backend reports upstream registry failures in-band rather than
       // as an HTTP error.
       if (data.error) {
@@ -102,9 +109,11 @@ export function Marketplace() {
         setResults(data.servers ?? []);
       }
     } catch (err) {
-      setRegistryError(err instanceof Error ? err.message : text("Error de búsqueda", "Search failed"));
+      if (request === searchRequest.current) {
+        setRegistryError(err instanceof Error ? err.message : text("Error de búsqueda", "Search failed"));
+      }
     } finally {
-      setSearching(false);
+      if (request === searchRequest.current) setSearching(false);
     }
   };
 
@@ -191,6 +200,7 @@ export function Marketplace() {
                 className={p.grow}
                 value={query}
                  placeholder={text("Buscar un servidor…", "Search for a server…")}
+                aria-label={text("Buscar servidores MCP", "Search MCP servers")}
                 onChange={(e) => setQuery(e.target.value)}
               />
               <Button type="submit" variant="secondary" loading={searching}>
@@ -199,7 +209,11 @@ export function Marketplace() {
               </Button>
             </form>
 
-            {registryError && <p className={s.error}>{registryError}</p>}
+            {registryError && <p className={s.error} role="alert">{registryError}</p>}
+
+            <span className={p.dim} role="status" aria-live="polite">
+              {searching ? text("Buscando…", "Searching…") : ""}
+            </span>
 
             {!registryError && results.length > 0 && (
               <div className={s.cards}>

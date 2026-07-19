@@ -1,15 +1,7 @@
 //! Session tokens isolated by normalized backend origin.
 
-use std::collections::HashMap;
-use std::sync::{Mutex, OnceLock};
-
 const SERVICE: &str = "dev.dax.desktop";
 const LEGACY_ACCOUNT: &str = "session-token";
-static MEMORY_FALLBACK: OnceLock<Mutex<HashMap<String, String>>> = OnceLock::new();
-
-fn memory_fallback() -> &'static Mutex<HashMap<String, String>> {
-    MEMORY_FALLBACK.get_or_init(|| Mutex::new(HashMap::new()))
-}
 
 fn account(origin: &str) -> String {
     let encoded = origin
@@ -20,57 +12,39 @@ fn account(origin: &str) -> String {
     format!("session-token-v2:{encoded}")
 }
 
-fn entry(account: &str) -> Option<keyring::Entry> {
-    match keyring::Entry::new(SERVICE, account) {
-        Ok(entry) => Some(entry),
-        Err(err) => {
-            eprintln!("keyring unavailable, using in-memory token store: {err}");
-            None
-        }
+fn entry(account: &str) -> Result<keyring::Entry, String> {
+    keyring::Entry::new(SERVICE, account).map_err(|err| format!("keyring unavailable: {err}"))
+}
+
+fn read(account: &str) -> Result<Option<String>, String> {
+    match entry(account)?.get_password() {
+        Ok(token) => Ok(Some(token)),
+        Err(keyring::Error::NoEntry) => Ok(None),
+        Err(err) => Err(format!("keyring read failed: {err}")),
     }
 }
 
-fn read(account: &str) -> Option<String> {
-    if let Some(entry) = entry(account) {
-        match entry.get_password() {
-            Ok(token) => return Some(token),
-            Err(keyring::Error::NoEntry) => {}
-            Err(err) => eprintln!("keyring read failed, falling back to memory: {err}"),
-        }
-    }
-    memory_fallback()
-        .lock()
-        .ok()
-        .and_then(|guard| guard.get(account).cloned())
-}
-
-pub fn get(origin: &str) -> Option<String> {
+pub fn get(origin: &str) -> Result<Option<String>, String> {
     let scoped = account(origin);
-    if let Some(token) = read(&scoped) {
-        return Some(token);
+    if let Some(token) = read(&scoped)? {
+        return Ok(Some(token));
     }
     // A legacy token can only be attributed safely to the active origin asking
     // for it. Move it once; it is never copied across origins.
-    let token = read(LEGACY_ACCOUNT)?;
-    if set(origin, &token).is_ok() {
-        let _ = delete(LEGACY_ACCOUNT);
-    }
-    Some(token)
+    let Some(token) = read(LEGACY_ACCOUNT)? else {
+        return Ok(None);
+    };
+    // Write first so a transient keyring failure cannot destroy the only copy.
+    set(origin, &token)?;
+    delete(LEGACY_ACCOUNT)?;
+    Ok(Some(token))
 }
 
 pub fn set(origin: &str, token: &str) -> Result<(), String> {
     let scoped = account(origin);
-    if let Some(entry) = entry(&scoped) {
-        match entry.set_password(token) {
-            Ok(()) => return Ok(()),
-            Err(err) => eprintln!("keyring write failed, falling back to memory: {err}"),
-        }
-    }
-    memory_fallback()
-        .lock()
-        .map_err(|err| err.to_string())?
-        .insert(scoped, token.to_string());
-    Ok(())
+    entry(&scoped)?
+        .set_password(token)
+        .map_err(|err| format!("keyring write failed: {err}"))
 }
 
 pub fn clear(origin: &str) -> Result<(), String> {
@@ -78,17 +52,10 @@ pub fn clear(origin: &str) -> Result<(), String> {
 }
 
 fn delete(account: &str) -> Result<(), String> {
-    if let Some(entry) = entry(account) {
-        match entry.delete_credential() {
-            Ok(()) | Err(keyring::Error::NoEntry) => {}
-            Err(err) => eprintln!("keyring delete failed: {err}"),
-        }
+    match entry(account)?.delete_credential() {
+        Ok(()) | Err(keyring::Error::NoEntry) => Ok(()),
+        Err(err) => Err(format!("keyring delete failed: {err}")),
     }
-    memory_fallback()
-        .lock()
-        .map_err(|err| err.to_string())?
-        .remove(account);
-    Ok(())
 }
 
 #[cfg(test)]

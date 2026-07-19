@@ -43,6 +43,12 @@
   min-width: 0;
 }
 
+.brandIcon {
+  flex: none;
+  border-radius: 7px;
+  box-shadow: 0 0 0 1px rgb(255 255 255 / 8%);
+}
+
 .brand {
   font-size: var(--text-title3);
   line-height: var(--text-title3-lh);

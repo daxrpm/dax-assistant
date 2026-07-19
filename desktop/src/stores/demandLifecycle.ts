@@ -37,6 +37,10 @@ export class DemandLifecycle {
     for (const listener of this.listeners) listener();
   }
 
+  hasSubscribers() {
+    return this.listeners.size > 0;
+  }
+
   shutdown() {
     if (this.closeTimer) clearTimeout(this.closeTimer);
     this.closeTimer = null;

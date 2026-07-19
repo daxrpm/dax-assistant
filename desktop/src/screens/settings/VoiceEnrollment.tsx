@@ -31,6 +31,7 @@ export function VoiceEnrollment() {
   const [enrolled, setEnrolled] = useState<boolean | null>(null);
   const [samples, setSamples] = useState<Blob[]>([]);
   const [recording, setRecording] = useState(false);
+  const [requesting, setRequesting] = useState(false);
   const [level, setLevel] = useState(0);
   const [uploading, setUploading] = useState(false);
   const [modelMissing, setModelMissing] = useState(false);
@@ -40,6 +41,8 @@ export function VoiceEnrollment() {
   const streamRef = useRef<MediaStream | null>(null);
   const rafRef = useRef<number | null>(null);
   const audioCtxRef = useRef<AudioContext | null>(null);
+  const generationRef = useRef(0);
+  const mountedRef = useRef(true);
 
   useEffect(() => {
     api
@@ -52,6 +55,8 @@ export function VoiceEnrollment() {
   // outlives the screen keeps the OS recording indicator on.
   useEffect(
     () => () => {
+      mountedRef.current = false;
+      generationRef.current += 1;
       recorderRef.current?.stop();
       streamRef.current?.getTracks().forEach((t) => t.stop());
       if (rafRef.current) cancelAnimationFrame(rafRef.current);
@@ -61,8 +66,14 @@ export function VoiceEnrollment() {
   );
 
   const startRecording = async () => {
+    const generation = ++generationRef.current;
+    setRequesting(true);
     try {
       const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      if (!mountedRef.current || generation !== generationRef.current) {
+        stream.getTracks().forEach((track) => track.stop());
+        return;
+      }
       streamRef.current = stream;
 
       // Native-mic level meter during capture (PLAN.md 6.2 desktop advantage).
@@ -86,15 +97,28 @@ export function VoiceEnrollment() {
       chunksRef.current = [];
       recorder.ondataavailable = (e) => chunksRef.current.push(e.data);
       recorder.onstop = () => {
+        if (!mountedRef.current || generation !== generationRef.current) return;
         const raw = new Blob(chunksRef.current, { type: "audio/webm" });
         void toEnrollmentWav(raw)
-          .then((wav) => setSamples((prev) => [...prev, wav]))
-          .catch(() => toast.show(text("No se pudo procesar la grabación", "Could not process that recording"), "danger"));
+          .then((wav) => {
+            if (mountedRef.current && generation === generationRef.current) {
+              setSamples((prev) => [...prev, wav]);
+            }
+          })
+          .catch(() => {
+            if (mountedRef.current && generation === generationRef.current) {
+              toast.show(text("No se pudo procesar la grabación", "Could not process that recording"), "danger");
+            }
+          });
       };
       recorder.start();
       setRecording(true);
     } catch {
-      toast.show(text("Permiso de micrófono denegado", "Microphone permission denied"), "danger");
+      if (mountedRef.current && generation === generationRef.current) {
+        toast.show(text("Permiso de micrófono denegado", "Microphone permission denied"), "danger");
+      }
+    } finally {
+      if (mountedRef.current && generation === generationRef.current) setRequesting(false);
     }
   };
 
@@ -163,7 +187,7 @@ export function VoiceEnrollment() {
       <PanelBody>
         <div className={p.rows}>
           {modelMissing && (
-            <div className={p.notice}>
+            <div className={p.notice} role="alert">
               <span className={p.noticeIcon}>
                 <AlertIcon size={14} />
               </span>
@@ -177,7 +201,8 @@ export function VoiceEnrollment() {
             <Button
               variant={recording ? "destructive" : "secondary"}
               onClick={() => (recording ? stopRecording() : void startRecording())}
-              disabled={samples.length >= MAX_SAMPLES && !recording}
+              disabled={requesting || (samples.length >= MAX_SAMPLES && !recording)}
+              aria-pressed={recording}
             >
               {recording ? (
                 <>
@@ -192,7 +217,14 @@ export function VoiceEnrollment() {
               )}
             </Button>
 
-            <div className={s.meterTrack}>
+            <div
+              className={s.meterTrack}
+              role="progressbar"
+              aria-label={text("Nivel del micrófono", "Microphone level")}
+              aria-valuemin={0}
+              aria-valuemax={100}
+              aria-valuenow={Math.round(Math.min(100, level * 140))}
+            >
               <div
                 className={s.meterFill}
                 style={{ width: `${Math.min(100, level * 140)}%` }}
@@ -216,6 +248,7 @@ export function VoiceEnrollment() {
                     onClick={() =>
                       setSamples((prev) => prev.filter((_, idx) => idx !== i))
                     }
+                    aria-label={text(`Eliminar muestra ${i + 1}`, `Delete sample ${i + 1}`)}
                   >
                     <TrashIcon size={12} />
                   </Button>

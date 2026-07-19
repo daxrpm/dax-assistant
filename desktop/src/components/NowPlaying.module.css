@@ -40,8 +40,8 @@
   height: calc(100% + 36px);
   object-fit: cover;
   opacity: .38;
-  filter: blur(14px) saturate(.82) brightness(.72);
-  transform: scale(1.08);
+  filter: blur(7px) saturate(.9) brightness(.7);
+  transform: scale(1.045);
   pointer-events: none;
 }
 

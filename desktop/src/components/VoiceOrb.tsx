@@ -96,11 +96,12 @@ function drawWave(
   cx: number,
   cy: number,
   baseRadius: number,
+  maxRadius: number,
   amplitude: number,
   rgb: [number, number, number],
   source: LevelSource,
 ) {
-  const points = 64;
+  const points = 72;
   context.beginPath();
   for (let index = 0; index <= points; index += 1) {
     const angle = (index / points) * Math.PI * 2;
@@ -111,17 +112,55 @@ function drawWave(
     const band = signal.spectrum[index % signal.spectrum.length] ?? 0;
     const harmonic = Math.sin(angle * (source === "input" ? 7 : 4));
     const energy = envelope * 0.58 + band * 0.27 + signal.peak * 0.15;
-    const radius = baseRadius + amplitude * energy * baseRadius *
-      (source === "input" ? 0.46 + harmonic * 0.12 : 0.25 + harmonic * 0.07);
+    const voiceShape = source === "input"
+      ? 0.42 + energy * 0.5 + harmonic * 0.1
+      : 0.38 + energy * 0.46 + harmonic * 0.08;
+    const radius = Math.min(maxRadius, baseRadius + amplitude * baseRadius * voiceShape);
     const x = cx + Math.cos(angle) * radius;
-    const y = cy + Math.sin(angle) * radius * (source === "input" ? 0.94 : 0.72);
+    const y = cy + Math.sin(angle) * radius * (source === "input" ? 0.96 : 0.88);
     if (index === 0) context.moveTo(x, y);
     else context.lineTo(x, y);
   }
   context.closePath();
-  context.lineWidth = source === "input" ? 1.35 : 1;
-  context.strokeStyle = rgba(rgb, source === "input" ? 0.64 * amplitude : 0.42 * amplitude);
+  context.lineWidth = source === "input" ? 1.8 : 1.55;
+  context.strokeStyle = rgba(rgb, (source === "input" ? 0.78 : 0.68) * amplitude);
   context.stroke();
+}
+
+function drawVoiceRings(
+  context: CanvasRenderingContext2D,
+  cx: number,
+  cy: number,
+  core: number,
+  amplitude: number,
+  rgb: [number, number, number],
+  source: LevelSource,
+  phase: number,
+) {
+  if (amplitude < 0.025) return;
+  for (let ring = 0; ring < 3; ring += 1) {
+    const progress = (phase * (source === "input" ? 0.72 : 0.58) + ring / 3) % 1;
+    const radius = Math.min(
+      core * 2.08,
+      core * (1.54 + progress * 0.56 + amplitude * 0.12),
+    );
+    context.beginPath();
+    context.ellipse(
+      cx,
+      cy,
+      radius,
+      radius * (source === "input" ? 0.97 : 0.9),
+      source === "input" ? 0 : -0.08,
+      0,
+      Math.PI * 2,
+    );
+    context.strokeStyle = rgba(
+      rgb,
+      amplitude * (1 - progress) * (source === "input" ? 0.42 : 0.36),
+    );
+    context.lineWidth = 0.8 + amplitude * 1.25;
+    context.stroke();
+  }
 }
 
 export const VoiceOrb = forwardRef<VoiceOrbHandle, VoiceOrbProps>(function VoiceOrb(
@@ -177,8 +216,12 @@ export const VoiceOrb = forwardRef<VoiceOrbHandle, VoiceOrbProps>(function Voice
     const targets = (): [number, number] => {
       const current = stateRef.current;
       if (current === "idle") return [0, 0];
-      if (current === "speaking") return [0.12, Math.max(0.18, signalsRef.current.output.peak)];
-      if (current === "listening") return [Math.max(0.18, signalsRef.current.input.peak), 0.08];
+      if (current === "speaking") {
+        return [0.06, Math.max(0.24, Math.sqrt(signalsRef.current.output.peak))];
+      }
+      if (current === "listening") {
+        return [Math.max(0.24, Math.sqrt(signalsRef.current.input.peak)), 0.05];
+      }
       return [0.14, 0.14];
     };
 
@@ -186,7 +229,7 @@ export const VoiceOrb = forwardRef<VoiceOrbHandle, VoiceOrbProps>(function Voice
       const cx = width / 2;
       const cy = height / 2;
       const scale = Math.min(width, height);
-      const core = scale * 0.245;
+      const core = scale * 0.22;
       const activity = Math.max(inputAmplitude, outputAmplitude);
       context.clearRect(0, 0, width, height);
 
@@ -201,8 +244,10 @@ export const VoiceOrb = forwardRef<VoiceOrbHandle, VoiceOrbProps>(function Voice
       context.fill();
       context.restore();
 
-      drawWave(context, signalsRef.current.input, cx, cy, core * 1.56, inputAmplitude, rgb, "input");
-      drawWave(context, signalsRef.current.output, cx, cy, core * 1.22, outputAmplitude, rgb, "output");
+      drawVoiceRings(context, cx, cy, core, inputAmplitude, rgb, "input", phase);
+      drawVoiceRings(context, cx, cy, core, outputAmplitude, rgb, "output", phase);
+      drawWave(context, signalsRef.current.input, cx, cy, core * 1.48, core * 2.08, inputAmplitude, rgb, "input");
+      drawWave(context, signalsRef.current.output, cx, cy, core * 1.42, core * 2.08, outputAmplitude, rgb, "output");
 
       const particles = Array.from({ length: PARTICLES }, (_, index) => {
         const angle = (index / PARTICLES) * Math.PI * 2 + phase * (0.1 + (index % 3) * 0.025);

@@ -20,6 +20,7 @@ const FALLBACK_TOKEN_PREFIX = "dax.session.token:";
 let configuredBaseUrl = DEFAULT_BASE_URL;
 let cachedSettings: BackendSettings | null = null;
 let cachedToken: string | null = null;
+let tokenLoadGeneration = 0;
 
 export function isTauri(): boolean {
   return isTauriRuntime();
@@ -50,6 +51,9 @@ export function validateBaseUrl(value: string, requireLoopback = false): string 
   }
   if (parsed.protocol !== "http:" && parsed.protocol !== "https:") {
     throw new Error("Backend URL scheme must be HTTP or HTTPS");
+  }
+  if (!/^\/+$/u.test(parsed.pathname)) {
+    throw new Error("Backend URL must not contain a path");
   }
   return parsed.toString().replace(/\/+$/, "");
 }
@@ -127,7 +131,8 @@ export async function saveConnectionSettings(
 }
 
 export async function resolveConnection(
-  allowServiceStart = false,
+  allowServiceStart: boolean,
+  beforeOriginSwitch: () => void | Promise<void>,
 ): Promise<BackendResolution> {
   if (!cachedSettings) await loadConnectionSettings();
   if (!isTauri()) {
@@ -142,8 +147,14 @@ export async function resolveConnection(
     };
   }
   const result = await resolveNativeBackend(allowServiceStart);
+  if (result.active_url !== configuredBaseUrl) {
+    await beforeOriginSwitch();
+    cachedToken = null;
+    tokenLoadGeneration += 1;
+  }
   configuredBaseUrl = result.active_url;
   cachedSettings = { ...cachedSettings!, active_url: result.active_url };
+  await loadToken();
   return result;
 }
 
@@ -185,36 +196,42 @@ export function getWsUrl(path: string, token: string | null): string {
 
 export async function loadToken(): Promise<string | null> {
   const origin = tokenOrigin();
+  const generation = ++tokenLoadGeneration;
+  let token: string | null;
   if (isTauri()) {
     try {
-      cachedToken = await invoke<string | null>("session_token_get", { origin });
+      token = await invoke<string | null>("session_token_get", { origin });
     } catch {
-      cachedToken = null;
+      token = null;
     }
   } else {
-    cachedToken = sessionStorage.getItem(tokenStorageKey());
+    token = sessionStorage.getItem(tokenStorageKey());
   }
-  return cachedToken;
+  if (generation !== tokenLoadGeneration || origin !== tokenOrigin()) return null;
+  cachedToken = token;
+  return token;
 }
 
 export async function storeToken(token: string): Promise<void> {
-  cachedToken = token;
+  tokenLoadGeneration += 1;
   const origin = tokenOrigin();
   if (isTauri()) {
     await invoke("session_token_set", { origin, token });
   } else {
     sessionStorage.setItem(tokenStorageKey(), token);
   }
+  cachedToken = token;
 }
 
 export async function clearToken(): Promise<void> {
-  cachedToken = null;
+  tokenLoadGeneration += 1;
   const origin = tokenOrigin();
   if (isTauri()) {
     await invoke("session_token_clear", { origin });
   } else {
     sessionStorage.removeItem(tokenStorageKey());
   }
+  cachedToken = null;
 }
 
 export function currentToken(): string | null {

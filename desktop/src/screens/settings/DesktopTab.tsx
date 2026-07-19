@@ -4,7 +4,6 @@ import {
   DEFAULT_BASE_URL,
   getConnectionSettings,
   isTauri,
-  loadToken,
   resolveConnection,
   saveConnectionSettings,
 } from "../../api/connection";
@@ -140,18 +139,13 @@ export function DesktopTab({
 
   const applyConnection = async () => {
     try {
-      const before = getConnectionSettings()?.active_url;
       await saveConnectionSettings({
         strategy,
         localUrl: localUrl.trim() || DEFAULT_BASE_URL,
         remoteUrl: strategy === "local" ? null : remoteUrl,
         onboardingComplete: true,
       });
-      const resolution = await resolveConnection(false);
-      if (resolution.active_url !== before) {
-        shutdownRealtimeStores();
-        await loadToken();
-      }
+      await resolveConnection(false, shutdownRealtimeStores);
       toast.show(text("Conexión guardada; reiniciando el flujo seguro", "Connection saved; restarting the secure flow"), "success");
       window.location.reload();
     } catch (err) {
@@ -162,7 +156,7 @@ export function DesktopTab({
   const reevaluate = async () => {
     setChecking(true);
     try {
-      const result = await resolveConnection(false);
+      const result = await resolveConnection(false, shutdownRealtimeStores);
       toast.show(result.healthy ? result.active_url : t("settings.desktop.unreachable"), result.healthy ? "success" : "danger");
       if (result.changed) setTimeout(() => window.location.reload(), 300);
     } catch (err) {

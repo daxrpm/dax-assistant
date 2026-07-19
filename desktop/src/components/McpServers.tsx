@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { api } from "../api/client";
 import type { FullConfig, MCPServerConfig, MCPServerStatus } from "../api/types";
 import {
@@ -27,6 +27,7 @@ import {
 import p from "../screens/page.module.css";
 import s from "./McpServers.module.css";
 import { useI18n } from "../i18n/I18n";
+import { useMcpActivity } from "../stores/mcpActivity";
 
 /* ---------------- text ↔ dict helpers (ported from web/McpTab.tsx) ---------------- */
 
@@ -273,20 +274,36 @@ function OAuthControl({ name }: { name: string }) {
     null,
   );
   const [polling, setPolling] = useState(false);
+  const pollTimer = useRef<ReturnType<typeof setInterval> | null>(null);
+  const mounted = useRef(true);
+
+  const stopPolling = useCallback(() => {
+    if (pollTimer.current) clearInterval(pollTimer.current);
+    pollTimer.current = null;
+    if (mounted.current) setPolling(false);
+  }, []);
 
   const refresh = useCallback(async () => {
     try {
-      setStatus(await api.mcpAuthStatus(name));
+      const next = await api.mcpAuthStatus(name);
+      if (mounted.current) setStatus(next);
     } catch {
-      setStatus(null);
+      if (mounted.current) setStatus(null);
     }
   }, [name]);
 
   useEffect(() => {
+    mounted.current = true;
     void refresh();
-  }, [refresh]);
+    return () => {
+      mounted.current = false;
+      if (pollTimer.current) clearInterval(pollTimer.current);
+      pollTimer.current = null;
+    };
+  }, [refresh, stopPolling]);
 
   const start = async () => {
+    stopPolling();
     try {
       const { authorization_url } = await api.startMcpAuth(name);
       const { openUrl } = await import("@tauri-apps/plugin-opener");
@@ -297,28 +314,27 @@ function OAuthControl({ name }: { name: string }) {
       // abandons the browser tab does not leave a timer running forever.
       setPolling(true);
       let attempts = 0;
-      const timer = setInterval(() => {
+      pollTimer.current = setInterval(() => {
         attempts += 1;
         void api
           .mcpAuthStatus(name)
           .then((next) => {
+            if (!mounted.current) return;
             setStatus(next);
             if (next.authenticated) {
-              clearInterval(timer);
-              setPolling(false);
-              toast.show(`${name} authenticated`, "success");
+              stopPolling();
+              toast.show(text(`${name} autenticado`, `${name} authenticated`), "success");
             }
           })
           .catch(() => {
             /* keep polling */
           });
         if (attempts >= 60) {
-          clearInterval(timer);
-          setPolling(false);
+          stopPolling();
         }
       }, 2000);
     } catch (err) {
-      setPolling(false);
+      stopPolling();
       toast.show(err instanceof Error ? err.message : text("Falló OAuth", "OAuth failed"), "danger");
     }
   };
@@ -378,6 +394,7 @@ export function McpServers({
   const [editing, setEditing] = useState(false);
   const [busy, setBusy] = useState<string | null>(null);
   const [expanded, setExpanded] = useState<string | null>(null);
+  const activity = useMcpActivity();
 
   const loadStatuses = useCallback(() => {
     api
@@ -408,7 +425,7 @@ export function McpServers({
       } else {
         await api.addMcpServer(payload);
       }
-      toast.show(`${draft.name} saved`, "success");
+      toast.show(text(`${draft.name} guardado`, `${draft.name} saved`), "success");
       setDraft(null);
       onSaved();
       loadStatuses();
@@ -487,16 +504,30 @@ export function McpServers({
           {servers.map(([name, cfg]) => {
             const status = statuses.find((st) => st.name === name);
             const isOpen = expanded === name;
+            const isActive = activity.servers.has(name) ||
+              (status?.tools ?? []).some((tool) => activity.tools.has(tool));
             return (
-              <div key={name} className={s.serverRow}>
+              <div
+                key={name}
+                className={`${s.serverRow} ${isActive ? s.serverRowActive : ""}`}
+                data-active={isActive || undefined}
+                aria-busy={isActive}
+              >
                 <div className={s.serverMain}>
                   <button
                     type="button"
-                    className={s.serverName}
+                    className={`${s.serverName} ${isActive ? s.serverNameActive : ""}`}
                     onClick={() => setExpanded(isOpen ? null : name)}
+                    aria-expanded={isOpen}
+                    aria-controls={`mcp-server-${encodeURIComponent(name)}`}
                   >
                     {name}
                   </button>
+                  {isActive && (
+                    <span role="status" aria-live="polite">
+                      <Badge tone="success" dot>{text("En uso", "In use")}</Badge>
+                    </span>
+                  )}
                   <Badge tone={status?.connected ? "success" : "neutral"} dot>
                     {status?.connected ? text("Conectado", "Connected") : text("Fuera de línea", "Offline")}
                   </Badge>
@@ -540,7 +571,10 @@ export function McpServers({
                 </div>
 
                 {isOpen && (
-                  <div className={s.serverDetail}>
+                  <div
+                    className={s.serverDetail}
+                    id={`mcp-server-${encodeURIComponent(name)}`}
+                  >
                     {cfg.transport !== "stdio" && <OAuthControl name={name} />}
                     <div className={s.serverCmd}>
                       {cfg.transport === "stdio"

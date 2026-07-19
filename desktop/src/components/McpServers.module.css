@@ -8,11 +8,20 @@
 
 .serverRow {
   border-radius: var(--radius-lg);
-  transition: background var(--dur-fast) var(--ease-standard);
+  transition: background var(--dur-fast) var(--ease-standard), box-shadow var(--dur-fast) var(--ease-standard);
 }
 
 .serverRow:hover {
   background: var(--bg-hover);
+}
+
+.serverRowActive {
+  background: color-mix(in srgb, var(--success) 8%, transparent);
+  box-shadow: inset 3px 0 0 color-mix(in srgb, var(--success) 78%, transparent);
+}
+
+.serverRowActive:hover {
+  background: color-mix(in srgb, var(--success) 11%, var(--bg-hover));
 }
 
 .serverMain {
@@ -34,6 +43,10 @@
 
 .serverName:hover {
   color: var(--accent);
+}
+
+.serverNameActive {
+  color: var(--success);
 }
 
 .serverMeta {

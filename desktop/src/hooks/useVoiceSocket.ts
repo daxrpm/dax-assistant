@@ -2,6 +2,9 @@ import { useEffect, useSyncExternalStore } from "react";
 import { currentToken, getWsUrl } from "../api/connection";
 import { DemandLifecycle } from "../stores/demandLifecycle";
 
+const CONNECTION_TIMEOUT_MS = 5_000;
+const MAX_PCM_BUFFERED_BYTES = 256 * 1024;
+
 export type PipelineState =
   | "idle"
   | "listening"
@@ -60,6 +63,7 @@ export function createVoiceStore() {
   let snapshot = INITIAL_SNAPSHOT;
   let socket: WebSocket | null = null;
   let retry: ReturnType<typeof setTimeout> | null = null;
+  let connectionTimer: ReturnType<typeof setTimeout> | null = null;
   let stopped = true;
   let remoteAcquired = false;
   let remoteStreaming = false;
@@ -90,12 +94,25 @@ export function createVoiceStore() {
       return;
     }
     socket = ws;
+    connectionTimer = setTimeout(() => {
+      if (socket !== ws) return;
+      const failure = new Error("Timed out connecting to voice service");
+      for (const waiter of connectionWaiters.splice(0)) waiter.reject(failure);
+      update({ error: failure.message });
+      ws.close();
+    }, CONNECTION_TIMEOUT_MS);
     ws.onopen = () => {
+      if (socket !== ws) return;
+      if (connectionTimer) clearTimeout(connectionTimer);
+      connectionTimer = null;
       update({ connected: true, error: null });
       for (const waiter of connectionWaiters.splice(0)) waiter.resolve();
     };
     ws.onclose = (event) => {
-      if (socket === ws) socket = null;
+      if (socket !== ws) return;
+      socket = null;
+      if (connectionTimer) clearTimeout(connectionTimer);
+      connectionTimer = null;
       remoteAcquired = false;
       remoteStreaming = false;
       for (const listener of disconnectListeners) listener();
@@ -111,6 +128,7 @@ export function createVoiceStore() {
     };
     ws.onerror = () => ws.close();
     ws.onmessage = (event) => {
+      if (socket !== ws) return;
       let frame: { type: string; data: Record<string, unknown> };
       try {
         frame = JSON.parse(event.data as string) as typeof frame;
@@ -131,6 +149,7 @@ export function createVoiceStore() {
           control = null;
         }
         update({ error: failure.message });
+        ws.close();
         return;
       }
       if (control && frame.type === control.expected) {
@@ -178,9 +197,12 @@ export function createVoiceStore() {
     if (!socket || control) throw new Error("Another remote audio command is pending");
     await new Promise<void>((resolve, reject) => {
       const timer = setTimeout(() => {
-        if (control?.timer === timer) control = null;
+        if (control?.timer === timer) {
+          control = null;
+          socket?.close();
+        }
         reject(new Error(`Timed out waiting for ${expected}`));
-      }, 5_000);
+      }, CONNECTION_TIMEOUT_MS);
       control = { expected, resolve, reject, timer };
       socket?.send(JSON.stringify({ type, ...extra }));
     });
@@ -194,10 +216,22 @@ export function createVoiceStore() {
     () => {
       stopped = true;
       if (retry) clearTimeout(retry);
+      if (connectionTimer) clearTimeout(connectionTimer);
       retry = null;
+      connectionTimer = null;
       const active = socket;
       socket = null;
       active?.close();
+      remoteAcquired = false;
+      remoteStreaming = false;
+      for (const listener of disconnectListeners) listener();
+      const failure = new Error("Voice connection shut down");
+      for (const waiter of connectionWaiters.splice(0)) waiter.reject(failure);
+      if (control) {
+        clearTimeout(control.timer);
+        control.reject(failure);
+        control = null;
+      }
       if (snapshot.connected) update({ connected: false });
     },
     true,
@@ -246,6 +280,7 @@ export function createVoiceStore() {
     },
     sendPcm(frame: ArrayBuffer) {
       if (!remoteStreaming || !socket || socket.readyState !== WebSocket.OPEN) return;
+      if (socket.bufferedAmount > MAX_PCM_BUFFERED_BYTES) return;
       socket.send(frame);
     },
     shutdown: () => lifecycle.shutdown(),

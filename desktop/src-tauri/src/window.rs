@@ -41,7 +41,16 @@ impl WindowState {
     pub fn load(config_dir: &Path) -> Result<Self, String> {
         let path = config_dir.join(SETTINGS_FILE);
         let (frame, migrated) = match fs::read(&path) {
-            Ok(bytes) => decode_settings(&bytes)?,
+            Ok(bytes) => match decode_settings(&bytes) {
+                Ok(decoded) => decoded,
+                Err(err) if err.starts_with("unsupported window settings version") => {
+                    return Err(err);
+                }
+                Err(err) => {
+                    eprintln!("{err}; using safe window defaults");
+                    (WindowFrame::default(), false)
+                }
+            },
             Err(err) if err.kind() == std::io::ErrorKind::NotFound => (WindowFrame::Custom, false),
             Err(err) => return Err(format!("cannot read window settings: {err}")),
         };
@@ -113,9 +122,42 @@ pub fn hide<R: Runtime>(app: &AppHandle<R>) -> Result<(), String> {
         .map_err(|err| format!("cannot hide main window: {err}"))
 }
 
+pub fn show_main<R: Runtime>(app: &AppHandle<R>) -> Result<(), String> {
+    let window = main_window(app)?;
+    if let Some(state) = app.try_state::<WindowState>() {
+        window
+            .set_decorations(state.get()? == WindowFrame::Native)
+            .map_err(|err| format!("cannot restore main window frame: {err}"))?;
+    }
+    window
+        .show()
+        .and_then(|_| window.unminimize())
+        .and_then(|_| window.set_focus())
+        .map_err(|err| format!("cannot show main window: {err}"))
+}
+
 fn main_window<R: Runtime>(app: &AppHandle<R>) -> Result<tauri::WebviewWindow<R>, String> {
-    app.get_webview_window("main")
-        .ok_or_else(|| "main window is unavailable".into())
+    get_or_create(app, "main")
+}
+
+pub fn get_or_create<R: Runtime>(
+    app: &AppHandle<R>,
+    label: &str,
+) -> Result<tauri::WebviewWindow<R>, String> {
+    if let Some(window) = app.get_webview_window(label) {
+        return Ok(window);
+    }
+    let config = app
+        .config()
+        .app
+        .windows
+        .iter()
+        .find(|config| config.label == label)
+        .ok_or_else(|| format!("window configuration for '{label}' is unavailable"))?;
+    tauri::WebviewWindowBuilder::from_config(app, config)
+        .map_err(|err| format!("cannot prepare '{label}' window: {err}"))?
+        .build()
+        .map_err(|err| format!("cannot recreate '{label}' window: {err}"))
 }
 
 fn decode_settings(bytes: &[u8]) -> Result<(WindowFrame, bool), String> {
@@ -195,5 +237,32 @@ mod tests {
             (WindowFrame::Custom, false)
         );
         assert!(decode_settings(br#"{"version":2,"frame":"custom"}"#).is_err());
+    }
+
+    #[test]
+    fn malformed_settings_recover_to_custom_frame() {
+        let directory =
+            std::env::temp_dir().join(format!("dax-malformed-window-test-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&directory);
+        fs::create_dir_all(&directory).unwrap();
+        fs::write(directory.join(SETTINGS_FILE), b"not json").unwrap();
+        let state = WindowState::load(&directory).unwrap();
+        assert_eq!(state.get().unwrap(), WindowFrame::Custom);
+        let _ = fs::remove_dir_all(directory);
+    }
+
+    #[test]
+    fn newer_settings_versions_are_not_silently_overwritten() {
+        let directory =
+            std::env::temp_dir().join(format!("dax-newer-window-test-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&directory);
+        fs::create_dir_all(&directory).unwrap();
+        fs::write(
+            directory.join(SETTINGS_FILE),
+            br#"{"version":2,"frame":"native"}"#,
+        )
+        .unwrap();
+        assert!(WindowState::load(&directory).is_err());
+        let _ = fs::remove_dir_all(directory);
     }
 }

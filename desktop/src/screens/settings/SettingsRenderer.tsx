@@ -1,4 +1,4 @@
-import { useState, type ReactNode } from "react";
+import { useId, useState, type ReactNode } from "react";
 import { api } from "../../api/client";
 import type { FullConfig } from "../../api/types";
 import { McpServers } from "../../components/McpServers";
@@ -73,6 +73,8 @@ function GeneratedGroup({
   const [open, setOpen] = useState(!group.collapsible);
   const [advancedOpen, setAdvancedOpen] = useState(false);
   const [resettingPrompt, setResettingPrompt] = useState(false);
+  const contentId = useId();
+  const advancedId = useId();
   const visibleOpen = searching || open;
   const normal = fields.filter((field) => !field.advanced);
   const advanced = fields.filter((field) => field.advanced);
@@ -94,7 +96,13 @@ function GeneratedGroup({
   };
 
   const title: ReactNode = group.collapsible && !searching ? (
-    <button className={s.groupToggle} type="button" onClick={() => setOpen((value) => !value)}>
+    <button
+      className={s.groupToggle}
+      type="button"
+      onClick={() => setOpen((value) => !value)}
+      aria-expanded={visibleOpen}
+      aria-controls={contentId}
+    >
       <span className={cn(s.groupChevron, visibleOpen && s.groupChevronOpen)}>
         <ChevronRightIcon size={14} />
       </span>
@@ -144,7 +152,7 @@ function GeneratedGroup({
       />
       {visibleOpen && (
         <PanelBody>
-          <div className={s.fields}>
+          <div id={contentId} className={s.fields}>
             {normal.map((field) => (
               <FieldControl key={`${field.key}:${field.path}`} field={field} draft={context.draft} />
             ))}
@@ -153,6 +161,8 @@ function GeneratedGroup({
                 className={s.advancedToggle}
                 type="button"
                 onClick={() => setAdvancedOpen((value) => !value)}
+                aria-expanded={advancedOpen}
+                aria-controls={advancedId}
               >
                 <ChevronRightIcon size={12} />
                 {advancedOpen ? t("settings.hideAdvanced") : t("settings.showAdvanced")}
@@ -160,7 +170,7 @@ function GeneratedGroup({
               </button>
             )}
             {(searching || advancedOpen) && advanced.length > 0 && (
-              <div className={s.advanced}>
+              <div className={s.advanced} id={advancedId}>
                 {advanced.map((field) => (
                   <FieldControl
                     key={`${field.key}:${field.path}`}

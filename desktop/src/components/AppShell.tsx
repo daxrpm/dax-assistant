@@ -4,6 +4,7 @@ import { Button } from "../design/primitives";
 import { PALETTE_ROUTES } from "./CommandPalette";
 import { useI18n } from "../i18n/I18n";
 import s from "./AppShell.module.css";
+import { AppIcon } from "./AppIcon";
 
 /**
  * The chrome for a *summoned* screen.
@@ -53,6 +54,7 @@ export function AppShell({
           aria-label={t("shell.back")}
         >
           <span className={s.backArrow}>←</span>
+          <AppIcon size={21} className={s.appIcon} />
           <span className={s.wordmark}>Dax</span>
         </button>
 

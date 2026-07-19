@@ -5,7 +5,7 @@
 use tauri::{
     menu::{Menu, MenuItem},
     tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent},
-    AppHandle, Emitter, Manager, Runtime,
+    AppHandle, Emitter, Runtime,
 };
 
 const TALK_EVENT: &str = "tray://talk-to-dax";
@@ -84,10 +84,8 @@ pub fn build<R: Runtime>(app: &AppHandle<R>) -> tauri::Result<()> {
 }
 
 pub fn focus_main<R: Runtime>(app: &AppHandle<R>) {
-    if let Some(window) = app.get_webview_window("main") {
-        let _ = window.show();
-        let _ = window.unminimize();
-        let _ = window.set_focus();
+    if let Err(err) = crate::window::show_main(app) {
+        eprintln!("cannot restore main window: {err}");
     }
 }
 
