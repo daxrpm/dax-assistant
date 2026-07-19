@@ -1,47 +1,27 @@
 import type { ReactNode } from "react";
-import { cn } from "../lib/cn";
 import type { ThemeMode } from "../lib/useTheme";
 import { Button } from "../design/primitives";
-import {
-  ChatIcon,
-  DashboardIcon,
-  LogsIcon,
-  McpIcon,
-  SettingsIcon,
-  StoreIcon,
-  TerminalIcon,
-} from "./icons";
+import { PALETTE_ROUTES } from "./CommandPalette";
+import { useI18n } from "../i18n/I18n";
 import s from "./AppShell.module.css";
 
-export interface NavEntry {
-  route: string;
-  label: string;
-  icon: ReactNode;
-  /** Screens not yet built in this milestone render a placeholder. */
-  ready: boolean;
-}
-
-export const NAV: NavEntry[] = [
-  { route: "/chat", label: "Chat", icon: <ChatIcon />, ready: true },
-  { route: "/dashboard", label: "Dashboard", icon: <DashboardIcon />, ready: true },
-  { route: "/mcp", label: "MCP", icon: <McpIcon />, ready: true },
-  { route: "/marketplace", label: "Marketplace", icon: <StoreIcon />, ready: true },
-  { route: "/commands", label: "Commands", icon: <TerminalIcon />, ready: true },
-  { route: "/logs", label: "Logs", icon: <LogsIcon />, ready: true },
-  { route: "/settings", label: "Settings", icon: <SettingsIcon />, ready: true },
-];
-
-const THEME_LABEL: Record<ThemeMode, string> = {
-  light: "Light",
-  dark: "Dark",
-  system: "System",
-};
-
+/**
+ * The chrome for a *summoned* screen.
+ *
+ * PLAN.md 5.0 removed the sidebar: Chat, MCP, Marketplace, Comandos, Registro
+ * and Ajustes are palette destinations now, not permanent nav, so the shell no
+ * longer spends 218px on links used once a day. What remains is a strip that
+ * answers two questions — where am I, and how do I get back to the deck — plus
+ * the two account-level verbs that have nowhere better to live.
+ *
+ * The deck itself does not use this shell; it renders full-window.
+ */
 const THEME_ORDER: ThemeMode[] = ["system", "light", "dark"];
 
 export function AppShell({
   route,
   onNavigate,
+  onOpenPalette,
   themeMode,
   onCycleTheme,
   onLogout,
@@ -50,6 +30,7 @@ export function AppShell({
 }: {
   route: string;
   onNavigate: (route: string) => void;
+  onOpenPalette: () => void;
   themeMode: ThemeMode;
   onCycleTheme: (next: ThemeMode) => void;
   onLogout: () => void;
@@ -57,46 +38,44 @@ export function AppShell({
   bare?: boolean;
   children: ReactNode;
 }) {
+  const { t } = useI18n();
   const nextTheme =
     THEME_ORDER[(THEME_ORDER.indexOf(themeMode) + 1) % THEME_ORDER.length] ?? "system";
+  const current = PALETTE_ROUTES.find((entry) => entry.route === route);
 
   return (
     <div className={s.shell}>
-      <aside className={s.sidebar}>
-        <div className={s.sidebarHeader}>
+      <header className={s.strip}>
+        <button
+          type="button"
+          className={s.back}
+          onClick={() => onNavigate("/")}
+          aria-label={t("shell.back")}
+        >
+          <span className={s.backArrow}>←</span>
           <span className={s.wordmark}>Dax</span>
-        </div>
+        </button>
 
-        <nav className={s.nav}>
-          <div className={s.groupHeader}>Workspace</div>
-          {NAV.map((entry) => (
-            <button
-              key={entry.route}
-              type="button"
-              onClick={() => onNavigate(entry.route)}
-              aria-current={route === entry.route ? "page" : undefined}
-              className={cn(s.navItem, route === entry.route && s.navItemSelected)}
-            >
-              <span className={s.navIcon}>{entry.icon}</span>
-              {entry.label}
-            </button>
-          ))}
-        </nav>
+        <span className={s.crumb}>{current ? t(current.labelKey) : route}</span>
 
-        <div className={s.sidebarFooter}>
+        <div className={s.stripActions}>
+          <button type="button" className={s.paletteHint} onClick={onOpenPalette}>
+            <kbd className={s.kbd}>⌘K</kbd>
+            <span>{t("shell.commands")}</span>
+          </button>
           <Button size="sm" variant="ghost" onClick={() => onCycleTheme(nextTheme)}>
-            {THEME_LABEL[themeMode]}
+            {t(themeMode === "light" ? "theme.light" : themeMode === "dark" ? "theme.dark" : "theme.system")}
           </Button>
           <Button size="sm" variant="ghost" onClick={onLogout}>
-            Sign out
+            {t("palette.logout")}
           </Button>
         </div>
-      </aside>
+      </header>
 
       <main className={s.content}>
         {/*
-          Full-bleed screens (Chat, Logs, Settings) own their own scrolling and
-          internal chrome, so they skip the padded scroll wrapper entirely.
+          Full-bleed screens (Chat, Registro, Ajustes) own their own scrolling
+          and internal chrome, so they skip the padded scroll wrapper entirely.
         */}
         {bare ? children : <div className={s.contentScroll}>{children}</div>}
       </main>

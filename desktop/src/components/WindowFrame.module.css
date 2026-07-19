@@ -1,0 +1,191 @@
+.frame {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  width: 100%;
+  height: 100%;
+  min-width: 0;
+  min-height: 0;
+  overflow: hidden;
+  border: 1px solid color-mix(in srgb, var(--fg-primary) 13%, transparent);
+  border-radius: var(--radius-window);
+  background: var(--bg-window);
+  box-shadow: 0 1px 0 rgba(255, 255, 255, 0.045) inset;
+}
+
+.frame[data-frame="native"] {
+  border: 0;
+  border-radius: 0;
+  box-shadow: none;
+}
+
+.titleBar {
+  position: relative;
+  flex: 0 0 31px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 100%;
+  min-width: 0;
+  background: color-mix(in srgb, var(--bg-panel) 86%, var(--bg-window));
+  box-shadow: 0 -1px 0 var(--separator) inset;
+}
+
+.title {
+  color: var(--fg-quaternary);
+  font-size: var(--text-footnote);
+  line-height: 1;
+  font-weight: 500;
+  letter-spacing: 0.03em;
+  pointer-events: none;
+}
+
+.controls {
+  position: absolute;
+  inset: 0 7px 0 auto;
+  display: flex;
+  align-items: center;
+  gap: 0;
+}
+
+.control {
+  position: relative;
+  display: grid;
+  place-items: center;
+  width: 19px;
+  height: 30px;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: transparent;
+  cursor: default;
+}
+
+.control::before {
+  position: absolute;
+  width: 12px;
+  height: 12px;
+  border-radius: 50%;
+  background: var(--fg-quaternary);
+  content: "";
+  opacity: 0.72;
+  transition: opacity var(--dur-fast) var(--ease-standard), transform var(--dur-fast) var(--ease-standard);
+}
+
+.control span {
+  position: relative;
+  z-index: 1;
+  color: color-mix(in srgb, var(--bg-window) 75%, black);
+  font-family: var(--font-sans);
+  font-size: 9px;
+  font-weight: 500;
+  line-height: 1;
+  opacity: 0;
+}
+
+.control:hover::before,
+.control:focus-visible::before {
+  opacity: 1;
+  transform: scale(1.08);
+}
+
+.control:hover span,
+.control:focus-visible span {
+  opacity: 0.85;
+}
+
+.hide::before {
+  background: var(--danger);
+}
+
+.minimize::before {
+  background: var(--warning);
+}
+
+.maximize::before {
+  background: var(--success);
+}
+
+.content {
+  flex: 1 1 auto;
+  min-width: 0;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.resizeHandle {
+  position: absolute;
+  z-index: 1000;
+}
+
+.resizeNorth,
+.resizeSouth {
+  right: 7px;
+  left: 7px;
+  height: 6px;
+}
+
+.resizeEast,
+.resizeWest {
+  top: 7px;
+  bottom: 7px;
+  width: 6px;
+}
+
+.resizeNorth {
+  top: 0;
+  cursor: ns-resize;
+}
+
+.resizeSouth {
+  bottom: 0;
+  cursor: ns-resize;
+}
+
+.resizeEast {
+  right: 0;
+  cursor: ew-resize;
+}
+
+.resizeWest {
+  left: 0;
+  cursor: ew-resize;
+}
+
+.resizeNorthEast,
+.resizeNorthWest,
+.resizeSouthEast,
+.resizeSouthWest {
+  width: 10px;
+  height: 10px;
+}
+
+.resizeNorthEast {
+  top: 0;
+  right: 0;
+  cursor: nesw-resize;
+}
+
+.resizeNorthWest {
+  top: 0;
+  left: 0;
+  cursor: nwse-resize;
+}
+
+.resizeSouthEast {
+  right: 0;
+  bottom: 0;
+  cursor: nwse-resize;
+}
+
+.resizeSouthWest {
+  bottom: 0;
+  left: 0;
+  cursor: nesw-resize;
+}
+
+@media (max-width: 720px) {
+  .controls {
+    right: 3px;
+  }
+}

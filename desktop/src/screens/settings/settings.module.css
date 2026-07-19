@@ -1,0 +1,443 @@
+/*
+ * Settings layout — PLAN.md 6.0 information architecture on the 5.0 "Órbita"
+ * design language. Depth from elevation, radii >= 10px, generous space, no
+ * accent for selection (a selected section is a raised surface).
+ */
+
+.shell {
+  display: grid;
+  grid-template-columns: 208px minmax(0, 1fr);
+  gap: var(--space-8);
+  align-items: start;
+}
+
+.settingsPage {
+  max-width: 1120px;
+}
+
+.state {
+  display: flex;
+  justify-content: center;
+  padding: var(--space-12);
+}
+
+.errorState {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: var(--space-3);
+  color: var(--fg-secondary);
+}
+
+.loadError {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-3);
+  padding: var(--space-3) var(--space-4);
+  color: var(--danger);
+  background: color-mix(in srgb, var(--danger) 10%, transparent);
+  border-radius: var(--radius-lg);
+}
+
+@media (max-width: 900px) {
+  .shell {
+    grid-template-columns: minmax(0, 1fr);
+    gap: var(--space-5);
+  }
+}
+
+/* ---- search ---- */
+
+.search {
+  position: relative;
+  display: flex;
+  align-items: center;
+}
+
+.searchIcon {
+  position: absolute;
+  left: var(--space-4);
+  display: flex;
+  color: var(--fg-tertiary);
+  pointer-events: none;
+}
+
+.searchInput {
+  width: 100%;
+  height: 42px;
+  padding: 0 var(--space-12) 0 var(--space-10);
+  font-family: inherit;
+  font-size: var(--text-body);
+  line-height: var(--text-body-lh);
+  color: var(--fg-primary);
+  background: var(--bg-elevated);
+  border: none;
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-1);
+  outline: none;
+}
+
+.searchInput::placeholder {
+  color: var(--fg-tertiary);
+}
+
+.searchInput:focus-visible {
+  box-shadow: var(--shadow-1), 0 0 0 var(--focus-ring-width) var(--focus-ring);
+}
+
+.searchClear {
+  position: absolute;
+  right: var(--space-3);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 26px;
+  height: 26px;
+  color: var(--fg-tertiary);
+  background: transparent;
+  border: none;
+  border-radius: var(--radius-md);
+  cursor: pointer;
+}
+
+.searchClear:hover {
+  color: var(--fg-primary);
+  background: var(--bg-hover);
+}
+
+/* ---- section rail ---- */
+
+.rail {
+  position: sticky;
+  top: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+}
+
+@media (max-width: 900px) {
+  .rail {
+    position: static;
+    flex-direction: row;
+    flex-wrap: wrap;
+    max-width: 100%;
+    overflow-x: auto;
+  }
+}
+
+@media (max-width: 720px) {
+  .rail {
+    flex-wrap: nowrap;
+    padding-bottom: var(--space-1);
+  }
+
+  .railItem,
+  .advancedToggle {
+    min-height: 36px;
+  }
+
+  .inline,
+  .numberUnit {
+    align-items: stretch;
+    flex-wrap: wrap;
+  }
+}
+
+.railItem {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  min-height: var(--sidebar-row-height);
+  padding: 0 var(--space-3);
+  font-family: inherit;
+  font-size: var(--text-body);
+  font-weight: 400;
+  line-height: var(--text-body-lh);
+  color: var(--fg-secondary);
+  text-align: left;
+  background: transparent;
+  border: none;
+  border-radius: var(--radius-md);
+  cursor: pointer;
+  transition: background var(--dur-fast) var(--ease-standard),
+    color var(--dur-fast) var(--ease-standard);
+}
+
+.railItem:hover {
+  color: var(--fg-primary);
+  background: var(--bg-hover);
+}
+
+/* Selection is a raised surface, never the accent — 5.0 rations indigo. */
+.railItemActive,
+.railItemActive:hover {
+  color: var(--fg-primary);
+  background: var(--bg-elevated);
+  box-shadow: var(--shadow-1);
+}
+
+.railIcon {
+  display: flex;
+  flex-shrink: 0;
+  color: var(--fg-tertiary);
+}
+
+.railItemActive .railIcon {
+  color: var(--fg-secondary);
+}
+
+/* ---- section body ---- */
+
+.section {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-5);
+  min-width: 0;
+}
+
+.groupStack,
+.result {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+}
+
+.embeddedPage > div {
+  max-width: none;
+  gap: var(--space-4);
+}
+
+.embeddedPage > div > div:first-child {
+  display: none;
+}
+
+.sectionHead {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding-bottom: var(--space-1);
+}
+
+.sectionTitle {
+  font-size: var(--text-title2);
+  line-height: var(--text-title2-lh);
+  font-weight: 500;
+  letter-spacing: var(--tracking-tight);
+}
+
+.sectionDescription {
+  font-size: var(--text-callout);
+  line-height: var(--text-callout-lh);
+  color: var(--fg-secondary);
+}
+
+/* ---- group ---- */
+
+.groupToggle {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding: 0;
+  font: inherit;
+  color: var(--fg-primary);
+  background: transparent;
+  border: none;
+  cursor: pointer;
+}
+
+.groupChevron {
+  display: flex;
+  color: var(--fg-tertiary);
+  transition: transform var(--dur-fast) var(--ease-standard);
+}
+
+.groupChevronOpen {
+  transform: rotate(90deg);
+}
+
+.fields {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-5);
+}
+
+/* ---- advanced disclosure ---- */
+
+.advanced {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-5);
+  margin-top: var(--space-1);
+}
+
+.advancedToggle {
+  display: inline-flex;
+  align-self: flex-start;
+  align-items: center;
+  gap: var(--space-2);
+  height: 28px;
+  padding: 0 var(--space-3);
+  font-family: inherit;
+  font-size: var(--text-callout);
+  font-weight: 400;
+  line-height: var(--text-callout-lh);
+  color: var(--fg-secondary);
+  background: var(--bg-inset);
+  border: none;
+  border-radius: var(--radius-md);
+  cursor: pointer;
+}
+
+.advancedToggle:hover {
+  color: var(--fg-primary);
+  background: var(--bg-hover);
+}
+
+.advancedCount {
+  font-family: var(--font-mono);
+  font-size: var(--text-footnote);
+  font-variant-numeric: tabular-nums;
+  color: var(--fg-tertiary);
+}
+
+/* ---- field chrome ---- */
+
+.fieldHead {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+.fieldKey {
+  font-family: var(--font-mono);
+  font-size: var(--text-footnote);
+  line-height: var(--text-footnote-lh);
+  color: var(--fg-tertiary);
+}
+
+/* Inline marks: which changes apply live and which need a restart. */
+.mark {
+  display: inline-flex;
+  align-items: center;
+  height: 18px;
+  padding: 0 var(--space-2);
+  font-family: var(--font-mono);
+  font-size: var(--text-caption);
+  letter-spacing: var(--tracking-label);
+  text-transform: uppercase;
+  border-radius: var(--radius-pill);
+}
+
+.markLive {
+  color: var(--success);
+  background: color-mix(in srgb, var(--success) 14%, transparent);
+}
+
+.markReload {
+  color: var(--info);
+  background: color-mix(in srgb, var(--info) 14%, transparent);
+}
+
+.markRestart {
+  color: var(--warning);
+  background: color-mix(in srgb, var(--warning) 16%, transparent);
+}
+
+.markDirty {
+  color: var(--accent);
+  background: var(--accent-dim);
+}
+
+.inline {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+}
+
+.sliderValue {
+  min-width: 46px;
+  font-family: var(--font-mono);
+  font-size: var(--text-callout);
+  font-variant-numeric: tabular-nums;
+  color: var(--fg-secondary);
+  text-align: right;
+}
+
+.numberUnit {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+.unit {
+  font-family: var(--font-mono);
+  font-size: var(--text-callout);
+  color: var(--fg-tertiary);
+}
+
+/* Read-only: the value is not reachable through the HTTP API. */
+.readonlyBox {
+  display: flex;
+  align-items: center;
+  min-height: 34px;
+  padding: var(--space-2) var(--space-3);
+  font-family: var(--font-mono);
+  font-size: var(--text-callout);
+  line-height: var(--text-callout-lh);
+  color: var(--fg-tertiary);
+  background: var(--bg-inset);
+  border-radius: var(--radius-md);
+}
+
+.reason {
+  font-size: var(--text-footnote);
+  line-height: var(--text-footnote-lh);
+  color: var(--fg-tertiary);
+}
+
+.danger {
+  color: var(--danger);
+}
+
+/* ---- search results ---- */
+
+.results {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-5);
+}
+
+.resultsCount {
+  font-family: var(--font-mono);
+  font-size: var(--text-footnote);
+  font-variant-numeric: tabular-nums;
+  letter-spacing: var(--tracking-label);
+  text-transform: uppercase;
+  color: var(--fg-tertiary);
+}
+
+/* Every result says which section it lives in — PLAN 6.0 requires it. */
+.breadcrumb {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  font-size: var(--text-footnote);
+  line-height: var(--text-footnote-lh);
+  color: var(--fg-tertiary);
+}
+
+.breadcrumbLink {
+  padding: 0;
+  font: inherit;
+  color: var(--fg-secondary);
+  background: transparent;
+  border: none;
+  cursor: pointer;
+}
+
+.breadcrumbLink:hover {
+  color: var(--fg-primary);
+  text-decoration: underline;
+}

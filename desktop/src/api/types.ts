@@ -222,6 +222,8 @@ export interface VoiceConfig {
   barge_in: boolean;
   earcon: boolean;
   conversation_timeout_s: number;
+  conversation_timeout_question_s: number;
+  session_ttl_minutes: number;
   followup_activation_ms: number;
   thinking_pause_ms: number;
   response_timeout_s: number;
@@ -237,22 +239,28 @@ export interface LLMConfig {
   default_provider: string;
   fallback_order: string[];
   max_tools: number;
+  max_tool_iterations: number;
   ollama_model: string;
   ollama_base_url: string;
   ollama_timeout: number;
   anthropic_model: string;
   anthropic_configured: boolean;
+  anthropic_timeout: number;
   openai_model: string;
   openai_base_url: string;
   openai_configured: boolean;
   openai_reasoning_effort: string;
+  openai_timeout: number;
   gemini_model: string;
   gemini_configured: boolean;
+  gemini_timeout: number;
   deepseek_model: string;
   deepseek_base_url: string;
   deepseek_configured: boolean;
+  deepseek_timeout: number;
   codex_binary: string;
   codex_model: string;
+  codex_timeout: number;
 }
 
 export interface WebConfig {
@@ -260,6 +268,7 @@ export interface WebConfig {
   port: number;
   cors_origins: string[];
   expose_lan: boolean;
+  dev_mode: boolean;
 }
 
 export interface WhatsAppConfig {
@@ -268,6 +277,8 @@ export interface WhatsAppConfig {
   evolution_api_instance: string;
   respond_with_audio: boolean;
   has_api_key: boolean;
+  has_webhook_secret: boolean;
+  webhook_secret: string;
 }
 
 export interface TelegramConfig {
@@ -294,6 +305,7 @@ export interface SecurityConfig {
   configured: boolean;
   session_ttl_hours: number;
   cookie_secure: boolean;
+  cookie_name: string;
 }
 
 export interface ToolsConfig {
@@ -317,5 +329,9 @@ export interface FullConfig {
   tools: ToolsConfig;
   mcp: {
     servers: Record<string, MCPServerConfig>;
+  };
+  storage: {
+    database_path: string;
+    models_path: string;
   };
 }

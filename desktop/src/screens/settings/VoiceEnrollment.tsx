@@ -12,6 +12,7 @@ import {
 import { toEnrollmentWav } from "../../lib/audio";
 import p from "../page.module.css";
 import s from "./VoiceEnrollment.module.css";
+import { useI18n } from "../../i18n/I18n";
 
 const MIN_SAMPLES = 3;
 const MAX_SAMPLES = 5;
@@ -25,6 +26,7 @@ const MAX_SAMPLES = 5;
  * are surfaced separately because the remedies are completely different.
  */
 export function VoiceEnrollment() {
+  const { text } = useI18n();
   const toast = useToast();
   const [enrolled, setEnrolled] = useState<boolean | null>(null);
   const [samples, setSamples] = useState<Blob[]>([]);
@@ -87,12 +89,12 @@ export function VoiceEnrollment() {
         const raw = new Blob(chunksRef.current, { type: "audio/webm" });
         void toEnrollmentWav(raw)
           .then((wav) => setSamples((prev) => [...prev, wav]))
-          .catch(() => toast.show("Could not process that recording", "danger"));
+          .catch(() => toast.show(text("No se pudo procesar la grabación", "Could not process that recording"), "danger"));
       };
       recorder.start();
       setRecording(true);
     } catch {
-      toast.show("Microphone permission denied", "danger");
+      toast.show(text("Permiso de micrófono denegado", "Microphone permission denied"), "danger");
     }
   };
 
@@ -113,15 +115,15 @@ export function VoiceEnrollment() {
       const result = await api.enrollVoice(samples);
       setEnrolled(result.enrolled);
       setSamples([]);
-      toast.show("Voice profile enrolled", "success");
+      toast.show(text("Perfil de voz registrado", "Voice profile enrolled"), "success");
     } catch (err) {
       if (err instanceof ApiError && err.status === 503) {
         setModelMissing(true);
-        toast.show("Voice ID model is not available on the server", "danger");
+        toast.show(text("El modelo de identificación de voz no está disponible en el servidor", "Voice ID model is not available on the server"), "danger");
       } else if (err instanceof ApiError && err.status === 422) {
-        toast.show(err.message || "Samples were unusable — re-record them", "danger");
+        toast.show(err.message || text("Las muestras no se pudieron usar; vuelve a grabarlas", "Samples were unusable — re-record them"), "danger");
       } else {
-        toast.show(err instanceof Error ? err.message : "Enrollment failed", "danger");
+        toast.show(err instanceof Error ? err.message : text("Falló el registro", "Enrollment failed"), "danger");
       }
     } finally {
       setUploading(false);
@@ -132,29 +134,29 @@ export function VoiceEnrollment() {
     try {
       await api.deleteVoiceProfile();
       setEnrolled(false);
-      toast.show("Voice profile deleted", "success");
+      toast.show(text("Perfil de voz eliminado", "Voice profile deleted"), "success");
     } catch (err) {
-      toast.show(err instanceof Error ? err.message : "Delete failed", "danger");
+      toast.show(err instanceof Error ? err.message : text("No se pudo eliminar", "Delete failed"), "danger");
     }
   };
 
   return (
     <Panel>
       <PanelHeader
-        title="Voice ID enrollment"
-        subtitle={`Record ${MIN_SAMPLES}–${MAX_SAMPLES} samples so the assistant recognizes you`}
+        title={text("Registro de identificación de voz", "Voice ID enrollment")}
+        subtitle={text(`Graba ${MIN_SAMPLES}–${MAX_SAMPLES} muestras para que el asistente te reconozca`, `Record ${MIN_SAMPLES}–${MAX_SAMPLES} samples so the assistant recognizes you`)}
         actions={
           enrolled === null ? null : enrolled ? (
             <div className={p.actions}>
               <Badge tone="success" dot>
-                Enrolled
+                 {text("Registrado", "Enrolled")}
               </Badge>
               <Button size="sm" variant="ghost" onClick={() => void removeProfile()}>
-                Delete profile
+                 {text("Eliminar perfil", "Delete profile")}
               </Button>
             </div>
           ) : (
-            <Badge tone="neutral">Not enrolled</Badge>
+             <Badge tone="neutral">{text("Sin registrar", "Not enrolled")}</Badge>
           )
         }
       />
@@ -166,9 +168,7 @@ export function VoiceEnrollment() {
                 <AlertIcon size={14} />
               </span>
               <span>
-                The server does not have the Voice ID model installed, so enrollment
-                cannot run. Install the <code>voice</code> extra on the backend and try
-                again.
+                 {text("El servidor no tiene instalado el modelo Voice ID. Instala el extra ", "The server does not have the Voice ID model installed. Install the ")}<code>voice</code>{text(" en el backend y vuelve a intentarlo.", " extra on the backend and try again.")}
               </span>
             </div>
           )}
@@ -182,12 +182,12 @@ export function VoiceEnrollment() {
               {recording ? (
                 <>
                   <VoiceIcon size={14} />
-                  Stop
+                   {text("Detener", "Stop")}
                 </>
               ) : (
                 <>
                   <PlayIcon size={14} />
-                  Record sample
+                   {text("Grabar muestra", "Record sample")}
                 </>
               )}
             </Button>
@@ -208,7 +208,7 @@ export function VoiceEnrollment() {
             <div className={s.sampleList}>
               {samples.map((sample, i) => (
                 <div key={i} className={s.sample}>
-                  <span>Sample {i + 1}</span>
+                   <span>{text("Muestra", "Sample")} {i + 1}</span>
                   <span className={p.dim}>{(sample.size / 1024).toFixed(0)} KB</span>
                   <Button
                     size="sm"
@@ -231,13 +231,12 @@ export function VoiceEnrollment() {
               disabled={samples.length < MIN_SAMPLES || uploading}
               onClick={() => void upload()}
             >
-              Enroll {samples.length} sample{samples.length !== 1 ? "s" : ""}
+               {text(`Registrar ${samples.length} muestra(s)`, `Enroll ${samples.length} sample(s)`)}
             </Button>
           </div>
 
           <p className={p.hint}>
-            Speak naturally for a few seconds per sample, in the room you normally use.
-            Fewer than {MIN_SAMPLES} samples is rejected by the server.
+             {text(`Habla con naturalidad unos segundos por muestra, en la habitación habitual. El servidor rechaza menos de ${MIN_SAMPLES} muestras.`, `Speak naturally for a few seconds per sample, in the room you normally use. Fewer than ${MIN_SAMPLES} samples is rejected by the server.`)}
           </p>
         </div>
       </PanelBody>

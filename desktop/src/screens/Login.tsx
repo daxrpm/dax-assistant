@@ -1,9 +1,10 @@
 import { useState, type FormEvent } from "react";
 import { ApiError, api } from "../api/client";
-import { getBaseUrl, setBaseUrl, storeToken } from "../api/connection";
+import { getBaseUrl, storeToken } from "../api/connection";
 import type { AuthStatus } from "../api/types";
 import { Button, Field, TextInput, useToast } from "../design/primitives";
 import s from "./Login.module.css";
+import { useI18n } from "../i18n/I18n";
 
 /**
  * Login + first-run setup, mirroring `web/src/pages/Login.tsx`.
@@ -19,13 +20,13 @@ export function Login({
   status: AuthStatus;
   onAuthenticated: () => void;
 }) {
+  const { t } = useI18n();
   const isSetup = !status.configured;
   const [password, setPassword] = useState("");
   const [confirm, setConfirm] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [endpoint, setEndpoint] = useState(getBaseUrl());
-  const [editingEndpoint, setEditingEndpoint] = useState(false);
+  const endpoint = getBaseUrl();
   const toast = useToast();
 
   async function submit(event: FormEvent) {
@@ -34,11 +35,11 @@ export function Login({
 
     if (isSetup) {
       if (password.length < 8) {
-        setError("Password must be at least 8 characters.");
+        setError(t("login.passwordShort"));
         return;
       }
       if (password !== confirm) {
-        setError("Passwords do not match.");
+        setError(t("login.passwordMismatch"));
         return;
       }
     }
@@ -47,21 +48,21 @@ export function Login({
     try {
       const result = isSetup ? await api.setup(password) : await api.login(password);
       if (!result.ok) {
-        setError(isSetup ? "Setup failed." : "Incorrect password.");
+        setError(isSetup ? t("login.setupFailed") : t("login.incorrect"));
         return;
       }
       if (result.token) {
         await storeToken(result.token);
       } else {
         // Auth is disabled backend-side; there is nothing to store.
-        toast.show("Backend has authentication disabled.");
+        toast.show(t("login.authDisabled"));
       }
       onAuthenticated();
     } catch (err) {
       if (err instanceof ApiError && err.isUnreachable) {
-        setError(`Cannot reach the backend at ${getBaseUrl()}. Is it running?`);
+        setError(t("login.cannotReach", { url: getBaseUrl() }));
       } else if (err instanceof ApiError && err.status === 401) {
-        setError("Incorrect password.");
+        setError(t("login.incorrect"));
       } else {
         setError(err instanceof Error ? err.message : String(err));
       }
@@ -70,25 +71,18 @@ export function Login({
     }
   }
 
-  function saveEndpoint() {
-    setBaseUrl(endpoint);
-    setEndpoint(getBaseUrl());
-    setEditingEndpoint(false);
-    toast.show("Backend endpoint updated.");
-  }
-
   return (
     <div className={s.screen}>
       <form className={s.card} onSubmit={submit}>
         <div className={s.brand}>
-          <div className={s.title}>{isSetup ? "Welcome to Dax" : "Dax"}</div>
+          <div className={s.title}>{isSetup ? t("login.welcome") : "Dax"}</div>
           <div className={s.subtitle}>
-            {isSetup ? "Choose a password to secure your assistant." : "Sign in to continue."}
+            {isSetup ? t("login.setupSubtitle") : t("login.signInSubtitle")}
           </div>
         </div>
 
         <div className={s.form}>
-          <Field label="Password" error={error}>
+          <Field label={t("login.password")} error={error}>
             {(id) => (
               <TextInput
                 id={id}
@@ -103,7 +97,7 @@ export function Login({
           </Field>
 
           {isSetup && (
-            <Field label="Confirm password">
+            <Field label={t("login.confirm")}>
               {(id) => (
                 <TextInput
                   id={id}
@@ -117,32 +111,15 @@ export function Login({
           )}
 
           <Button type="submit" variant="primary" fullWidth loading={busy}>
-            {isSetup ? "Create account" : "Sign in"}
+            {isSetup ? t("login.create") : t("login.signIn")}
           </Button>
         </div>
 
         <div className={s.footer}>
-          {editingEndpoint ? (
-            <>
-              <TextInput
-                value={endpoint}
-                onChange={(e) => setEndpoint(e.target.value)}
-                aria-label="Backend URL"
-              />
-              <Button size="sm" onClick={saveEndpoint}>
-                Save
-              </Button>
-            </>
-          ) : (
-            <>
-              <span className={s.endpoint} title={endpoint}>
-                {endpoint}
-              </span>
-              <Button size="sm" variant="ghost" onClick={() => setEditingEndpoint(true)}>
-                Change
-              </Button>
-            </>
-          )}
+          <span className={s.endpoint} title={endpoint}>{endpoint}</span>
+          <Button size="sm" variant="ghost" onClick={() => window.dispatchEvent(new Event("dax:open-onboarding"))}>
+            {t("login.change")}
+          </Button>
         </div>
       </form>
     </div>

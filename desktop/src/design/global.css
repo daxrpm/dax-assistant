@@ -18,7 +18,7 @@ body {
   font-size: var(--text-body);
   line-height: var(--text-body-lh);
   color: var(--fg-primary);
-  background: var(--bg-window);
+  background: transparent;
   /* Tabular figures matter for the log viewer, token counts, elapsed timers. */
   font-variant-numeric: tabular-nums;
   font-optical-sizing: auto;
@@ -96,4 +96,15 @@ textarea {
 ::-webkit-scrollbar-thumb:hover {
   background: var(--fg-tertiary);
   background-clip: padding-box;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    scroll-behavior: auto !important;
+    animation-duration: 1ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 1ms !important;
+  }
 }

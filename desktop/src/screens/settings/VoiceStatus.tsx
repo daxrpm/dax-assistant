@@ -1,8 +1,13 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useRef, useState } from "react";
 import { api } from "../../api/client";
+import { usesRemoteAudio } from "../../api/connection";
 import type { FullConfig } from "../../api/types";
 import { VoiceIcon } from "../../components/icons";
-import { VoiceOrb, type OrbState } from "../../components/VoiceOrb";
+import {
+  VoiceOrb,
+  type OrbState,
+  type VoiceOrbHandle,
+} from "../../components/VoiceOrb";
 import {
   Badge,
   Button,
@@ -18,6 +23,7 @@ import {
 } from "../../hooks/useVoiceSocket";
 import p from "../page.module.css";
 import s from "./VoiceStatus.module.css";
+import { useI18n } from "../../i18n/I18n";
 
 const STATE_TONE: Record<PipelineState, "neutral" | "accent" | "success" | "warning"> = {
   idle: "neutral",
@@ -25,14 +31,6 @@ const STATE_TONE: Record<PipelineState, "neutral" | "accent" | "success" | "warn
   processing: "warning",
   speaking: "success",
   conversing: "accent",
-};
-
-const STATE_LABEL: Record<PipelineState, string> = {
-  idle: "Idle",
-  listening: "Listening",
-  processing: "Thinking",
-  speaking: "Speaking",
-  conversing: "In conversation",
 };
 
 /**
@@ -49,46 +47,6 @@ const ORB_STATE: Record<PipelineState, OrbState> = {
 };
 
 /**
- * Turn `/ws/voice` level frames into a `level` prop without re-rendering on
- * every frame.
- *
- * Frames arrive at ~12.5 Hz (PLAN.md 4.6). Pushing each one straight into
- * state would re-render this subtree 12 times a second for a purely visual
- * signal, which is exactly what `useVoiceSocket` warns against. Instead the
- * latest value is parked in a ref and committed at most once per animation
- * frame, so React sees at most display-rate updates and never more work than
- * the orb is already doing. The orb's own spring does the smoothing.
- */
-function useOrbLevel() {
-  const [level, setLevel] = useState(0);
-  const pendingRef = useRef(0);
-  const rafRef = useRef(0);
-
-  const onLevel = useCallback((frame: LevelFrame) => {
-    // `peak` is already normalized 0–1 and tracks transients better than the
-    // mean of the four RMS sub-windows, which is what the orb wants.
-    const next = Number.isFinite(frame.peak)
-      ? frame.peak
-      : frame.rms.reduce((a, b) => a + b, 0) / (frame.rms.length || 1);
-    pendingRef.current = Math.max(0, Math.min(1, next));
-    if (rafRef.current) return;
-    rafRef.current = requestAnimationFrame(() => {
-      rafRef.current = 0;
-      setLevel(pendingRef.current);
-    });
-  }, []);
-
-  useEffect(
-    () => () => {
-      if (rafRef.current) cancelAnimationFrame(rafRef.current);
-    },
-    [],
-  );
-
-  return { level, onLevel };
-}
-
-/**
  * Live voice pipeline state, driven by `/ws/voice`.
  *
  * The orb is the readout: pipeline state drives its resting behaviour and
@@ -96,8 +54,17 @@ function useOrbLevel() {
  * sit beneath it.
  */
 export function VoiceStatus({ config }: { config: FullConfig }) {
+  const { text } = useI18n();
+  const stateLabel: Record<PipelineState, string> = {
+    idle: text("En reposo", "Idle"), listening: text("Escuchando", "Listening"),
+    processing: text("Pensando", "Thinking"), speaking: text("Hablando", "Speaking"),
+    conversing: text("En conversación", "In conversation"),
+  };
   const toast = useToast();
-  const { level, onLevel } = useOrbLevel();
+  const orbRef = useRef<VoiceOrbHandle>(null);
+  const onLevel = useCallback((frame: LevelFrame) => {
+    orbRef.current?.setLevel(frame);
+  }, []);
   const { state, transcript, speaker, error, connected } = useVoiceSocket({ onLevel });
   const [listening, setListening] = useState(config.voice.enabled);
   const [toggling, setToggling] = useState(false);
@@ -107,9 +74,9 @@ export function VoiceStatus({ config }: { config: FullConfig }) {
     try {
       const result = await api.toggleVoice(!listening);
       setListening(result.voice_listening);
-      toast.show(result.voice_listening ? "Voice listening" : "Voice paused", "success");
+      toast.show(result.voice_listening ? text("Escucha de voz activa", "Voice listening") : text("Escucha de voz en pausa", "Voice paused"), "success");
     } catch (err) {
-      toast.show(err instanceof Error ? err.message : "Toggle failed", "danger");
+      toast.show(err instanceof Error ? err.message : text("No se pudo cambiar", "Toggle failed"), "danger");
     } finally {
       setToggling(false);
     }
@@ -118,12 +85,12 @@ export function VoiceStatus({ config }: { config: FullConfig }) {
   return (
     <Panel>
       <PanelHeader
-        title="Live status"
-        subtitle="Streamed from the running voice pipeline"
+        title={text("Estado en vivo", "Live status")}
+        subtitle={text("Transmitido por la canalización de voz activa", "Streamed from the running voice pipeline")}
         actions={
           <div className={p.actions}>
             <Badge tone={connected ? "success" : "neutral"} dot>
-              {connected ? "Connected" : "Offline"}
+              {connected ? text("Conectado", "Connected") : text("Fuera de línea", "Offline")}
             </Badge>
             <Button
               size="sm"
@@ -132,7 +99,7 @@ export function VoiceStatus({ config }: { config: FullConfig }) {
               onClick={() => void toggle()}
             >
               <VoiceIcon size={13} />
-              {listening ? "Pause listening" : "Start listening"}
+              {listening ? text("Pausar escucha", "Pause listening") : text("Iniciar escucha", "Start listening")}
             </Button>
           </div>
         }
@@ -140,10 +107,15 @@ export function VoiceStatus({ config }: { config: FullConfig }) {
       <PanelBody>
         <div className={p.rows}>
           <div className={s.orbStage}>
-            <VoiceOrb state={ORB_STATE[state]} level={level} size={160} />
+            <VoiceOrb
+              ref={orbRef}
+              state={ORB_STATE[state]}
+              size={160}
+              ariaLabel={stateLabel[state]}
+            />
             <div className={s.orbCaption}>
               <Badge tone={STATE_TONE[state]} dot>
-                {STATE_LABEL[state]}
+                {stateLabel[state]}
               </Badge>
             </div>
           </div>
@@ -152,27 +124,35 @@ export function VoiceStatus({ config }: { config: FullConfig }) {
             <div className={s.transcript}>
               <span className={s.transcriptLang}>{transcript.language}</span>
               <span className={s.transcriptText}>{transcript.text}</span>
-              {!transcript.final && <span className={p.dim}>(partial)</span>}
+               {!transcript.final && <span className={p.dim}>({text("parcial", "partial")})</span>}
             </div>
           )}
 
           {speaker && (
             <div className={p.actions}>
               <Badge tone={speaker.verified ? "success" : "danger"}>
-                {speaker.verified ? "Speaker verified" : "Speaker rejected"}
+                 {speaker.verified ? text("Hablante verificado", "Speaker verified") : text("Hablante rechazado", "Speaker rejected")}
               </Badge>
               {speaker.score != null && (
-                <span className={p.dim}>score {speaker.score.toFixed(2)}</span>
+                <span className={p.dim}>{text("puntuación", "score")} {speaker.score.toFixed(2)}</span>
               )}
             </div>
           )}
 
           {error && <p className={s.error}>{error}</p>}
 
+          {usesRemoteAudio() && (
+            <p className={p.hint}>
+              {text(
+                "Modo remoto: el micrófono de este equipo solo transmite mientras mantienes pulsado PTT. En esta versión, la respuesta de voz se reproduce en los altavoces del servidor, no en este equipo.",
+                "Remote mode: this device's microphone streams only while you hold PTT. In this version, spoken replies play through the server's speakers, not this device.",
+              )}
+            </p>
+          )}
+
           {!config.voice.enabled && (
             <p className={p.hint}>
-              Voice is disabled in config, so the pipeline reports idle and nothing will
-              stream. Enable it above to start.
+               {text("La voz está desactivada en la configuración; la canalización permanece en reposo. Actívala arriba para empezar.", "Voice is disabled in config, so the pipeline reports idle and nothing will stream. Enable it above to start.")}
             </p>
           )}
         </div>

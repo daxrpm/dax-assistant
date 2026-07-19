@@ -4,18 +4,35 @@ import { ArrowDownIcon, LogsIcon, TrashIcon } from "../components/icons";
 import { Badge, Button, EmptyState, Select, Toggle } from "../design/primitives";
 import { LOG_BUFFER_LIMIT, useLogStream } from "../hooks/useLogStream";
 import { cn } from "../lib/cn";
+import { useI18n } from "../i18n/I18n";
 import s from "./Logs.module.css";
 
 const LEVELS = ["ALL", "DEBUG", "INFO", "WARNING", "ERROR"];
 
 /** Fixed row height, in px — must match `.row` in the stylesheet. */
-const ROW_HEIGHT = 18;
+export const ROW_HEIGHT = 22;
 /** Rows rendered above and below the viewport to hide scroll tearing. */
 const OVERSCAN = 12;
 
-function formatTime(iso: string): string {
+export function calculateVirtualWindow(
+  total: number,
+  scrollTop: number,
+  viewportHeight: number,
+  rowHeight = ROW_HEIGHT,
+  overscan = OVERSCAN,
+): { first: number; last: number } {
+  const safeTotal = Math.max(0, total);
+  const visibleStart = Math.floor(Math.max(0, scrollTop) / rowHeight);
+  const visibleCount = Math.ceil(Math.max(0, viewportHeight) / rowHeight);
+  return {
+    first: Math.max(0, visibleStart - overscan),
+    last: Math.min(safeTotal, visibleStart + visibleCount + overscan),
+  };
+}
+
+function formatTime(iso: string, locale: string): string {
   const d = new Date(iso);
-  return Number.isNaN(d.getTime()) ? "--:--:--" : d.toLocaleTimeString();
+  return Number.isNaN(d.getTime()) ? "--:--:--" : d.toLocaleTimeString(locale);
 }
 
 /**
@@ -28,9 +45,11 @@ function formatTime(iso: string): string {
  * no matter how much traffic passes through.
  */
 export function Logs() {
+  const { intlLocale, t } = useI18n();
   const { logs, connected, clear, seed } = useLogStream();
   const [level, setLevel] = useState("ALL");
   const [follow, setFollow] = useState(true);
+  const [loadingSnapshot, setLoadingSnapshot] = useState(true);
   const [scrollTop, setScrollTop] = useState(0);
   const [viewportHeight, setViewportHeight] = useState(600);
   const viewportRef = useRef<HTMLDivElement>(null);
@@ -38,12 +57,21 @@ export function Logs() {
   // Seed from the REST snapshot so the view is populated before the first
   // socket frame arrives.
   useEffect(() => {
+    let active = true;
     api
       .logs(200)
-      .then(seed)
+      .then((entries) => {
+        if (active) seed(entries);
+      })
       .catch(() => {
         // The socket will fill it in; an empty seed is not an error state.
+      })
+      .finally(() => {
+        if (active) setLoadingSnapshot(false);
       });
+    return () => {
+      active = false;
+    };
   }, [seed]);
 
   useEffect(() => {
@@ -69,9 +97,7 @@ export function Logs() {
   }, [filtered.length, follow]);
 
   const total = filtered.length;
-  const first = Math.max(0, Math.floor(scrollTop / ROW_HEIGHT) - OVERSCAN);
-  const visibleCount = Math.ceil(viewportHeight / ROW_HEIGHT) + OVERSCAN * 2;
-  const last = Math.min(total, first + visibleCount);
+  const { first, last } = calculateVirtualWindow(total, scrollTop, viewportHeight);
   const window = filtered.slice(first, last);
 
   return (
@@ -79,11 +105,11 @@ export function Logs() {
       <div className={s.bar}>
         <div className={s.barLeft}>
           <Badge tone={connected ? "success" : "danger"} dot>
-            {connected ? "Live" : "Disconnected"}
+            {connected ? t("logs.live") : t("common.disconnected")}
           </Badge>
           <span className={s.count}>
-            {total.toLocaleString()} line{total !== 1 ? "s" : ""}
-            {logs.length >= LOG_BUFFER_LIMIT && " (buffer full)"}
+            {t("logs.lines", { count: total.toLocaleString(intlLocale) })}
+            {logs.length >= LOG_BUFFER_LIMIT && ` ${t("logs.bufferFull")}`}
           </span>
         </div>
 
@@ -91,7 +117,7 @@ export function Logs() {
           <Select
             value={level}
             onChange={(e) => setLevel(e.target.value)}
-            aria-label="Filter by level"
+            aria-label={t("logs.filter")}
           >
             {LEVELS.map((l) => (
               <option key={l} value={l}>
@@ -100,12 +126,12 @@ export function Logs() {
             ))}
           </Select>
 
-          <span className={s.count}>Follow</span>
-          <Toggle checked={follow} onChange={setFollow} aria-label="Follow tail" />
+          <span className={s.count}>{t("logs.follow")}</span>
+          <Toggle checked={follow} onChange={setFollow} aria-label={t("logs.followTail")} />
 
           <Button size="sm" variant="ghost" onClick={clear}>
             <TrashIcon size={13} />
-            Clear
+            {t("logs.clear")}
           </Button>
           <Button
             size="sm"
@@ -116,7 +142,7 @@ export function Logs() {
             }}
           >
             <ArrowDownIcon size={13} />
-            Bottom
+            {t("logs.bottom")}
           </Button>
         </div>
       </div>
@@ -130,11 +156,13 @@ export function Logs() {
           <div className={s.emptyWrap}>
             <EmptyState
               icon={<LogsIcon size={20} />}
-              title="No log lines"
+              title={t("logs.empty")}
               body={
                 level === "ALL"
-                  ? "Waiting for the backend to emit something."
-                  : `Nothing at ${level}. Try a lower level.`
+                  ? loadingSnapshot
+                    ? t("logs.loading")
+                    : t("logs.waiting")
+                  : t("logs.nothingAt", { level })
               }
             />
           </div>
@@ -146,7 +174,7 @@ export function Logs() {
                   key={entry.id}
                   className={cn(s.row, entry.source === "sidecar" && s.rowSidecar)}
                 >
-                  <span className={s.ts}>{formatTime(entry.ts)}</span>
+                  <span className={s.ts}>{formatTime(entry.ts, intlLocale)}</span>
                   <span className={cn(s.level, s[`level${entry.level}`])}>
                     {entry.level}
                   </span>

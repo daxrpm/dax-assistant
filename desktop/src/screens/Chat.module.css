@@ -15,7 +15,8 @@
   flex-direction: column;
   width: 248px;
   flex-shrink: 0;
-  background: var(--bg-inset);
+  background: var(--bg-sidebar);
+  box-shadow: 0 1px 0 rgba(210, 224, 255, 0.035) inset;
 }
 
 .convHeader {
@@ -75,14 +76,29 @@
   align-items: center;
   gap: var(--space-2);
   width: 100%;
-  padding: var(--space-3);
+  padding: 0 var(--space-1) 0 0;
   text-align: left;
   color: var(--fg-primary);
   background: transparent;
   border: none;
   border-radius: var(--radius-md);
-  cursor: pointer;
   transition: background var(--dur-fast) var(--ease-standard);
+}
+
+.convOpen {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  flex: 1;
+  min-width: 0;
+  min-height: 44px;
+  padding: var(--space-2) var(--space-1) var(--space-2) var(--space-3);
+  color: inherit;
+  text-align: left;
+  background: transparent;
+  border: none;
+  border-radius: var(--radius-md);
+  cursor: pointer;
 }
 
 .convRow:hover {
@@ -106,6 +122,8 @@
 }
 
 .convText {
+  display: flex;
+  flex-direction: column;
   flex: 1;
   min-width: 0;
 }
@@ -131,7 +149,7 @@
 }
 
 .convRow:hover .convDelete,
-.convDelete:focus-visible {
+.convRow:focus-within .convDelete {
   opacity: 1;
 }
 
@@ -550,7 +568,8 @@
 .modelOptionSelected:hover {
   font-weight: 500;
   color: var(--fg-primary);
-  background: var(--bg-active);
+  background: var(--bg-panel);
+  box-shadow: var(--shadow-1);
 }
 
 .modelLoading {
@@ -566,7 +585,8 @@
   flex-direction: column;
   width: 300px;
   flex-shrink: 0;
-  background: var(--bg-inset);
+  background: var(--bg-sidebar);
+  box-shadow: 0 1px 0 rgba(210, 224, 255, 0.035) inset;
 }
 
 .activityHeader {
@@ -696,5 +716,113 @@
 
   .countdownFill {
     transition: none;
+  }
+}
+
+@media (max-width: 900px) {
+  .convSidebar {
+    width: 210px;
+  }
+
+  .activity {
+    position: absolute;
+    inset: var(--space-2) var(--space-2) var(--space-2) auto;
+    z-index: 4;
+    width: min(300px, calc(100% - var(--space-4)));
+    border-radius: var(--radius-xl);
+    box-shadow: var(--shadow-3);
+  }
+
+  .main {
+    position: relative;
+  }
+
+  .thread {
+    padding: var(--space-6) var(--space-5);
+  }
+
+  .composerWrap {
+    padding: 0 var(--space-5) var(--space-5);
+  }
+}
+
+@media (max-width: 720px) {
+  .chat {
+    flex-direction: column;
+  }
+
+  .convSidebar {
+    display: grid;
+    grid-template-columns: minmax(120px, 0.7fr) minmax(150px, 1fr);
+    grid-template-rows: auto auto;
+    width: 100%;
+    max-height: 132px;
+    flex: none;
+  }
+
+  .convHeader {
+    padding: var(--space-2);
+  }
+
+  .searchWrap {
+    padding: var(--space-2);
+  }
+
+  .searchIcon {
+    left: var(--space-4);
+  }
+
+  .groupHeader {
+    display: none;
+  }
+
+  .convList {
+    grid-column: 1 / -1;
+    display: flex;
+    gap: var(--space-1);
+    padding: 0 var(--space-2) var(--space-2);
+    overflow-x: auto;
+    overflow-y: hidden;
+  }
+
+  .convRow {
+    width: 180px;
+    flex: 0 0 180px;
+  }
+
+  .convDelete {
+    opacity: 1;
+  }
+
+  .main {
+    min-height: 0;
+  }
+
+  .header {
+    height: 48px;
+    padding: 0 var(--space-4);
+  }
+
+  .headerButton {
+    min-width: 34px;
+    min-height: 34px;
+    padding: 0 var(--space-2);
+  }
+
+  .thread {
+    gap: var(--space-5);
+    padding: var(--space-5) var(--space-4);
+  }
+
+  .composerWrap {
+    padding: 0 var(--space-3) var(--space-3);
+  }
+
+  .composer {
+    padding: var(--space-3);
+  }
+
+  .userBubble {
+    max-width: 90%;
   }
 }

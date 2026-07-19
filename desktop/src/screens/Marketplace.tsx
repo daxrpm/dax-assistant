@@ -18,6 +18,7 @@ import {
 import { useConfig } from "../hooks/useConfig";
 import p from "./page.module.css";
 import s from "./Marketplace.module.css";
+import { useI18n } from "../i18n/I18n";
 
 function presetToDraft(preset: MCPPreset): ServerDraft {
   return {
@@ -56,6 +57,7 @@ function registryToDraft(server: RegistryServer): ServerDraft {
 }
 
 export function Marketplace() {
+  const { text } = useI18n();
   const toast = useToast();
   const { config, refresh } = useConfig();
   const [mode, setMode] = useState<"presets" | "registry">("presets");
@@ -78,11 +80,11 @@ export function Marketplace() {
   const grouped = useMemo(() => {
     const byCategory = new Map<string, MCPPreset[]>();
     for (const preset of presets) {
-      const key = preset.category || "Other";
+      const key = preset.category || text("Otros", "Other");
       byCategory.set(key, [...(byCategory.get(key) ?? []), preset]);
     }
     return [...byCategory.entries()].sort((a, b) => a[0].localeCompare(b[0]));
-  }, [presets]);
+  }, [presets, text]);
 
   const search = async (e: FormEvent) => {
     e.preventDefault();
@@ -100,7 +102,7 @@ export function Marketplace() {
         setResults(data.servers ?? []);
       }
     } catch (err) {
-      setRegistryError(err instanceof Error ? err.message : "Search failed");
+      setRegistryError(err instanceof Error ? err.message : text("Error de búsqueda", "Search failed"));
     } finally {
       setSearching(false);
     }
@@ -108,7 +110,7 @@ export function Marketplace() {
 
   const install = (draft: ServerDraft) => {
     setPrefill(draft);
-    toast.show(`Review ${draft.name} and save to install`, "neutral");
+    toast.show(text(`Revisa ${draft.name} y guarda para instalar`, `Review ${draft.name} and save to install`), "neutral");
   };
 
   return (
@@ -120,7 +122,7 @@ export function Marketplace() {
         <div>
           <h1 className={p.pageTitle}>Marketplace</h1>
           <p className={p.pageSubtitle}>
-            Install a curated preset or search the public MCP registry
+             {text("Instala un ajuste seleccionado o busca en el registro público de MCP", "Install a curated preset or search the public MCP registry")}
           </p>
         </div>
       </div>
@@ -129,8 +131,8 @@ export function Marketplace() {
         value={mode}
         onChange={setMode}
         items={[
-          { id: "presets", label: "Curated presets" },
-          { id: "registry", label: "Registry search" },
+           { id: "presets", label: text("Ajustes seleccionados", "Curated presets") },
+           { id: "registry", label: text("Buscar en el registro", "Registry search") },
         ]}
       />
 
@@ -140,13 +142,13 @@ export function Marketplace() {
         ) : grouped.length === 0 ? (
           <EmptyState
             icon={<StoreIcon size={20} />}
-            title="No presets available"
-            body="The backend returned an empty preset list."
+             title={text("No hay ajustes disponibles", "No presets available")}
+             body={text("El backend devolvió una lista vacía.", "The backend returned an empty preset list.")}
           />
         ) : (
           grouped.map(([category, items]) => (
             <Panel key={category}>
-              <PanelHeader title={category} subtitle={`${items.length} available`} />
+               <PanelHeader title={category} subtitle={text(`${items.length} disponible(s)`, `${items.length} available`)} />
               <PanelBody>
                 <div className={s.cards}>
                   {items.map((preset) => {
@@ -156,12 +158,12 @@ export function Marketplace() {
                       <div key={preset.id} className={s.card}>
                         <div className={s.cardHead}>
                           <span className={s.cardName}>{preset.name}</span>
-                          {installed && <Badge tone="success">Installed</Badge>}
+                           {installed && <Badge tone="success">{text("Instalado", "Installed")}</Badge>}
                         </div>
                         <p className={s.cardBody}>{preset.description}</p>
                         {requiredEnv.length > 0 && (
                           <div className={s.cardEnv}>
-                            Needs: {requiredEnv.join(", ")}
+                             {text("Necesita", "Needs")}: {requiredEnv.join(", ")}
                           </div>
                         )}
                         <Button
@@ -170,7 +172,7 @@ export function Marketplace() {
                           onClick={() => install(presetToDraft(preset))}
                         >
                           <PlusIcon size={12} />
-                          {installed ? "Reconfigure" : "Install"}
+                           {installed ? text("Reconfigurar", "Reconfigure") : text("Instalar", "Install")}
                         </Button>
                       </div>
                     );
@@ -182,18 +184,18 @@ export function Marketplace() {
         )
       ) : (
         <Panel>
-          <PanelHeader title="Registry search" subtitle="Public MCP server registry" />
+           <PanelHeader title={text("Buscar en el registro", "Registry search")} subtitle={text("Registro público de servidores MCP", "Public MCP server registry")} />
           <PanelBody>
             <form className={p.actions} onSubmit={search}>
               <TextInput
                 className={p.grow}
                 value={query}
-                placeholder="Search for a server…"
+                 placeholder={text("Buscar un servidor…", "Search for a server…")}
                 onChange={(e) => setQuery(e.target.value)}
               />
               <Button type="submit" variant="secondary" loading={searching}>
                 <SearchIcon size={13} />
-                Search
+                 {text("Buscar", "Search")}
               </Button>
             </form>
 
@@ -214,7 +216,7 @@ export function Marketplace() {
                       onClick={() => install(registryToDraft(server))}
                     >
                       <PlusIcon size={12} />
-                      Install
+                       {text("Instalar", "Install")}
                     </Button>
                   </div>
                 ))}

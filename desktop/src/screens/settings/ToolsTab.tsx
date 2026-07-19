@@ -17,6 +17,7 @@ import {
 } from "../../design/primitives";
 import p from "../page.module.css";
 import { saveLabel, useSection } from "./useSection";
+import { useI18n } from "../../i18n/I18n";
 
 const DECISIONS = ["allow", "ask", "deny"];
 
@@ -32,7 +33,8 @@ function fromLines(text: string): string[] {
     .filter(Boolean);
 }
 
-function ChangePassword() {
+export function ChangePassword() {
+  const { text } = useI18n();
   const toast = useToast();
   const [current, setCurrent] = useState("");
   const [next, setNext] = useState("");
@@ -47,12 +49,12 @@ function ChangePassword() {
     setSaving(true);
     try {
       await api.changePassword(current, next);
-      toast.show("Password changed", "success");
+      toast.show(text("Contraseña cambiada", "Password changed"), "success");
       setCurrent("");
       setNext("");
       setConfirm("");
     } catch (err) {
-      toast.show(err instanceof Error ? err.message : "Change failed", "danger");
+      toast.show(err instanceof Error ? err.message : text("No se pudo cambiar", "Change failed"), "danger");
     } finally {
       setSaving(false);
     }
@@ -61,7 +63,7 @@ function ChangePassword() {
   return (
     <Panel>
       <PanelHeader
-        title="Password"
+        title={text("Contraseña", "Password")}
         actions={
           <Button
             size="sm"
@@ -70,13 +72,13 @@ function ChangePassword() {
             disabled={!canSubmit}
             onClick={() => void submit()}
           >
-            Change password
+            {text("Cambiar contraseña", "Change password")}
           </Button>
         }
       />
       <PanelBody>
         <div className={p.rows}>
-          <Field label="Current password">
+          <Field label={text("Contraseña actual", "Current password")}>
             {(id) => (
               <TextInput
                 id={id}
@@ -88,8 +90,8 @@ function ChangePassword() {
           </Field>
           <div className={p.row2}>
             <Field
-              label="New password"
-              error={tooShort ? "At least 8 characters." : undefined}
+              label={text("Nueva contraseña", "New password")}
+              error={tooShort ? text("Al menos 8 caracteres.", "At least 8 characters.") : undefined}
             >
               {(id) => (
                 <TextInput
@@ -102,8 +104,8 @@ function ChangePassword() {
               )}
             </Field>
             <Field
-              label="Confirm new password"
-              error={mismatch ? "Passwords do not match." : undefined}
+              label={text("Confirmar nueva contraseña", "Confirm new password")}
+              error={mismatch ? text("Las contraseñas no coinciden.", "Passwords do not match.") : undefined}
             >
               {(id) => (
                 <TextInput
@@ -129,6 +131,7 @@ export function ToolsTab({
   config: FullConfig;
   onSaved: () => void;
 }) {
+  const { text } = useI18n();
   const tools = useSection(config.tools, api.updateTools, onSaved);
   const security = useSection(config.security, api.updateSecurity, onSaved);
   const [live, setLive] = useState<ToolPolicyResponse | null>(null);
@@ -150,11 +153,11 @@ export function ToolsTab({
     <div className={p.rows}>
       <Panel>
         <PanelHeader
-          title="Tool policy"
-          subtitle="Applies live — no restart needed"
+          title={text("Política de herramientas", "Tool policy")}
+          subtitle={text("Se aplica en vivo; no requiere reinicio", "Applies live — no restart needed")}
           actions={
             <div className={p.actions}>
-              {live && <Badge tone="neutral">{live.ask.length} ask rules active</Badge>}
+              {live && <Badge tone="neutral">{text(`${live.ask.length} reglas de consulta activas`, `${live.ask.length} ask rules active`)}</Badge>}
               <Button
                 size="sm"
                 variant="primary"
@@ -171,8 +174,8 @@ export function ToolsTab({
           <div className={p.rows}>
             <div className={p.row2}>
               <Field
-                label="Default decision"
-                description="Applied to any tool no pattern matches."
+                 label={text("Decisión predeterminada", "Default decision")}
+                 description={text("Se aplica a cualquier herramienta sin patrón coincidente.", "Applied to any tool no pattern matches.")}
               >
                 {(id) => (
                   <Select
@@ -189,8 +192,8 @@ export function ToolsTab({
                 )}
               </Field>
               <Field
-                label="Confirmation timeout (seconds)"
-                description="Unanswered prompts are DENIED when this elapses."
+                 label={text("Tiempo de confirmación (segundos)", "Confirmation timeout (seconds)")}
+                 description={text("Los avisos sin respuesta se DENIEGAN al agotarse.", "Unanswered prompts are DENIED when this elapses.")}
               >
                 {(id) => (
                   <TextInput
@@ -206,8 +209,8 @@ export function ToolsTab({
             </div>
 
             <Field
-              label="Allow"
-              description="One pattern per line. These run without asking."
+               label={text("Permitir", "Allow")}
+               description={text("Un patrón por línea. Se ejecutan sin preguntar.", "One pattern per line. These run without asking.")}
             >
               {(id) => (
                 <TextArea
@@ -220,8 +223,8 @@ export function ToolsTab({
             </Field>
 
             <Field
-              label="Ask"
-              description="These raise the confirmation prompt in chat."
+               label={text("Preguntar", "Ask")}
+               description={text("Abren el aviso de confirmación en el chat.", "These raise the confirmation prompt in chat.")}
             >
               {(id) => (
                 <TextArea
@@ -233,7 +236,7 @@ export function ToolsTab({
               )}
             </Field>
 
-            <Field label="Deny" description="These are refused outright.">
+             <Field label={text("Denegar", "Deny")} description={text("Se rechazan directamente.", "These are refused outright.")}>
               {(id) => (
                 <TextArea
                   id={id}
@@ -249,7 +252,7 @@ export function ToolsTab({
 
       <Panel>
         <PanelHeader
-          title="Security"
+           title={text("Seguridad", "Security")}
           actions={
             <Button
               size="sm"
@@ -266,8 +269,8 @@ export function ToolsTab({
           <div className={p.rows}>
             <div className={p.spread}>
               <Field
-                label="Require login"
-                description="Disabling this leaves the API open to anything that can reach the port."
+                 label={text("Exigir inicio de sesión", "Require login")}
+                 description={text("Desactivarlo deja la API abierta a quien alcance el puerto.", "Disabling this leaves the API open to anything that can reach the port.")}
               >
                 {(id) => (
                   <Toggle
@@ -278,8 +281,8 @@ export function ToolsTab({
                 )}
               </Field>
               <Field
-                label="Secure cookie"
-                description="Requires HTTPS. Leave off for plain-HTTP loopback."
+                 label={text("Cookie segura", "Secure cookie")}
+                 description={text("Requiere HTTPS. Déjala desactivada para loopback HTTP.", "Requires HTTPS. Leave off for plain-HTTP loopback.")}
               >
                 {(id) => (
                   <Toggle
@@ -291,7 +294,7 @@ export function ToolsTab({
               </Field>
             </div>
 
-            <Field label="Session lifetime (hours)">
+             <Field label={text("Duración de sesión (horas)", "Session lifetime (hours)")}>
               {(id) => (
                 <TextInput
                   id={id}
@@ -310,8 +313,7 @@ export function ToolsTab({
                   <AlertIcon size={14} />
                 </span>
                 <span>
-                  With login disabled, anyone who can reach this host can drive the
-                  assistant and every tool it holds.
+                   {text("Sin inicio de sesión, cualquiera que alcance este host puede controlar el asistente y sus herramientas.", "With login disabled, anyone who can reach this host can drive the assistant and every tool it holds.")}
                 </span>
               </div>
             )}

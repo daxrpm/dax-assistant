@@ -13,6 +13,7 @@ import {
   useToast,
 } from "../design/primitives";
 import p from "./page.module.css";
+import { useI18n } from "../i18n/I18n";
 
 /**
  * Split a free-text entry into command names.
@@ -29,6 +30,7 @@ function splitCommands(text: string): string[] {
 
 /** `dax-system` shell allowlist editor (`GET`/`PUT /api/config/system/shell-allow`). */
 export function Commands() {
+  const { text } = useI18n();
   const toast = useToast();
   const [commands, setCommands] = useState<string[]>([]);
   const [defaults, setDefaults] = useState<string[]>([]);
@@ -46,7 +48,7 @@ export function Commands() {
         setDefaults(data.default);
       })
       .catch((err: unknown) =>
-        toast.show(err instanceof Error ? err.message : "Failed to load", "danger"),
+        toast.show(err instanceof Error ? err.message : text("No se pudo cargar", "Failed to load"), "danger"),
       )
       .finally(() => setLoading(false));
   }, [toast]);
@@ -73,9 +75,9 @@ export function Commands() {
     try {
       await api.updateShellAllow(commands);
       setSaved(commands);
-      toast.show("Allowlist saved", "success");
+      toast.show(text("Lista de permitidos guardada", "Allowlist saved"), "success");
     } catch (err) {
-      toast.show(err instanceof Error ? err.message : "Save failed", "danger");
+      toast.show(err instanceof Error ? err.message : text("No se pudo guardar", "Save failed"), "danger");
     } finally {
       setSaving(false);
     }
@@ -90,9 +92,9 @@ export function Commands() {
           <TerminalIcon size={19} />
         </div>
         <div>
-          <h1 className={p.pageTitle}>Commands</h1>
+          <h1 className={p.pageTitle}>{text("Comandos", "Commands")}</h1>
           <p className={p.pageSubtitle}>
-            Shell binaries the assistant may run without asking
+            {text("Binarios de shell que el asistente puede ejecutar sin preguntar", "Shell binaries the assistant may run without asking")}
           </p>
         </div>
       </div>
@@ -102,16 +104,14 @@ export function Commands() {
           <AlertIcon size={14} />
         </span>
         <span>
-          Commands listed here run immediately when the assistant calls them. Anything
-          not listed prompts you in chat, where <strong>Approve &amp; save</strong> adds
-          it to this list. Paths stay confined to the configured roots either way.
+          {text("Los comandos de esta lista se ejecutan de inmediato. Los demás piden confirmación en el chat; Aprobar y guardar los añade aquí. Las rutas siempre quedan limitadas a las raíces configuradas.", "Commands listed here run immediately when the assistant calls them. Anything not listed prompts you in chat, where Approve & save adds it to this list. Paths stay confined to the configured roots either way.")}
         </span>
       </div>
 
       <Panel>
         <PanelHeader
-          title="Allowlist"
-          subtitle={`${commands.length} command${commands.length !== 1 ? "s" : ""}`}
+          title={text("Lista de permitidos", "Allowlist")}
+          subtitle={text(`${commands.length} comando(s)`, `${commands.length} command(s)`)}
           actions={
             <div className={p.actions}>
               <Button
@@ -120,7 +120,7 @@ export function Commands() {
                 disabled={saving}
                 onClick={() => setCommands([...defaults].sort())}
               >
-                Reset to defaults
+                {text("Restablecer valores predeterminados", "Reset to defaults")}
               </Button>
               <Button
                 size="sm"
@@ -129,7 +129,7 @@ export function Commands() {
                 disabled={!dirty || saving}
                 onClick={() => void save()}
               >
-                {dirty ? "Save changes" : "Saved"}
+                {dirty ? text("Guardar cambios", "Save changes") : text("Guardado", "Saved")}
               </Button>
             </div>
           }
@@ -137,8 +137,8 @@ export function Commands() {
         <PanelBody>
           <div className={p.stack}>
             <Field
-              label="Add commands"
-              description="Separate with spaces, commas or newlines. Duplicates are ignored."
+              label={text("Añadir comandos", "Add commands")}
+              description={text("Sepáralos con espacios, comas o saltos de línea. Se ignoran los duplicados.", "Separate with spaces, commas or newlines. Duplicates are ignored.")}
             >
               {(id) => (
                 <div className={p.actions}>
@@ -157,7 +157,7 @@ export function Commands() {
                   />
                   <Button variant="secondary" onClick={add} disabled={!entry.trim()}>
                     <PlusIcon size={13} />
-                    Add
+                    {text("Añadir", "Add")}
                   </Button>
                 </div>
               )}
@@ -165,14 +165,14 @@ export function Commands() {
 
             {commands.length === 0 ? (
               <p className={p.hint}>
-                Nothing allowlisted — every shell call will ask for confirmation.
+                {text("No hay nada permitido: cada llamada de shell pedirá confirmación.", "Nothing allowlisted — every shell call will ask for confirmation.")}
               </p>
             ) : (
               <div className={p.tagList}>
                 {commands.map((cmd) => (
                   <span key={cmd} className={p.tag}>
                     {cmd}
-                    <IconButton label={`Remove ${cmd}`} danger onClick={() => remove(cmd)}>
+                    <IconButton label={text(`Quitar ${cmd}`, `Remove ${cmd}`)} danger onClick={() => remove(cmd)}>
                       <XIcon size={11} />
                     </IconButton>
                   </span>
@@ -185,8 +185,8 @@ export function Commands() {
 
       <Panel>
         <PanelHeader
-          title="Defaults"
-          subtitle="Shipped with dax-system, for reference"
+          title={text("Valores predeterminados", "Defaults")}
+          subtitle={text("Incluidos con dax-system, como referencia", "Shipped with dax-system, for reference")}
         />
         <PanelBody>
           <div className={p.tagList}>

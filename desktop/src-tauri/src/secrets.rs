@@ -1,23 +1,27 @@
-//! Session token storage in the OS secret store.
-//!
-//! PLAN.md 3.2: the token is a credential, so it lives in the keyring rather
-//! than `localStorage`. On Fedora that is the Secret Service (gnome-keyring).
-//!
-//! The keyring can be unavailable — a headless session, a locked keyring, no
-//! Secret Service provider. Rather than making login impossible in that case,
-//! we fall back to an in-memory store for the lifetime of the process. That is
-//! a real (documented) downgrade: the user re-authenticates on next launch.
+//! Session tokens isolated by normalized backend origin.
 
-use std::sync::Mutex;
+use std::collections::HashMap;
+use std::sync::{Mutex, OnceLock};
 
 const SERVICE: &str = "dev.dax.desktop";
-const ACCOUNT: &str = "session-token";
+const LEGACY_ACCOUNT: &str = "session-token";
+static MEMORY_FALLBACK: OnceLock<Mutex<HashMap<String, String>>> = OnceLock::new();
 
-/// Process-lifetime fallback used when the OS keyring is not usable.
-static MEMORY_FALLBACK: Mutex<Option<String>> = Mutex::new(None);
+fn memory_fallback() -> &'static Mutex<HashMap<String, String>> {
+    MEMORY_FALLBACK.get_or_init(|| Mutex::new(HashMap::new()))
+}
 
-fn entry() -> Option<keyring::Entry> {
-    match keyring::Entry::new(SERVICE, ACCOUNT) {
+fn account(origin: &str) -> String {
+    let encoded = origin
+        .as_bytes()
+        .iter()
+        .map(|byte| format!("{byte:02x}"))
+        .collect::<String>();
+    format!("session-token-v2:{encoded}")
+}
+
+fn entry(account: &str) -> Option<keyring::Entry> {
+    match keyring::Entry::new(SERVICE, account) {
         Ok(entry) => Some(entry),
         Err(err) => {
             eprintln!("keyring unavailable, using in-memory token store: {err}");
@@ -26,40 +30,81 @@ fn entry() -> Option<keyring::Entry> {
     }
 }
 
-pub fn get() -> Option<String> {
-    if let Some(entry) = entry() {
+fn read(account: &str) -> Option<String> {
+    if let Some(entry) = entry(account) {
         match entry.get_password() {
             Ok(token) => return Some(token),
-            Err(keyring::Error::NoEntry) => return None,
-            Err(err) => {
-                eprintln!("keyring read failed, falling back to memory: {err}");
-            }
+            Err(keyring::Error::NoEntry) => {}
+            Err(err) => eprintln!("keyring read failed, falling back to memory: {err}"),
         }
     }
-    MEMORY_FALLBACK.lock().ok().and_then(|guard| guard.clone())
+    memory_fallback()
+        .lock()
+        .ok()
+        .and_then(|guard| guard.get(account).cloned())
 }
 
-pub fn set(token: &str) -> Result<(), String> {
-    if let Some(entry) = entry() {
+pub fn get(origin: &str) -> Option<String> {
+    let scoped = account(origin);
+    if let Some(token) = read(&scoped) {
+        return Some(token);
+    }
+    // A legacy token can only be attributed safely to the active origin asking
+    // for it. Move it once; it is never copied across origins.
+    let token = read(LEGACY_ACCOUNT)?;
+    if set(origin, &token).is_ok() {
+        let _ = delete(LEGACY_ACCOUNT);
+    }
+    Some(token)
+}
+
+pub fn set(origin: &str, token: &str) -> Result<(), String> {
+    let scoped = account(origin);
+    if let Some(entry) = entry(&scoped) {
         match entry.set_password(token) {
             Ok(()) => return Ok(()),
             Err(err) => eprintln!("keyring write failed, falling back to memory: {err}"),
         }
     }
-    let mut guard = MEMORY_FALLBACK.lock().map_err(|e| e.to_string())?;
-    *guard = Some(token.to_string());
+    memory_fallback()
+        .lock()
+        .map_err(|err| err.to_string())?
+        .insert(scoped, token.to_string());
     Ok(())
 }
 
-pub fn clear() -> Result<(), String> {
-    if let Some(entry) = entry() {
-        // NoEntry just means there was nothing to clear.
+pub fn clear(origin: &str) -> Result<(), String> {
+    delete(&account(origin))
+}
+
+fn delete(account: &str) -> Result<(), String> {
+    if let Some(entry) = entry(account) {
         match entry.delete_credential() {
             Ok(()) | Err(keyring::Error::NoEntry) => {}
             Err(err) => eprintln!("keyring delete failed: {err}"),
         }
     }
-    let mut guard = MEMORY_FALLBACK.lock().map_err(|e| e.to_string())?;
-    *guard = None;
+    memory_fallback()
+        .lock()
+        .map_err(|err| err.to_string())?
+        .remove(account);
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn accounts_are_stable_and_origin_isolated() {
+        assert_eq!(
+            account("https://one.example"),
+            account("https://one.example")
+        );
+        assert_ne!(
+            account("https://one.example"),
+            account("https://two.example")
+        );
+        assert!(!account("https://one.example").contains("https"));
+    }
 }

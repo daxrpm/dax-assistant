@@ -1,43 +1,57 @@
 /*
- * The floating-pane shell.
+ * The floating-pane shell for summoned screens.
  *
- * The rail and the stage are two separate objects hovering over the window
+ * The strip and the stage are two separate objects hovering over the window
  * ground, with air between them and against every window edge. Nothing bleeds
  * to the frame and nothing is separated by a rule — that full-bleed grid with
  * a 1px divider is what made the previous iteration read as a web page.
+ *
+ * The sidebar this file used to describe is gone (PLAN.md 5.0): navigation is
+ * ⌘K, so the permanent chrome shrank from a 218px column to a 48px strip.
  */
 .shell {
   display: grid;
-  grid-template-columns: auto 1fr;
+  grid-template-rows: auto minmax(0, 1fr);
   gap: var(--gutter);
   padding: var(--gutter);
   height: 100%;
   background: var(--bg-window);
 }
 
-.sidebar {
+.strip {
   display: flex;
-  flex-direction: column;
-  width: var(--sidebar-width);
+  align-items: center;
+  gap: var(--space-4);
+  height: 44px;
+  padding: 0 var(--space-3);
   background: var(--bg-sidebar);
   border-radius: var(--radius-xl);
-  box-shadow: var(--shadow-3);
-  padding: var(--space-3) var(--space-2);
-  transition: width var(--dur-normal) var(--ease-out-soft);
-  overflow: hidden;
+  box-shadow: var(--shadow-2);
 }
 
-.collapsed {
-  width: var(--sidebar-width-collapsed);
-}
-
-.sidebarHeader {
+.back {
   display: flex;
   align-items: center;
   gap: var(--space-2);
-  height: 36px;
-  padding: 0 var(--space-2) var(--space-2);
-  flex: none;
+  height: 34px;
+  padding: 0 var(--space-3);
+  border: none;
+  border-radius: var(--radius-md);
+  background: transparent;
+  color: var(--fg-secondary);
+  font-family: var(--font-sans);
+  cursor: default;
+  transition: background-color var(--dur-fast) var(--ease-standard);
+}
+
+.back:hover {
+  background: var(--bg-hover);
+}
+
+.backArrow {
+  color: var(--fg-tertiary);
+  font-size: var(--text-callout);
+  line-height: 1;
 }
 
 .wordmark {
@@ -46,86 +60,57 @@
   /* 500, not 600: heavy weights read as web chrome at this size. */
   font-weight: 500;
   letter-spacing: var(--tracking-tight);
+  color: var(--fg-primary);
   white-space: nowrap;
 }
 
-.nav {
-  display: flex;
-  flex-direction: column;
-  gap: 2px;
+.crumb {
   flex: 1;
-  overflow-y: auto;
-}
-
-.groupHeader {
-  padding: var(--space-5) var(--space-2) var(--space-1);
-  font-size: var(--text-caption);
-  line-height: var(--text-caption-lh);
-  font-weight: 500;
-  letter-spacing: var(--tracking-label);
-  text-transform: uppercase;
-  color: var(--fg-quaternary);
+  min-width: 0;
+  overflow: hidden;
+  color: var(--fg-tertiary);
+  font-size: var(--text-callout);
+  line-height: var(--text-callout-lh);
+  text-overflow: ellipsis;
   white-space: nowrap;
 }
 
-.navItem {
+.stripActions {
   display: flex;
   align-items: center;
-  gap: var(--space-3);
-  height: var(--sidebar-row-height);
+  gap: var(--space-2);
+}
+
+.paletteHint {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  height: 28px;
   padding: 0 var(--space-3);
   border: none;
   border-radius: var(--radius-md);
   background: transparent;
-  color: var(--fg-secondary);
-  font-size: var(--text-callout);
-  text-align: left;
-  white-space: nowrap;
-  cursor: default;
-  transition:
-    background-color var(--dur-fast) var(--ease-standard),
-    color var(--dur-fast) var(--ease-standard);
-}
-
-.navItem:hover {
-  background: var(--bg-hover);
-  color: var(--fg-primary);
-}
-
-/*
- * Selection is a raised surface, not a tinted block. The accent stays
- * reserved for the voice orb and the primary action.
- */
-.navItemSelected,
-.navItemSelected:hover {
-  background: var(--bg-elevated);
-  color: var(--fg-primary);
-  font-weight: 500;
-}
-
-.navIcon {
-  flex: none;
-  width: 16px;
-  height: 16px;
-  display: grid;
-  place-items: center;
   color: var(--fg-tertiary);
-  transition: color var(--dur-fast) var(--ease-standard);
+  font-family: var(--font-sans);
+  font-size: var(--text-footnote);
+  line-height: var(--text-footnote-lh);
+  cursor: default;
+  transition: background-color var(--dur-fast) var(--ease-standard);
 }
 
-.navItem:hover .navIcon,
-.navItemSelected .navIcon {
+.paletteHint:hover {
+  background: var(--bg-hover);
   color: var(--fg-secondary);
 }
 
-.sidebarFooter {
-  flex: none;
-  display: flex;
-  align-items: center;
-  gap: var(--space-2);
-  padding: var(--space-3) var(--space-2) 0;
-  margin-top: var(--space-2);
-  border-top: 1px solid var(--separator);
+.kbd {
+  padding: 2px var(--space-2);
+  border-radius: var(--radius-xs);
+  background: var(--bg-inset);
+  color: var(--fg-secondary);
+  font-family: var(--font-mono);
+  font-size: var(--text-caption);
+  line-height: var(--text-caption-lh);
 }
 
 /* ---- stage ---- */
@@ -134,6 +119,7 @@
   display: flex;
   flex-direction: column;
   min-width: 0;
+  min-height: 0;
   background: var(--bg-content);
   border-radius: var(--radius-xl);
   box-shadow: var(--shadow-3);
@@ -144,4 +130,41 @@
   flex: 1;
   overflow-y: auto;
   padding: var(--space-6) var(--space-8);
+}
+
+@media (max-width: 900px) {
+  .contentScroll {
+    padding: var(--space-5);
+  }
+}
+
+@media (max-width: 720px) {
+  .shell {
+    gap: 6px;
+    padding: 6px;
+  }
+
+  .strip {
+    gap: var(--space-2);
+    min-height: 44px;
+    height: auto;
+  }
+
+  .stripActions {
+    gap: 0;
+    overflow-x: auto;
+  }
+
+  .paletteHint {
+    min-width: 34px;
+    padding: 0 var(--space-2);
+  }
+
+  .paletteHint > span {
+    display: none;
+  }
+
+  .contentScroll {
+    padding: var(--space-4);
+  }
 }

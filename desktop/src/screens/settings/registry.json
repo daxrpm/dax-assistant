@@ -1,0 +1,1371 @@
+{
+  "$comment": "Declarative settings registry — PLAN.md 6.0. Data, not JSX, so the Python coverage gate (tests/unit/test_settings_coverage.py) can read it directly. `key` is the dotted DaxConfig leaf; `api` + `path` are the PATCH route and the field path inside its body. Seven task-named sections, two levels of disclosure (section -> group -> field), `advanced: true` for correct-by-default fields.",
+  "sections": [
+    {
+      "id": "voz",
+      "title": "Voz",
+      "description": "Cómo Dax te escucha, te responde y a quién obedece.",
+      "groups": [
+        {
+          "id": "voz-estado",
+          "title": "Estado",
+          "description": "La canalización de voz en vivo.",
+          "api": "voice",
+          "custom": "voice-status",
+          "fields": [
+            {
+              "key": "voice.enabled",
+              "api": "voice",
+              "path": "enabled",
+              "label": "Voz activada",
+              "description": "Arranca la canalización de voz al iniciar Dax.",
+              "control": "toggle",
+              "apply": "reload"
+            }
+          ]
+        },
+        {
+          "id": "voz-escucha",
+          "title": "Cómo te escucha",
+          "description": "Palabra de activación, micrófono y detección de fin de frase.",
+          "api": "voice",
+          "fields": [
+            {
+              "key": "voice.wake_word_model",
+              "api": "voice",
+              "path": "wake_word_model",
+              "label": "Palabra de activación",
+              "description": "Modelo openWakeWord que despierta a Dax. Por ejemplo «hey_jarvis».",
+              "control": "text",
+              "apply": "reload"
+            },
+            {
+              "key": "voice.denoise",
+              "api": "voice",
+              "path": "denoise",
+              "label": "Reducción de ruido",
+              "description": "Limpia el audio del micrófono antes de transcribirlo.",
+              "control": "toggle",
+              "apply": "reload"
+            },
+            {
+              "key": "voice.adaptive_endpointing",
+              "api": "voice",
+              "path": "adaptive_endpointing",
+              "label": "Fin de frase adaptativo",
+              "description": "Ajusta la espera según tu ritmo al hablar en vez de usar un silencio fijo.",
+              "control": "toggle",
+              "apply": "reload"
+            },
+            {
+              "key": "voice.silence_duration_ms",
+              "api": "voice",
+              "path": "silence_duration_ms",
+              "label": "Silencio para cerrar la frase",
+              "description": "Milisegundos de silencio antes de dar por terminado lo que dijiste.",
+              "control": "number",
+              "unit": "ms",
+              "min": 100,
+              "max": 5000,
+              "step": 50,
+              "apply": "reload"
+            },
+            {
+              "key": "voice.wake_word_threshold",
+              "api": "voice",
+              "path": "wake_word_threshold",
+              "label": "Umbral de la palabra de activación",
+              "description": "Más alto exige una pronunciación más clara; más bajo se activa solo.",
+              "control": "slider",
+              "min": 0,
+              "max": 1,
+              "step": 0.01,
+              "advanced": true,
+              "apply": "reload"
+            },
+            {
+              "key": "voice.vad_threshold",
+              "api": "voice",
+              "path": "vad_threshold",
+              "label": "Umbral de detección de voz",
+              "description": "Energía mínima para considerar que hay habla. Súbelo en cuartos ruidosos.",
+              "control": "slider",
+              "min": 0,
+              "max": 1,
+              "step": 0.01,
+              "advanced": true,
+              "apply": "reload"
+            }
+          ]
+        },
+        {
+          "id": "voz-conversa",
+          "title": "Cómo conversa",
+          "description": "Turnos, ventanas de seguimiento y cuándo se calla.",
+          "api": "voice",
+          "fields": [
+            {
+              "key": "voice.barge_in",
+              "api": "voice",
+              "path": "barge_in",
+              "label": "Interrumpir mientras habla",
+              "description": "Puedes cortar la respuesta hablando encima de ella.",
+              "control": "toggle",
+              "apply": "reload"
+            },
+            {
+              "key": "voice.earcon",
+              "api": "voice",
+              "path": "earcon",
+              "label": "Sonidos de estado",
+              "description": "Un tono corto al empezar y terminar de escuchar.",
+              "control": "toggle",
+              "apply": "reload"
+            },
+            {
+              "key": "voice.voice_confirm",
+              "api": "voice",
+              "path": "voice_confirm",
+              "label": "Confirmaciones habladas",
+              "description": "Dax pide permiso en voz alta antes de las herramientas marcadas como «ask».",
+              "control": "toggle",
+              "apply": "reload"
+            },
+            {
+              "key": "voice.require_wake_word_each_turn",
+              "api": "voice",
+              "path": "require_wake_word_each_turn",
+              "label": "Palabra de activación en cada turno",
+              "description": "Sin esto, tras responder queda escuchando durante la ventana de seguimiento.",
+              "control": "toggle",
+              "apply": "reload"
+            },
+            {
+              "key": "voice.followup_activation_ms",
+              "api": "voice",
+              "path": "followup_activation_ms",
+              "label": "Ventana de seguimiento",
+              "description": "Cuánto sigue escuchando tras responder, sin repetir la palabra de activación.",
+              "control": "number",
+              "unit": "ms",
+              "min": 0,
+              "max": 60000,
+              "step": 100,
+              "apply": "reload"
+            },
+            {
+              "key": "voice.conversation_timeout_s",
+              "api": "voice",
+              "path": "conversation_timeout_s",
+              "label": "Fin de conversación por silencio",
+              "description": "Segundos sin hablar antes de volver a esperar la palabra de activación.",
+              "control": "number",
+              "unit": "s",
+              "min": 1,
+              "max": 300,
+              "step": 1,
+              "apply": "reload"
+            },
+            {
+              "key": "voice.thinking_pause_ms",
+              "api": "voice",
+              "path": "thinking_pause_ms",
+              "label": "Pausa de pensamiento",
+              "description": "Margen antes de dar por cerrada tu frase cuando dudas a media idea.",
+              "control": "number",
+              "unit": "ms",
+              "min": 0,
+              "max": 10000,
+              "step": 50,
+              "advanced": true,
+              "apply": "reload"
+            },
+            {
+              "key": "voice.response_timeout_s",
+              "api": "voice",
+              "path": "response_timeout_s",
+              "label": "Tiempo máximo de respuesta",
+              "description": "Si el agente tarda más que esto, la canalización abandona el turno.",
+              "control": "number",
+              "unit": "s",
+              "min": 1,
+              "max": 600,
+              "step": 1,
+              "advanced": true,
+              "apply": "reload"
+            },
+            {
+              "key": "voice.conversation_timeout_question_s",
+              "api": "voice",
+              "path": "conversation_timeout_question_s",
+              "label": "Fin de conversación tras una pregunta",
+              "description": "Espera más larga cuando Dax acaba de preguntarte algo.",
+              "control": "number",
+              "unit": "s",
+              "min": 1,
+              "max": 600,
+              "step": 1,
+              "advanced": true,
+              "apply": "reload"
+            },
+            {
+              "key": "voice.session_ttl_minutes",
+              "api": "voice",
+              "path": "session_ttl_minutes",
+              "label": "Duración de la sesión de voz",
+              "description": "Minutos que se conserva el contexto de la conversación por voz.",
+              "control": "number",
+              "unit": "min",
+              "min": 0,
+              "max": 10080,
+              "step": 1,
+              "advanced": true,
+              "apply": "reload"
+            }
+          ]
+        },
+        {
+          "id": "voz-habla",
+          "title": "Cómo habla",
+          "description": "Motor de síntesis, voz por idioma y velocidad.",
+          "api": "voice",
+          "fields": [
+            {
+              "key": "voice.tts_engine",
+              "api": "voice",
+              "path": "tts_engine",
+              "label": "Motor de síntesis",
+              "description": "Kokoro y Piper corren en local; OpenAI es alojado y necesita clave.",
+              "control": "select",
+              "options": [
+                { "value": "kokoro", "label": "Kokoro (local)" },
+                { "value": "piper", "label": "Piper (local)" },
+                { "value": "openai", "label": "OpenAI (alojado)" }
+              ],
+              "apply": "reload"
+            },
+            {
+              "key": "voice.tts_kokoro_voice_es",
+              "api": "voice",
+              "path": "tts_kokoro_voice_es",
+              "label": "Voz Kokoro en español",
+              "description": "Identificador de voz de Kokoro usado en turnos en español.",
+              "control": "text",
+              "apply": "reload"
+            },
+            {
+              "key": "voice.tts_kokoro_voice_en",
+              "api": "voice",
+              "path": "tts_kokoro_voice_en",
+              "label": "Voz Kokoro en inglés",
+              "description": "Identificador de voz de Kokoro usado en turnos en inglés.",
+              "control": "text",
+              "apply": "reload"
+            },
+            {
+              "key": "voice.tts_kokoro_speed",
+              "api": "voice",
+              "path": "tts_kokoro_speed",
+              "label": "Velocidad de Kokoro",
+              "description": "1.0 es el ritmo natural. Por encima de 1.3 se pierde naturalidad.",
+              "control": "slider",
+              "min": 0.5,
+              "max": 2,
+              "step": 0.05,
+              "apply": "reload"
+            },
+            {
+              "key": "voice.tts_voice_es",
+              "api": "voice",
+              "path": "tts_voice_es",
+              "label": "Voz Piper en español",
+              "description": "Modelo de voz de Piper para turnos en español.",
+              "control": "text",
+              "apply": "reload"
+            },
+            {
+              "key": "voice.tts_voice_en",
+              "api": "voice",
+              "path": "tts_voice_en",
+              "label": "Voz Piper en inglés",
+              "description": "Modelo de voz de Piper para turnos en inglés.",
+              "control": "text",
+              "apply": "reload"
+            },
+            {
+              "key": "voice.tts_openai_model",
+              "api": "voice",
+              "path": "tts_openai_model",
+              "label": "Modelo de voz de OpenAI",
+              "description": "Por ejemplo gpt-4o-mini-tts.",
+              "control": "text",
+              "apply": "reload"
+            },
+            {
+              "key": "voice.tts_openai_voice",
+              "api": "voice",
+              "path": "tts_openai_voice",
+              "label": "Voz de OpenAI",
+              "description": "Nombre de voz del catálogo de OpenAI, por ejemplo «nova».",
+              "control": "text",
+              "apply": "reload"
+            },
+            {
+              "key": "voice.tts_openai_instructions_es",
+              "api": "voice",
+              "path": "tts_openai_instructions_es",
+              "label": "Instrucciones de tono en español",
+              "description": "Cómo debe sonar la voz en español: ritmo, energía, carácter.",
+              "control": "textarea",
+              "rows": 3,
+              "apply": "reload"
+            },
+            {
+              "key": "voice.tts_openai_instructions_en",
+              "api": "voice",
+              "path": "tts_openai_instructions_en",
+              "label": "Instrucciones de tono en inglés",
+              "description": "Cómo debe sonar la voz en inglés: ritmo, energía, carácter.",
+              "control": "textarea",
+              "rows": 3,
+              "apply": "reload"
+            },
+            {
+              "key": "voice.tts_openai_timeout_s",
+              "api": "voice",
+              "path": "tts_openai_timeout_s",
+              "label": "Tiempo límite de síntesis alojada",
+              "description": "Segundos antes de abandonar la petición a OpenAI.",
+              "control": "number",
+              "unit": "s",
+              "min": 1,
+              "max": 300,
+              "step": 1,
+              "advanced": true,
+              "apply": "reload"
+            },
+            {
+              "key": "voice.tts_fallback_to_local",
+              "api": "voice",
+              "path": "tts_fallback_to_local",
+              "label": "Recurrir a la voz local",
+              "description": "Si OpenAI falla, sintetiza con el motor local en vez de quedarse mudo.",
+              "control": "toggle",
+              "advanced": true,
+              "apply": "reload"
+            }
+          ]
+        },
+        {
+          "id": "voz-transcribe",
+          "title": "Cómo transcribe",
+          "description": "Reconocimiento de voz local o alojado.",
+          "api": "voice",
+          "fields": [
+            {
+              "key": "voice.stt_backend",
+              "api": "voice",
+              "path": "stt_backend",
+              "label": "Motor de transcripción",
+              "description": "Local usa faster-whisper en tu máquina; OpenAI envía el audio a su API.",
+              "control": "select",
+              "options": [
+                { "value": "local", "label": "Local (faster-whisper)" },
+                { "value": "openai", "label": "OpenAI (alojado)" }
+              ],
+              "apply": "reload"
+            },
+            {
+              "key": "voice.stt_model",
+              "api": "voice",
+              "path": "stt_model",
+              "label": "Modelo local",
+              "description": "Tamaño de Whisper: tiny, base, small, medium o large-v3.",
+              "control": "text",
+              "apply": "reload"
+            },
+            {
+              "key": "voice.stt_language",
+              "api": "voice",
+              "path": "stt_language",
+              "label": "Idioma de transcripción",
+              "description": "Fíjalo a es o en para acertar más; auto detecta en cada turno.",
+              "control": "text",
+              "apply": "reload"
+            },
+            {
+              "key": "voice.stt_openai_model",
+              "api": "voice",
+              "path": "stt_openai_model",
+              "label": "Modelo alojado",
+              "description": "Por ejemplo gpt-4o-transcribe o whisper-1.",
+              "control": "text",
+              "apply": "reload"
+            },
+            {
+              "key": "voice.stt_openai_prompt",
+              "api": "voice",
+              "path": "stt_openai_prompt",
+              "label": "Pista de vocabulario",
+              "description": "Nombres propios y jerga que la transcripción alojada suele equivocar.",
+              "control": "textarea",
+              "rows": 3,
+              "apply": "reload"
+            },
+            {
+              "key": "llm.openai.api_key",
+              "api": "voice",
+              "path": "stt_openai_api_key",
+              "configured": "stt_openai_configured",
+              "label": "Clave de OpenAI",
+              "description": "La misma clave que usa el proveedor OpenAI en Inteligencia.",
+              "control": "secret",
+              "apply": "reload"
+            },
+            {
+              "key": "voice.stt_fallback_to_local",
+              "api": "voice",
+              "path": "stt_fallback_to_local",
+              "label": "Recurrir a la transcripción local",
+              "description": "Si la API falla, transcribe con Whisper local en vez de perder el turno.",
+              "control": "toggle",
+              "advanced": true,
+              "apply": "reload"
+            },
+            {
+              "key": "voice.stt_openai_timeout_s",
+              "api": "voice",
+              "path": "stt_openai_timeout_s",
+              "label": "Tiempo límite de transcripción alojada",
+              "description": "Segundos antes de abandonar la petición a OpenAI.",
+              "control": "number",
+              "unit": "s",
+              "min": 1,
+              "max": 300,
+              "step": 1,
+              "advanced": true,
+              "apply": "reload"
+            },
+            {
+              "key": "voice.stt_compute_type",
+              "api": "voice",
+              "path": "stt_compute_type",
+              "label": "Precisión de cómputo",
+              "description": "int8 es el más rápido en CPU; float16 requiere GPU.",
+              "control": "select",
+              "options": [
+                { "value": "int8", "label": "int8" },
+                { "value": "int8_float16", "label": "int8_float16" },
+                { "value": "float16", "label": "float16" },
+                { "value": "float32", "label": "float32" }
+              ],
+              "advanced": true,
+              "apply": "reload"
+            },
+            {
+              "key": "voice.stt_device",
+              "api": "voice",
+              "path": "stt_device",
+              "label": "Dispositivo",
+              "description": "Dónde corre Whisper. auto elige GPU si la hay.",
+              "control": "select",
+              "options": [
+                { "value": "auto", "label": "auto" },
+                { "value": "cpu", "label": "cpu" },
+                { "value": "cuda", "label": "cuda" }
+              ],
+              "advanced": true,
+              "apply": "reload"
+            },
+            {
+              "key": "voice.stt_beam_size",
+              "api": "voice",
+              "path": "stt_beam_size",
+              "label": "Tamaño del haz",
+              "description": "1 es el más rápido. Subirlo mejora poco y cuesta latencia en cada turno.",
+              "control": "number",
+              "min": 1,
+              "max": 10,
+              "step": 1,
+              "advanced": true,
+              "apply": "reload"
+            }
+          ]
+        },
+        {
+          "id": "voz-quien",
+          "title": "Quién puede hablarle",
+          "description": "Verificación de locutor.",
+          "api": "voice",
+          "fields": [
+            {
+              "key": "voice.speaker_verification",
+              "api": "voice",
+              "path": "speaker_verification",
+              "label": "Verificar el locutor",
+              "description": "Compara cada turno con tu perfil de voz y descarta a quien no seas tú.",
+              "control": "toggle",
+              "apply": "reload"
+            },
+            {
+              "key": "voice.speaker_fail_open",
+              "api": "voice",
+              "path": "speaker_fail_open",
+              "label": "Permitir si la verificación falla",
+              "description": "Activado, un error del modelo deja pasar el turno en vez de bloquearlo.",
+              "control": "toggle",
+              "apply": "reload"
+            },
+            {
+              "key": "voice.speaker_threshold",
+              "api": "voice",
+              "path": "speaker_threshold",
+              "label": "Umbral de parecido",
+              "description": "Similitud mínima con tu perfil. Súbelo si otra voz consigue pasar.",
+              "control": "slider",
+              "min": 0,
+              "max": 1,
+              "step": 0.01,
+              "advanced": true,
+              "apply": "reload"
+            }
+          ]
+        },
+        {
+          "id": "voz-perfil",
+          "title": "Tu perfil de voz",
+          "description": "Graba muestras para que Dax reconozca tu voz.",
+          "custom": "voice-enrollment",
+          "fields": []
+        }
+      ]
+    },
+
+    {
+      "id": "inteligencia",
+      "title": "Inteligencia",
+      "description": "Qué modelo piensa, con qué presupuesto de herramientas y a quién recurre si falla.",
+      "groups": [
+        {
+          "id": "int-enrutado",
+          "title": "Enrutado y presupuesto",
+          "description": "El proveedor activo, la cadena de reserva y cuántas herramientas ve el modelo.",
+          "api": "llm",
+          "fields": [
+            {
+              "key": "llm.default_provider",
+              "api": "llm",
+              "path": "default_provider",
+              "label": "Proveedor por defecto",
+              "description": "El primero al que se pregunta en cada turno.",
+              "control": "select",
+              "options": [
+                { "value": "openai", "label": "OpenAI" },
+                { "value": "anthropic", "label": "Anthropic" },
+                { "value": "gemini", "label": "Gemini" },
+                { "value": "deepseek", "label": "DeepSeek" },
+                { "value": "ollama", "label": "Ollama (local)" },
+                { "value": "codex", "label": "Codex (subproceso)" }
+              ],
+              "apply": "live"
+            },
+            {
+              "key": "llm.fallback_order",
+              "api": "llm",
+              "path": "fallback_order",
+              "label": "Cadena de reserva",
+              "description": "Un proveedor por línea. El router baja por la lista cuando uno falla.",
+              "control": "lines",
+              "rows": 4,
+              "apply": "live"
+            },
+            {
+              "key": "llm.max_tools",
+              "api": "llm",
+              "path": "max_tools",
+              "label": "Herramientas por turno",
+              "description": "Palanca de latencia. Demasiado bajo y servidores enteros nunca llegan al modelo; demasiado alto y el prompt se dispara.",
+              "control": "number",
+              "min": 1,
+              "max": 300,
+              "step": 1,
+              "apply": "live"
+            },
+            {
+              "key": "llm.max_tool_iterations",
+              "api": "llm",
+              "path": "max_tool_iterations",
+              "label": "Iteraciones de herramientas",
+              "description": "Cuántas rondas de llamadas a herramientas puede encadenar el agente en un turno.",
+              "control": "number",
+              "min": 1,
+              "max": 100,
+              "step": 1,
+              "advanced": true,
+              "apply": "live"
+            }
+          ]
+        },
+        {
+          "id": "int-openai",
+          "title": "OpenAI",
+          "api": "llm",
+          "collapsible": true,
+          "fields": [
+            {
+              "key": "llm.openai.model",
+              "api": "llm",
+              "path": "openai_model",
+              "label": "Modelo",
+              "description": "Por ejemplo gpt-5.1 o gpt-4o.",
+              "control": "text",
+              "apply": "live"
+            },
+            {
+              "key": "llm.openai.api_key",
+              "api": "llm",
+              "path": "openai_api_key",
+              "configured": "openai_configured",
+              "label": "Clave de API",
+              "description": "Se guarda cifrada. Déjala en blanco para conservar la actual.",
+              "control": "secret",
+              "apply": "live"
+            },
+            {
+              "key": "llm.openai.reasoning_effort",
+              "api": "llm",
+              "path": "openai_reasoning_effort",
+              "label": "Esfuerzo de razonamiento",
+              "description": "Solo se envía en turnos sin herramientas: la API lo rechaza junto a funciones.",
+              "control": "select",
+              "options": [
+                { "value": "minimal", "label": "minimal" },
+                { "value": "low", "label": "low" },
+                { "value": "medium", "label": "medium" },
+                { "value": "high", "label": "high" }
+              ],
+              "apply": "live"
+            },
+            {
+              "key": "llm.openai.base_url",
+              "api": "llm",
+              "path": "openai_base_url",
+              "label": "URL base",
+              "description": "Cámbiala solo para apuntar a un proxy compatible con OpenAI.",
+              "control": "text",
+              "advanced": true,
+              "apply": "live"
+            },
+            {
+              "key": "llm.openai.timeout",
+              "api": "llm",
+              "path": "openai_timeout",
+              "label": "Tiempo límite",
+              "description": "Segundos antes de abandonar la petición.",
+              "control": "number",
+              "unit": "s",
+              "min": 1,
+              "max": 3600,
+              "step": 1,
+              "advanced": true,
+              "apply": "live"
+            }
+          ]
+        },
+        {
+          "id": "int-anthropic",
+          "title": "Anthropic",
+          "api": "llm",
+          "collapsible": true,
+          "fields": [
+            {
+              "key": "llm.anthropic.model",
+              "api": "llm",
+              "path": "anthropic_model",
+              "label": "Modelo",
+              "description": "Por ejemplo claude-sonnet-4-5.",
+              "control": "text",
+              "apply": "live"
+            },
+            {
+              "key": "llm.anthropic.api_key",
+              "api": "llm",
+              "path": "anthropic_api_key",
+              "configured": "anthropic_configured",
+              "label": "Clave de API",
+              "description": "Se guarda cifrada. Déjala en blanco para conservar la actual.",
+              "control": "secret",
+              "apply": "live"
+            },
+            {
+              "key": "llm.anthropic.timeout",
+              "api": "llm",
+              "path": "anthropic_timeout",
+              "label": "Tiempo límite",
+              "description": "Segundos antes de abandonar la petición.",
+              "control": "number",
+              "unit": "s",
+              "min": 1,
+              "max": 3600,
+              "step": 1,
+              "advanced": true,
+              "apply": "live"
+            }
+          ]
+        },
+        {
+          "id": "int-gemini",
+          "title": "Gemini",
+          "api": "llm",
+          "collapsible": true,
+          "fields": [
+            {
+              "key": "llm.gemini.model",
+              "api": "llm",
+              "path": "gemini_model",
+              "label": "Modelo",
+              "description": "Por ejemplo gemini-2.5-pro.",
+              "control": "text",
+              "apply": "live"
+            },
+            {
+              "key": "llm.gemini.api_key",
+              "api": "llm",
+              "path": "gemini_api_key",
+              "configured": "gemini_configured",
+              "label": "Clave de API",
+              "description": "Se guarda cifrada. Déjala en blanco para conservar la actual.",
+              "control": "secret",
+              "apply": "live"
+            },
+            {
+              "key": "llm.gemini.timeout",
+              "api": "llm",
+              "path": "gemini_timeout",
+              "label": "Tiempo límite",
+              "description": "Segundos antes de abandonar la petición.",
+              "control": "number",
+              "unit": "s",
+              "min": 1,
+              "max": 3600,
+              "step": 1,
+              "advanced": true,
+              "apply": "live"
+            }
+          ]
+        },
+        {
+          "id": "int-deepseek",
+          "title": "DeepSeek",
+          "api": "llm",
+          "collapsible": true,
+          "fields": [
+            {
+              "key": "llm.deepseek.model",
+              "api": "llm",
+              "path": "deepseek_model",
+              "label": "Modelo",
+              "description": "Por ejemplo deepseek-chat.",
+              "control": "text",
+              "apply": "live"
+            },
+            {
+              "key": "llm.deepseek.api_key",
+              "api": "llm",
+              "path": "deepseek_api_key",
+              "configured": "deepseek_configured",
+              "label": "Clave de API",
+              "description": "Se guarda cifrada. Déjala en blanco para conservar la actual.",
+              "control": "secret",
+              "apply": "live"
+            },
+            {
+              "key": "llm.deepseek.base_url",
+              "api": "llm",
+              "path": "deepseek_base_url",
+              "label": "URL base",
+              "description": "Extremo de la API de DeepSeek.",
+              "control": "text",
+              "advanced": true,
+              "apply": "live"
+            },
+            {
+              "key": "llm.deepseek.timeout",
+              "api": "llm",
+              "path": "deepseek_timeout",
+              "label": "Tiempo límite",
+              "description": "Segundos antes de abandonar la petición.",
+              "control": "number",
+              "unit": "s",
+              "min": 1,
+              "max": 3600,
+              "step": 1,
+              "advanced": true,
+              "apply": "live"
+            }
+          ]
+        },
+        {
+          "id": "int-ollama",
+          "title": "Ollama",
+          "description": "Modelos locales servidos por Ollama.",
+          "api": "llm",
+          "collapsible": true,
+          "fields": [
+            {
+              "key": "llm.ollama.model",
+              "api": "llm",
+              "path": "ollama_model",
+              "label": "Modelo",
+              "description": "Nombre tal y como lo lista «ollama list».",
+              "control": "text",
+              "apply": "live"
+            },
+            {
+              "key": "llm.ollama.base_url",
+              "api": "llm",
+              "path": "ollama_base_url",
+              "label": "URL base",
+              "description": "Dónde escucha Ollama. Por defecto http://localhost:11434.",
+              "control": "text",
+              "apply": "live"
+            },
+            {
+              "key": "llm.ollama.timeout",
+              "api": "llm",
+              "path": "ollama_timeout",
+              "label": "Tiempo límite",
+              "description": "Segundos antes de abandonar la petición. Los modelos locales grandes tardan.",
+              "control": "number",
+              "unit": "s",
+              "min": 1,
+              "max": 3600,
+              "step": 1,
+              "advanced": true,
+              "apply": "live"
+            }
+          ]
+        },
+        {
+          "id": "int-codex",
+          "title": "Codex",
+          "description": "Subproceso «codex exec». Solo texto: ejecuta su propio bucle de herramientas.",
+          "api": "llm",
+          "collapsible": true,
+          "fields": [
+            {
+              "key": "llm.codex.binary",
+              "api": "llm",
+              "path": "codex_binary",
+              "label": "Ejecutable",
+              "description": "Ruta o nombre del binario de Codex en el PATH.",
+              "control": "text",
+              "apply": "live"
+            },
+            {
+              "key": "llm.codex.model",
+              "api": "llm",
+              "path": "codex_model",
+              "label": "Modelo",
+              "description": "Se pasa a «codex exec». En blanco usa el suyo por defecto.",
+              "control": "text",
+              "apply": "live"
+            },
+            {
+              "key": "llm.codex.timeout",
+              "api": "llm",
+              "path": "codex_timeout",
+              "label": "Tiempo límite",
+              "description": "Segundos antes de matar el subproceso.",
+              "control": "number",
+              "unit": "s",
+              "min": 1,
+              "max": 7200,
+              "step": 1,
+              "advanced": true,
+              "apply": "live"
+            }
+          ]
+        }
+      ]
+    },
+
+    {
+      "id": "capacidades",
+      "title": "Capacidades",
+      "description": "Qué puede tocar Dax: servidores MCP, permisos de herramientas y binarios de shell.",
+      "groups": [
+        {
+          "id": "cap-servidores",
+          "title": "Servidores MCP",
+          "description": "Cada servidor aporta herramientas al agente.",
+          "custom": "mcp-servers",
+          "fields": [
+            {
+              "key": "mcp.servers",
+              "label": "Servidores MCP",
+              "description": "Colección dinámica: añadir, editar, reconectar y autenticar por OAuth.",
+              "control": "custom"
+            }
+          ]
+        },
+        {
+          "id": "cap-politica",
+          "title": "Permisos de herramientas",
+          "description": "Qué se ejecuta solo, qué te pregunta y qué se rechaza. Se aplica en vivo.",
+          "api": "tools",
+          "fields": [
+            {
+              "key": "tools.policy.default",
+              "api": "tools",
+              "path": "policy.default",
+              "label": "Decisión por defecto",
+              "description": "Se aplica a toda herramienta que no encaje en ningún patrón.",
+              "control": "select",
+              "options": [
+                { "value": "allow", "label": "Permitir" },
+                { "value": "ask", "label": "Preguntar" },
+                { "value": "deny", "label": "Rechazar" }
+              ],
+              "apply": "live"
+            },
+            {
+              "key": "tools.confirm_timeout_seconds",
+              "api": "tools",
+              "path": "confirm_timeout_seconds",
+              "label": "Tiempo de confirmación",
+              "description": "Si nadie responde al aviso en este tiempo, la herramienta se RECHAZA.",
+              "control": "number",
+              "unit": "s",
+              "min": 1,
+              "max": 600,
+              "step": 1,
+              "apply": "live"
+            },
+            {
+              "key": "tools.policy.allow",
+              "api": "tools",
+              "path": "policy.allow",
+              "label": "Permitir",
+              "description": "Un patrón por línea. Se ejecutan sin preguntar.",
+              "control": "lines",
+              "rows": 5,
+              "apply": "live"
+            },
+            {
+              "key": "tools.policy.ask",
+              "api": "tools",
+              "path": "policy.ask",
+              "label": "Preguntar",
+              "description": "Un patrón por línea. Abren el aviso de confirmación.",
+              "control": "lines",
+              "rows": 5,
+              "apply": "live"
+            },
+            {
+              "key": "tools.policy.deny",
+              "api": "tools",
+              "path": "policy.deny",
+              "label": "Rechazar",
+              "description": "Un patrón por línea. Se rechazan siempre, sin preguntar.",
+              "control": "lines",
+              "rows": 5,
+              "apply": "live"
+            }
+          ]
+        },
+        {
+          "id": "cap-shell",
+          "title": "Binarios de shell permitidos",
+          "description": "El servidor dax-system solo ejecuta los comandos de esta lista.",
+          "custom": "shell-allow",
+          "fields": [
+            {
+              "key": "tools.shell_allow",
+              "label": "Lista de binarios",
+              "description": "Se guarda con PUT /api/config/system/shell-allow, no con el resto de la sección.",
+              "control": "custom"
+            }
+          ]
+        }
+      ]
+    },
+
+    {
+      "id": "memoria",
+      "title": "Memoria",
+      "description": "Lo que Dax sabe de ti y las instrucciones con las que arranca cada turno.",
+      "groups": [
+        {
+          "id": "mem-prompt",
+          "title": "Instrucciones del sistema",
+          "description": "El prompt base. Se aplica en todos los canales.",
+          "api": "general",
+          "custom": "system-prompt",
+          "fields": [
+            {
+              "key": "system_prompt",
+              "api": "general",
+              "path": "system_prompt",
+              "label": "Prompt del sistema",
+              "description": "En blanco no se acepta; usa «Restaurar» para volver al que trae Dax.",
+              "control": "textarea",
+              "rows": 14
+            }
+          ]
+        },
+        {
+          "id": "mem-ruta",
+          "title": "Dónde vive la memoria",
+          "api": "general",
+          "fields": [
+            {
+              "key": "memory_path",
+              "api": "general",
+              "path": "memory_path",
+              "label": "Carpeta de memoria",
+              "description": "Directorio con los archivos de memoria en markdown.",
+              "control": "text"
+            }
+          ]
+        },
+        {
+          "id": "mem-archivos",
+          "title": "Archivos de memoria",
+          "description": "Notas persistentes que el agente puede leer y escribir.",
+          "custom": "memory-files",
+          "fields": []
+        }
+      ]
+    },
+
+    {
+      "id": "canales",
+      "title": "Canales",
+      "description": "Por dónde más puedes hablar con Dax.",
+      "groups": [
+        {
+          "id": "can-telegram",
+          "title": "Telegram",
+          "description": "Bot bidireccional por long-polling. No necesita URL pública.",
+          "api": "telegram",
+          "fields": [
+            {
+              "key": "telegram.enabled",
+              "api": "telegram",
+              "path": "enabled",
+              "label": "Telegram activado",
+              "description": "Arranca el sondeo de mensajes entrantes.",
+              "control": "toggle",
+              "apply": "restart"
+            },
+            {
+              "key": "telegram.bot_token",
+              "api": "telegram",
+              "path": "bot_token",
+              "configured": "has_token",
+              "label": "Token del bot",
+              "description": "El que da @BotFather. Se guarda cifrado.",
+              "control": "secret",
+              "apply": "restart"
+            },
+            {
+              "key": "telegram.allowed_user_ids",
+              "api": "telegram",
+              "path": "allowed_user_ids",
+              "label": "IDs autorizados",
+              "description": "Un ID numérico por línea. Vacío significa que nadie puede escribirle.",
+              "control": "lines-int",
+              "rows": 4,
+              "apply": "restart"
+            },
+            {
+              "key": "telegram.respond_with_audio",
+              "api": "telegram",
+              "path": "respond_with_audio",
+              "label": "Responder con audio",
+              "description": "Envía nota de voz además del texto.",
+              "control": "toggle",
+              "apply": "restart"
+            }
+          ]
+        },
+        {
+          "id": "can-whatsapp",
+          "title": "WhatsApp",
+          "description": "Vía Evolution API. La entrada llega por webhook.",
+          "api": "whatsapp",
+          "fields": [
+            {
+              "key": "whatsapp.enabled",
+              "api": "whatsapp",
+              "path": "enabled",
+              "label": "WhatsApp activado",
+              "description": "Acepta mensajes entrantes del webhook de Evolution.",
+              "control": "toggle"
+            },
+            {
+              "key": "whatsapp.evolution_api_url",
+              "api": "whatsapp",
+              "path": "evolution_api_url",
+              "label": "URL de Evolution API",
+              "description": "Dónde corre tu instancia de Evolution.",
+              "control": "text"
+            },
+            {
+              "key": "whatsapp.evolution_api_instance",
+              "api": "whatsapp",
+              "path": "evolution_api_instance",
+              "label": "Instancia",
+              "description": "Nombre de la instancia dentro de Evolution.",
+              "control": "text"
+            },
+            {
+              "key": "whatsapp.evolution_api_key",
+              "api": "whatsapp",
+              "path": "evolution_api_key",
+              "configured": "has_api_key",
+              "label": "Clave de Evolution API",
+              "description": "Se guarda cifrada. Déjala en blanco para conservar la actual.",
+              "control": "secret"
+            },
+            {
+              "key": "whatsapp.respond_with_audio",
+              "api": "whatsapp",
+              "path": "respond_with_audio",
+              "label": "Responder con audio",
+              "description": "Envía nota de voz además del texto.",
+              "control": "toggle"
+            },
+            {
+              "key": "whatsapp.webhook_secret",
+              "api": "whatsapp",
+              "path": "webhook_secret",
+              "configured": "has_webhook_secret",
+              "label": "Secreto del webhook",
+              "description": "Autentica las llamadas entrantes de Evolution a /webhook/whatsapp.",
+              "control": "secret",
+              "advanced": true,
+              "apply": "live"
+            }
+          ]
+        }
+      ]
+    },
+
+    {
+      "id": "acceso",
+      "title": "Acceso",
+      "description": "Quién puede llegar hasta aquí y por dónde.",
+      "groups": [
+        {
+          "id": "acc-cuenta",
+          "title": "Contraseña",
+          "description": "La única credencial de este servidor.",
+          "custom": "change-password",
+          "fields": [
+            {
+              "key": "security.password_hash",
+              "label": "Contraseña",
+              "description": "Se guarda como hash argon2 mediante POST /api/auth/change-password.",
+              "control": "custom"
+            }
+          ]
+        },
+        {
+          "id": "acc-sesion",
+          "title": "Sesión",
+          "description": "Autenticación y duración de la cookie de sesión.",
+          "api": "security",
+          "fields": [
+            {
+              "key": "security.auth_enabled",
+              "api": "security",
+              "path": "auth_enabled",
+              "label": "Exigir inicio de sesión",
+              "description": "Desactivarlo deja la API abierta a cualquiera que alcance el puerto.",
+              "control": "toggle",
+              "danger": true,
+              "apply": "live"
+            },
+            {
+              "key": "security.session_ttl_hours",
+              "api": "security",
+              "path": "session_ttl_hours",
+              "label": "Duración de la sesión",
+              "description": "Horas antes de tener que volver a iniciar sesión.",
+              "control": "number",
+              "unit": "h",
+              "min": 1,
+              "max": 8760,
+              "step": 1
+            },
+            {
+              "key": "security.cookie_secure",
+              "api": "security",
+              "path": "cookie_secure",
+              "label": "Cookie segura",
+              "description": "Exige HTTPS. Déjalo apagado si accedes por HTTP en loopback.",
+              "control": "toggle"
+            },
+            {
+              "key": "security.cookie_name",
+              "api": "security",
+              "path": "cookie_name",
+              "label": "Nombre de la cookie",
+              "description": "Nombre de la cookie de sesión firmada.",
+              "control": "text",
+              "advanced": true,
+              "apply": "live"
+            },
+            {
+              "key": "security.session_secret",
+              "label": "Secreto de firma de sesión",
+              "description": "Clave con la que se firman las cookies. Cambiarla cierra todas las sesiones.",
+              "control": "readonly",
+              "advanced": true,
+              "reason": "Secreto gestionado por el almacén cifrado; el backend no lo expone ni lo acepta por PATCH."
+            }
+          ]
+        },
+        {
+          "id": "acc-red",
+          "title": "Red",
+          "description": "Dónde escucha el backend. Host y puerto exigen reiniciar.",
+          "api": "web",
+          "fields": [
+            {
+              "key": "web.host",
+              "api": "web",
+              "path": "host",
+              "label": "Dirección de escucha",
+              "description": "127.0.0.1 lo mantiene local. 0.0.0.0 lo expone a la red.",
+              "control": "text",
+              "apply": "restart"
+            },
+            {
+              "key": "web.port",
+              "api": "web",
+              "path": "port",
+              "label": "Puerto",
+              "description": "Puerto TCP del backend.",
+              "control": "number",
+              "min": 1,
+              "max": 65535,
+              "step": 1,
+              "apply": "restart"
+            },
+            {
+              "key": "web.expose_lan",
+              "api": "web",
+              "path": "expose_lan",
+              "label": "Exponer a la red local",
+              "description": "Permite que otras máquinas de tu red alcancen a Dax.",
+              "control": "toggle",
+              "danger": true,
+              "apply": "restart"
+            },
+            {
+              "key": "web.cors_origins",
+              "api": "web",
+              "path": "cors_origins",
+              "label": "Orígenes CORS",
+              "description": "Un origen por línea. La app de escritorio habla desde tauri://localhost.",
+              "control": "lines",
+              "rows": 4
+            },
+            {
+              "key": "web.dev_mode",
+              "api": "web",
+              "path": "dev_mode",
+              "label": "Modo desarrollo",
+              "description": "Añade http://localhost:5173 a los orígenes permitidos.",
+              "control": "toggle",
+              "advanced": true,
+              "apply": "restart"
+            }
+          ]
+        }
+      ]
+    },
+
+    {
+      "id": "sistema",
+      "title": "Sistema",
+      "description": "Identidad, registro, rutas de datos y preferencias de esta app.",
+      "groups": [
+        {
+          "id": "sis-identidad",
+          "title": "Identidad e idioma",
+          "api": "general",
+          "fields": [
+            {
+              "key": "name",
+              "api": "general",
+              "path": "name",
+              "label": "Nombre del asistente",
+              "description": "Cómo se presenta Dax.",
+              "control": "text"
+            },
+            {
+              "key": "language_default",
+              "api": "general",
+              "path": "language_default",
+              "label": "Idioma por defecto",
+              "description": "Se usa cuando el canal no indica ninguno.",
+              "control": "select",
+              "options": [
+                { "value": "auto", "label": "Detectar automáticamente" },
+                { "value": "es", "label": "Español" },
+                { "value": "en", "label": "Inglés" }
+              ]
+            },
+            {
+              "key": "log_level",
+              "api": "general",
+              "path": "log_level",
+              "label": "Nivel de registro",
+              "description": "Detalle de los mensajes que llegan a la vista de registros.",
+              "control": "select",
+              "options": [
+                { "value": "DEBUG", "label": "DEBUG" },
+                { "value": "INFO", "label": "INFO" },
+                { "value": "WARNING", "label": "WARNING" },
+                { "value": "ERROR", "label": "ERROR" },
+                { "value": "CRITICAL", "label": "CRITICAL" }
+              ]
+            }
+          ]
+        },
+        {
+          "id": "sis-almacenamiento",
+          "title": "Rutas de datos",
+          "description": "Dónde guarda Dax la base de datos y los modelos.",
+          "fields": [
+            {
+              "key": "storage.database_path",
+              "label": "Base de datos",
+              "description": "SQLite con conversaciones, auditoría de herramientas y secretos cifrados.",
+              "control": "readonly",
+              "reason": "El backend muestra esta ruta, pero no ofrece una ruta PATCH para cambiarla. Se fija al instalar."
+            },
+            {
+              "key": "storage.models_path",
+              "label": "Modelos",
+              "description": "Carpeta de los modelos de voz y del perfil de locutor.",
+              "control": "readonly",
+              "reason": "El backend muestra esta ruta, pero no ofrece una ruta PATCH para cambiarla. Se fija al instalar."
+            }
+          ]
+        },
+        {
+          "id": "sis-escritorio",
+          "title": "Esta aplicación",
+          "description": "Preferencias que solo afectan al cliente de escritorio.",
+          "custom": "desktop",
+          "fields": []
+        }
+      ]
+    }
+  ]
+}

@@ -41,17 +41,17 @@
   --text-title2-lh: 23px;
   --text-title3: 15px;
   --text-title3-lh: 21px;
-  --text-body: 14px;
-  --text-body-lh: 21px;
-  --text-callout: 13px;
-  --text-callout-lh: 19px;
-  --text-subhead: 12px;
-  --text-subhead-lh: 17px;
-  --text-footnote: 11px;
-  --text-footnote-lh: 15px;
-  --text-caption: 10.5px;
-  --text-caption-lh: 14px;
-  --text-chat: 14.5px;
+  --text-body: 15px;
+  --text-body-lh: 22px;
+  --text-callout: 14px;
+  --text-callout-lh: 20px;
+  --text-subhead: 13px;
+  --text-subhead-lh: 18px;
+  --text-footnote: 12px;
+  --text-footnote-lh: 16px;
+  --text-caption: 11px;
+  --text-caption-lh: 15px;
+  --text-chat: 15px;
   --text-chat-lh: 24px;
 
   /* Uppercase machine labels get tracking; body text never does. */
@@ -71,8 +71,8 @@
   --space-12: 48px;
   --space-16: 64px;
 
-  /* Gap between floating panes and the window edge. Nothing bleeds. */
-  --gutter: 12px;
+  /* A compact reveal of the ground is enough to separate floating panes. */
+  --gutter: 10px;
 
   /* ---- Radii ---- */
   --radius-xs: 6px;
@@ -89,38 +89,40 @@
      highlight on the top edge, which is how real glass catches light. No
      outline ring — that was the border in disguise. */
   --shadow-0: none;
-  --shadow-1: 0 1px 0 rgba(255, 255, 255, 0.04) inset,
-    0 4px 12px -4px rgba(0, 0, 0, 0.5);
-  --shadow-2: 0 1px 0 rgba(255, 255, 255, 0.045) inset,
-    0 10px 26px -10px rgba(0, 0, 0, 0.62);
-  --shadow-3: 0 1px 0 rgba(255, 255, 255, 0.05) inset,
-    0 22px 48px -14px rgba(0, 0, 0, 0.8);
-  --shadow-4: 0 1px 0 rgba(255, 255, 255, 0.06) inset,
-    0 36px 80px -18px rgba(0, 0, 0, 0.9);
+  --shadow-1: 0 1px 0 rgba(210, 224, 255, 0.055) inset,
+    0 5px 14px -6px rgba(0, 0, 0, 0.72);
+  --shadow-2: 0 1px 0 rgba(210, 224, 255, 0.06) inset,
+    0 12px 30px -12px rgba(0, 0, 0, 0.78);
+  --shadow-3: 0 1px 0 rgba(218, 230, 255, 0.065) inset,
+    0 22px 50px -16px rgba(0, 0, 0, 0.88),
+    0 7px 18px -12px rgba(58, 76, 112, 0.38);
+  --shadow-4: 0 1px 0 rgba(225, 234, 255, 0.075) inset,
+    0 38px 86px -20px rgba(0, 0, 0, 0.94),
+    0 12px 28px -18px rgba(62, 82, 124, 0.45);
 
   /* ---- Surfaces ---- */
-  --bg-window: #08090c;
-  --bg-sidebar: #111319;
-  --bg-content: #111319;
-  --bg-panel: #111319;
-  --bg-elevated: #181b22;
-  --bg-inset: #0c0e12;
-  --bg-hover: rgba(255, 255, 255, 0.045);
-  --bg-active: rgba(255, 255, 255, 0.075);
-  --bg-selected: rgba(110, 139, 255, 0.15);
+  --bg-window: #05070b;
+  --bg-sidebar: #10151d;
+  --bg-content: #0d1219;
+  --bg-panel: #151b25;
+  --bg-elevated: #1c2430;
+  --bg-inset: #090d13;
+  --bg-hover: rgba(218, 228, 255, 0.065);
+  --bg-active: rgba(218, 228, 255, 0.1);
+  --bg-selected: rgba(110, 139, 255, 0.18);
 
   /* ---- Text ---- */
-  --fg-primary: #e9ebf1;
-  --fg-secondary: #98a0b0;
-  --fg-tertiary: #5c6373;
-  --fg-quaternary: #3a4050;
+  --fg-primary: #f0f2f7;
+  --fg-secondary: #b7bfce;
+  --fg-tertiary: #9aa4b5;
+  --fg-quaternary: #828c9e;
   --fg-on-accent: #0a0f24;
 
   /* ---- Separators ----
      Deliberately near-invisible. If a separator is doing visible work, the
      layout needs space instead. */
-  --separator: rgba(255, 255, 255, 0.055);
-  --separator-opaque: #1c202a;
+  --separator: rgba(218, 228, 255, 0.065);
+  --separator-opaque: #232b38;
 
   /* ---- Accent — indigo, direction D ----
      Used for the voice orb and one primary action per view. Everywhere else
@@ -166,20 +168,20 @@
  * reads. Not an inversion of the dark values.
  */
 :root.light {
-  --bg-window: #e8e9ee;
-  --bg-sidebar: #f7f8fb;
-  --bg-content: #ffffff;
+  --bg-window: #e4e7ed;
+  --bg-sidebar: #f3f5f9;
+  --bg-content: #f9fafc;
   --bg-panel: #ffffff;
   --bg-elevated: #ffffff;
-  --bg-inset: #f1f2f6;
-  --bg-hover: rgba(16, 20, 40, 0.04);
-  --bg-active: rgba(16, 20, 40, 0.07);
+  --bg-inset: #edf0f5;
+  --bg-hover: rgba(25, 36, 62, 0.055);
+  --bg-active: rgba(25, 36, 62, 0.09);
   --bg-selected: rgba(78, 106, 232, 0.12);
 
   --fg-primary: #171a22;
-  --fg-secondary: #565d70;
-  --fg-tertiary: #878ea1;
-  --fg-quaternary: #b3b9c7;
+  --fg-secondary: #4e586b;
+  --fg-tertiary: #586377;
+  --fg-quaternary: #626c7f;
   --fg-on-accent: #ffffff;
 
   --separator: rgba(16, 20, 40, 0.07);
@@ -200,12 +202,12 @@
 
   --focus-ring: rgba(78, 106, 232, 0.5);
 
-  --shadow-1: 0 1px 0 rgba(255, 255, 255, 0.9) inset,
-    0 3px 10px -3px rgba(16, 20, 40, 0.13);
-  --shadow-2: 0 1px 0 rgba(255, 255, 255, 0.9) inset,
-    0 10px 24px -10px rgba(16, 20, 40, 0.2);
-  --shadow-3: 0 1px 0 rgba(255, 255, 255, 0.95) inset,
-    0 20px 44px -14px rgba(16, 20, 40, 0.26);
+  --shadow-1: 0 1px 0 rgba(255, 255, 255, 0.96) inset,
+    0 4px 12px -4px rgba(24, 35, 61, 0.18);
+  --shadow-2: 0 1px 0 rgba(255, 255, 255, 0.98) inset,
+    0 11px 27px -11px rgba(24, 35, 61, 0.24);
+  --shadow-3: 0 1px 0 rgba(255, 255, 255, 1) inset,
+    0 21px 46px -14px rgba(24, 35, 61, 0.3);
   --shadow-4: 0 1px 0 rgba(255, 255, 255, 1) inset,
     0 34px 72px -18px rgba(16, 20, 40, 0.3);
 }

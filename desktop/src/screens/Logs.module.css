@@ -3,7 +3,7 @@
   flex-direction: column;
   height: 100%;
   min-height: 0;
-  padding: var(--space-8);
+  padding: var(--space-5) var(--space-6) var(--space-6);
 }
 
 .bar {
@@ -39,6 +39,7 @@
   /* A well, not a bordered box: the inset ring here was a border in disguise. */
   background: var(--bg-inset);
   border-radius: var(--radius-xl);
+  box-shadow: 0 1px 0 rgba(210, 224, 255, 0.035) inset;
 }
 
 .spacer {
@@ -117,4 +118,16 @@
   align-items: center;
   justify-content: center;
   height: 100%;
+}
+
+@media (max-width: 900px) {
+  .logs {
+    padding: var(--space-4) var(--space-5) var(--space-5);
+  }
+}
+
+@media (max-width: 720px) {
+  .logs {
+    padding: var(--space-3);
+  }
 }

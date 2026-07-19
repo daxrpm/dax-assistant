@@ -33,5 +33,23 @@ export default defineConfig({
     // esbuild package, which is no longer installed.
     minify: !process.env.TAURI_ENV_DEBUG,
     sourcemap: !!process.env.TAURI_ENV_DEBUG,
+    rolldownOptions: {
+      output: {
+        // Stable package boundaries keep framework caching independent from
+        // route code while leaving markdown/highlighting lazy with Chat.
+        codeSplitting: {
+          groups: [
+            {
+              name: "react-vendor",
+              test: /node_modules\/(?:react|react-dom|scheduler)\//,
+            },
+            {
+              name: "markdown-vendor",
+              test: /node_modules\/(?:highlight\.js|react-markdown|rehype-highlight|remark-gfm)\//,
+            },
+          ],
+        },
+      },
+    },
   },
 });

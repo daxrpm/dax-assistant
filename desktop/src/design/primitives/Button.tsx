@@ -1,6 +1,7 @@
 import type { ButtonHTMLAttributes, ReactNode } from "react";
 import { cn } from "../../lib/cn";
 import s from "./primitives.module.css";
+import { useI18n } from "../../i18n/I18n";
 
 export type ButtonVariant = "primary" | "secondary" | "ghost" | "destructive";
 export type ButtonSize = "sm" | "md";
@@ -43,12 +44,13 @@ export function Button({
 }
 
 export function Spinner({ size = 14 }: { size?: number }) {
+  const { t } = useI18n();
   return (
     <span
       className={s.spinner}
       style={{ width: size, height: size }}
       role="status"
-      aria-label="Loading"
+      aria-label={t("common.loading")}
     />
   );
 }

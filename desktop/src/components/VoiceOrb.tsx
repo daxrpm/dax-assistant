@@ -1,167 +1,349 @@
-import { useEffect, useRef } from "react";
-
-/**
- * The voice orb — direction D, "Órbita".
- *
- * A ring of points circling a core; amplitude pushes them outward and makes
- * them brighter. Canvas 2D rather than WebGL: the workload is ~44 arcs per
- * frame against Canvas's several-thousand-draw budget, WebGL costs more on
- * cold start, and its driver clocks the GPU harder — the wrong trade for a
- * HUD that is idle most of the time.
- *
- * Two things keep it honest about cost:
- *
- *   - Level frames arrive at ~12.5 Hz from `/ws/voice`. Rendering is
- *     decoupled and interpolates toward the latest amplitude, so 60 fps comes
- *     from the spring, not from a faster socket.
- *   - When the pipeline is idle and the spring has settled, the loop stops
- *     via `cancelAnimationFrame` instead of spinning on a still image.
- */
+import { forwardRef, useEffect, useImperativeHandle, useRef } from "react";
+import type { LevelFrame } from "../hooks/useVoiceSocket";
 
 export type OrbState = "idle" | "listening" | "processing" | "speaking";
 
-interface VoiceOrbProps {
-  /** Pipeline state; drives resting behaviour and colour weighting. */
-  state: OrbState;
-  /** Latest normalized amplitude 0–1, from a `/ws/voice` level frame. */
-  level: number;
-  /** Rendered diameter in CSS pixels. */
-  size?: number;
+export interface VoiceOrbHandle {
+  setLevel(frame: LevelFrame): void;
 }
 
-const DOTS = 44;
-const CORE_RADIUS_RATIO = 0.3;
+interface VoiceOrbProps {
+  state: OrbState;
+  size?: number;
+  ariaLabel: string;
+}
 
-/** Below this the spring has visually settled and we can stop drawing. */
+type LevelSource = LevelFrame["source"];
+
+export interface SignalBuffer {
+  rms: Float32Array;
+  spectrum: Float32Array;
+  cursor: number;
+  peak: number;
+}
+
+const HISTORY_SIZE = 48;
+const SPECTRUM_SIZE = 12;
 const SETTLE_EPSILON = 0.002;
+const VELOCITY_EPSILON = 0.003;
+const PARTICLES = 34;
+
+export function createSignalBuffers(): Record<LevelSource, SignalBuffer> {
+  const create = (): SignalBuffer => ({
+    rms: new Float32Array(HISTORY_SIZE),
+    spectrum: new Float32Array(SPECTRUM_SIZE),
+    cursor: 0,
+    peak: 0,
+  });
+  return { input: create(), output: create() };
+}
+
+const clamp = (value: number) =>
+  Number.isFinite(value) ? Math.max(0, Math.min(1, value)) : 0;
+
+export function pushLevelFrame(
+  buffers: Record<LevelSource, SignalBuffer>,
+  frame: LevelFrame,
+) {
+  const signal = buffers[frame.source];
+  signal.peak = clamp(frame.peak);
+  for (const sample of frame.rms) {
+    signal.rms[signal.cursor] = clamp(sample);
+    signal.cursor = (signal.cursor + 1) % signal.rms.length;
+  }
+  signal.spectrum.fill(0);
+  frame.spectrum.slice(0, signal.spectrum.length).forEach((sample, index) => {
+    signal.spectrum[index] = clamp(sample);
+  });
+}
+
+export function advanceSpring(
+  value: number,
+  velocity: number,
+  target: number,
+  deltaSeconds: number,
+): [number, number] {
+  const dt = Math.max(0, Math.min(0.05, deltaSeconds));
+  const nextVelocity =
+    (velocity + (target - value) * 120 * dt) * Math.exp(-18 * dt);
+  return [value + nextVelocity * dt, nextVelocity];
+}
 
 function readAccent(): string {
-  const raw = getComputedStyle(document.documentElement)
-    .getPropertyValue("--accent")
-    .trim();
-  return raw || "#6e8bff";
+  return (
+    getComputedStyle(document.documentElement).getPropertyValue("--accent").trim() ||
+    "#6e8bff"
+  );
 }
 
-/** Parse `#rgb`/`#rrggbb` into an `r,g,b` string usable inside rgba(). */
-function toRgbTriplet(hex: string): string {
+function toRgb(hex: string): [number, number, number] {
   const clean = hex.replace("#", "");
-  const full =
-    clean.length === 3
-      ? clean
-          .split("")
-          .map((c) => c + c)
-          .join("")
-      : clean;
-  const n = Number.parseInt(full, 16);
-  if (Number.isNaN(n)) return "110,139,255";
-  return `${(n >> 16) & 255},${(n >> 8) & 255},${n & 255}`;
+  const full = clean.length === 3
+    ? clean.split("").map((character) => character + character).join("")
+    : clean;
+  const value = Number.parseInt(full, 16);
+  return Number.isNaN(value)
+    ? [110, 139, 255]
+    : [(value >> 16) & 255, (value >> 8) & 255, value & 255];
 }
 
-export function VoiceOrb({ state, level, size = 160 }: VoiceOrbProps) {
-  const canvasRef = useRef<HTMLCanvasElement>(null);
-  // Read through refs so a new level frame never restarts the render loop.
-  const stateRef = useRef(state);
-  const levelRef = useRef(level);
+const rgba = ([red, green, blue]: [number, number, number], alpha: number) =>
+  `rgba(${red},${green},${blue},${Math.max(0, Math.min(1, alpha)).toFixed(3)})`;
 
+function drawWave(
+  context: CanvasRenderingContext2D,
+  signal: SignalBuffer,
+  cx: number,
+  cy: number,
+  baseRadius: number,
+  amplitude: number,
+  rgb: [number, number, number],
+  source: LevelSource,
+) {
+  const points = 64;
+  context.beginPath();
+  for (let index = 0; index <= points; index += 1) {
+    const angle = (index / points) * Math.PI * 2;
+    const historyIndex =
+      (signal.cursor + Math.floor((index / points) * signal.rms.length)) %
+      signal.rms.length;
+    const envelope = signal.rms[historyIndex] ?? 0;
+    const band = signal.spectrum[index % signal.spectrum.length] ?? 0;
+    const harmonic = Math.sin(angle * (source === "input" ? 7 : 4));
+    const energy = envelope * 0.58 + band * 0.27 + signal.peak * 0.15;
+    const radius = baseRadius + amplitude * energy * baseRadius *
+      (source === "input" ? 0.46 + harmonic * 0.12 : 0.25 + harmonic * 0.07);
+    const x = cx + Math.cos(angle) * radius;
+    const y = cy + Math.sin(angle) * radius * (source === "input" ? 0.94 : 0.72);
+    if (index === 0) context.moveTo(x, y);
+    else context.lineTo(x, y);
+  }
+  context.closePath();
+  context.lineWidth = source === "input" ? 1.35 : 1;
+  context.strokeStyle = rgba(rgb, source === "input" ? 0.64 * amplitude : 0.42 * amplitude);
+  context.stroke();
+}
+
+export const VoiceOrb = forwardRef<VoiceOrbHandle, VoiceOrbProps>(function VoiceOrb(
+  { state, size = 160, ariaLabel },
+  ref,
+) {
+  const canvasRef = useRef<HTMLCanvasElement>(null);
+  const stateRef = useRef(state);
+  const signalsRef = useRef(createSignalBuffers());
+  const startRef = useRef<() => void>(() => undefined);
   stateRef.current = state;
-  levelRef.current = level;
+
+  useImperativeHandle(
+    ref,
+    () => ({
+      setLevel(frame) {
+        pushLevelFrame(signalsRef.current, frame);
+        if (stateRef.current !== "idle") startRef.current();
+      },
+    }),
+    [],
+  );
 
   useEffect(() => {
     const canvas = canvasRef.current;
-    if (!canvas) return;
-    const ctx = canvas.getContext("2d");
-    if (!ctx) return;
+    const context = canvas?.getContext("2d");
+    if (!canvas || !context) return;
 
-    const reduceMotion = window.matchMedia(
-      "(prefers-reduced-motion: reduce)",
-    ).matches;
+    const media = window.matchMedia("(prefers-reduced-motion: reduce)");
+    let reducedMotion = media.matches;
+    let width = size;
+    let height = size;
+    let raf = 0;
+    let lastTime = 0;
+    let phase = 0;
+    let inputAmplitude = 0;
+    let outputAmplitude = 0;
+    let inputVelocity = 0;
+    let outputVelocity = 0;
+    const rgb = toRgb(readAccent());
 
-    const dpr = Math.min(window.devicePixelRatio || 1, 2);
-    canvas.width = size * dpr;
-    canvas.height = size * dpr;
-    ctx.scale(dpr, dpr);
-
-    const rgb = toRgbTriplet(readAccent());
-    let frame = 0;
-    let spin = 0;
-    let amp = 0;
-
-    const draw = () => {
-      const current = stateRef.current;
-      const idle = current === "idle";
-
-      // Idle keeps a slow breath so the orb reads as alive but not busy.
-      const target = idle
-        ? 0.05
-        : current === "processing"
-          ? 0.22
-          : Math.max(0.08, Math.min(1, levelRef.current));
-
-      amp += (target - amp) * 0.16;
-      spin += idle ? 0.0016 : 0.005;
-
-      const cx = size / 2;
-      const cy = size / 2;
-      const core = size * CORE_RADIUS_RATIO;
-      ctx.clearRect(0, 0, size, size);
-
-      for (let i = 0; i < DOTS; i++) {
-        const angle = (i / DOTS) * Math.PI * 2 + spin;
-        // Per-dot phase so the ring shimmers rather than pulsing as one block.
-        const pulse = Math.abs(Math.sin(frame * 0.03 + i * 0.4));
-        const distance = core + size * 0.06 + amp * size * 0.2 * pulse;
-        const radius = size * 0.008 + amp * size * 0.014 * pulse;
-        ctx.beginPath();
-        ctx.arc(cx + Math.cos(angle) * distance, cy + Math.sin(angle) * distance, radius, 0, Math.PI * 2);
-        ctx.fillStyle = `rgba(${rgb},${(0.28 + pulse * amp * 0.72).toFixed(3)})`;
-        ctx.fill();
-      }
-
-      ctx.beginPath();
-      ctx.arc(cx, cy, core, 0, Math.PI * 2);
-      ctx.fillStyle = `rgba(${rgb},${(0.07 + amp * 0.14).toFixed(3)})`;
-      ctx.fill();
-
-      ctx.beginPath();
-      ctx.arc(cx, cy, core * (1 + amp * 0.06), 0, Math.PI * 2);
-      ctx.strokeStyle = `rgba(${rgb},${(0.55 + amp * 0.35).toFixed(3)})`;
-      ctx.lineWidth = 1.5;
-      ctx.stroke();
-
-      frame += 1;
-
-      // Idle and settled: stop. A still orb must not hold a rAF loop open.
-      const settled = idle && Math.abs(target - amp) < SETTLE_EPSILON;
-      if (reduceMotion || settled) {
-        raf = 0;
-        return;
-      }
-      raf = requestAnimationFrame(draw);
+    const resize = () => {
+      const bounds = canvas.getBoundingClientRect();
+      width = bounds.width || size;
+      height = bounds.height || size;
+      const dpr = Math.min(window.devicePixelRatio || 1, 2);
+      canvas.width = Math.max(1, Math.round(width * dpr));
+      canvas.height = Math.max(1, Math.round(height * dpr));
+      context.setTransform(dpr, 0, 0, dpr, 0, 0);
+      startRef.current();
     };
 
-    let raf = requestAnimationFrame(draw);
+    const targets = (): [number, number] => {
+      const current = stateRef.current;
+      if (current === "idle") return [0, 0];
+      if (current === "speaking") return [0.12, Math.max(0.18, signalsRef.current.output.peak)];
+      if (current === "listening") return [Math.max(0.18, signalsRef.current.input.peak), 0.08];
+      return [0.14, 0.14];
+    };
+
+    const paint = () => {
+      const cx = width / 2;
+      const cy = height / 2;
+      const scale = Math.min(width, height);
+      const core = scale * 0.245;
+      const activity = Math.max(inputAmplitude, outputAmplitude);
+      context.clearRect(0, 0, width, height);
+
+      const shadow = context.createRadialGradient(cx, cy + core * 0.72, core * 0.15, cx, cy + core * 0.72, core * 1.55);
+      shadow.addColorStop(0, "rgba(0,0,0,0.5)");
+      shadow.addColorStop(1, "rgba(0,0,0,0)");
+      context.save();
+      context.scale(1, 0.32);
+      context.fillStyle = shadow;
+      context.beginPath();
+      context.arc(cx, (cy + core * 1.55) / 0.32, core * 1.55, 0, Math.PI * 2);
+      context.fill();
+      context.restore();
+
+      drawWave(context, signalsRef.current.input, cx, cy, core * 1.56, inputAmplitude, rgb, "input");
+      drawWave(context, signalsRef.current.output, cx, cy, core * 1.22, outputAmplitude, rgb, "output");
+
+      const particles = Array.from({ length: PARTICLES }, (_, index) => {
+        const angle = (index / PARTICLES) * Math.PI * 2 + phase * (0.1 + (index % 3) * 0.025);
+        return { index, angle, z: Math.sin(angle * 1.37 + index * 0.9) };
+      }).sort((a, b) => a.z - b.z);
+
+      const drawParticle = ({ index, angle, z }: (typeof particles)[number]) => {
+        const orbit = core * (1.4 + (index % 4) * 0.16);
+        const x = cx + Math.cos(angle) * orbit;
+        const y = cy + Math.sin(angle) * orbit * (0.35 + (index % 3) * 0.07);
+        const radius = scale * (0.004 + (z + 1) * 0.0025) * (0.8 + activity * 0.35);
+        context.beginPath();
+        context.arc(x, y, radius, 0, Math.PI * 2);
+        context.fillStyle = rgba(rgb, 0.16 + (z + 1) * 0.18 + activity * 0.16);
+        context.fill();
+      };
+      particles.filter((particle) => particle.z < 0).forEach(drawParticle);
+
+      for (let ring = 0; ring < 3; ring += 1) {
+        context.beginPath();
+        context.ellipse(
+          cx,
+          cy,
+          core * (1.3 + ring * 0.22),
+          core * (0.32 + ring * 0.055),
+          -0.28 + ring * 0.27 + phase * (ring === 1 ? -0.025 : 0.018),
+          Math.PI,
+          Math.PI * 2,
+        );
+        context.strokeStyle = rgba(rgb, 0.16 + ring * 0.07 + activity * 0.12);
+        context.lineWidth = ring === 1 ? 1.3 : 0.8;
+        context.stroke();
+      }
+
+      const sphere = context.createRadialGradient(
+        cx - core * 0.34,
+        cy - core * 0.42,
+        core * 0.04,
+        cx,
+        cy,
+        core * 1.1,
+      );
+      sphere.addColorStop(0, rgba(rgb, 0.92));
+      sphere.addColorStop(0.2, rgba(rgb, 0.48 + activity * 0.18));
+      sphere.addColorStop(0.62, rgba(rgb, 0.18 + activity * 0.12));
+      sphere.addColorStop(1, "rgba(5,8,20,0.94)");
+      context.beginPath();
+      context.arc(cx, cy, core * (1 + activity * 0.035), 0, Math.PI * 2);
+      context.fillStyle = sphere;
+      context.shadowColor = rgba(rgb, 0.36 + activity * 0.25);
+      context.shadowBlur = core * (0.28 + activity * 0.35);
+      context.fill();
+      context.shadowBlur = 0;
+
+      const rim = context.createLinearGradient(cx, cy - core, cx, cy + core);
+      rim.addColorStop(0, rgba(rgb, 0.72));
+      rim.addColorStop(0.46, rgba(rgb, 0.18));
+      rim.addColorStop(1, rgba(rgb, 0.04));
+      context.beginPath();
+      context.arc(cx, cy, core * 1.01, 0, Math.PI * 2);
+      context.strokeStyle = rim;
+      context.lineWidth = 1.2;
+      context.stroke();
+
+      for (let ring = 0; ring < 3; ring += 1) {
+        context.beginPath();
+        context.ellipse(
+          cx,
+          cy,
+          core * (1.3 + ring * 0.22),
+          core * (0.32 + ring * 0.055),
+          -0.28 + ring * 0.27 + phase * (ring === 1 ? -0.025 : 0.018),
+          0,
+          Math.PI,
+        );
+        context.strokeStyle = rgba(rgb, 0.28 + ring * 0.08 + activity * 0.16);
+        context.lineWidth = ring === 1 ? 1.45 : 0.9;
+        context.stroke();
+      }
+      particles.filter((particle) => particle.z >= 0).forEach(drawParticle);
+    };
+
+    const draw = (time: number) => {
+      raf = 0;
+      const delta = lastTime === 0 ? 1 / 60 : Math.min(0.05, (time - lastTime) / 1000);
+      lastTime = time;
+      const [inputTarget, outputTarget] = targets();
+      if (reducedMotion) {
+        inputAmplitude = inputTarget;
+        outputAmplitude = outputTarget;
+        inputVelocity = 0;
+        outputVelocity = 0;
+      } else {
+        [inputAmplitude, inputVelocity] = advanceSpring(inputAmplitude, inputVelocity, inputTarget, delta);
+        [outputAmplitude, outputVelocity] = advanceSpring(outputAmplitude, outputVelocity, outputTarget, delta);
+        phase += delta;
+      }
+      paint();
+      const settled =
+        stateRef.current === "idle" &&
+        inputAmplitude < SETTLE_EPSILON &&
+        outputAmplitude < SETTLE_EPSILON &&
+        Math.abs(inputVelocity) < VELOCITY_EPSILON &&
+        Math.abs(outputVelocity) < VELOCITY_EPSILON;
+      if (!settled && !reducedMotion) raf = requestAnimationFrame(draw);
+    };
+
+    startRef.current = () => {
+      if (!raf) {
+        lastTime = 0;
+        raf = requestAnimationFrame(draw);
+      }
+    };
+    const onMotionChange = (event: MediaQueryListEvent) => {
+      reducedMotion = event.matches;
+      startRef.current();
+    };
+    media.addEventListener?.("change", onMotionChange);
+    const observer = typeof ResizeObserver === "undefined" ? null : new ResizeObserver(resize);
+    observer?.observe(canvas);
+    window.addEventListener("resize", resize);
+    resize();
     return () => {
+      startRef.current = () => undefined;
+      observer?.disconnect();
+      window.removeEventListener("resize", resize);
+      media.removeEventListener?.("change", onMotionChange);
       if (raf) cancelAnimationFrame(raf);
     };
-    // Keyed on `state` so leaving idle restarts a loop that stopped itself.
-    // Deliberately NOT keyed on `level`: frames arrive ~12.5×/s and are read
-    // through a ref, so they must not tear down and rebuild the loop.
-  }, [size, state]);
+  }, [size]);
+
+  useEffect(() => {
+    startRef.current();
+  }, [state]);
 
   return (
     <canvas
       ref={canvasRef}
       style={{ width: size, height: size, display: "block" }}
       role="img"
-      aria-label={
-        state === "listening"
-          ? "Escuchando"
-          : state === "speaking"
-            ? "Dax está hablando"
-            : state === "processing"
-              ? "Procesando"
-              : "En reposo"
-      }
+      aria-label={ariaLabel}
     />
   );
-}
+});

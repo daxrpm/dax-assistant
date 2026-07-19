@@ -1,5 +1,6 @@
 import {
   useEffect,
+  useId,
   useRef,
   useState,
   type ButtonHTMLAttributes,
@@ -41,6 +42,7 @@ export function IconButton({
 export interface TabItem<T extends string = string> {
   id: T;
   label: ReactNode;
+  panelId?: string;
 }
 
 export function Tabs<T extends string>({
@@ -54,16 +56,40 @@ export function Tabs<T extends string>({
   onChange: (next: T) => void;
   className?: string;
 }) {
+  const baseId = useId();
+  const refs = useRef<(HTMLButtonElement | null)[]>([]);
+
+  const selectAt = (index: number) => {
+    const item = items[index];
+    if (!item) return;
+    onChange(item.id);
+    refs.current[index]?.focus();
+  };
+
   return (
-    <div className={cn(c.tabList, className)} role="tablist">
-      {items.map((item) => (
+    <div className={cn(c.tabList, className)} role="tablist" aria-orientation="horizontal">
+      {items.map((item, index) => (
         <button
           key={item.id}
+          ref={(node) => { refs.current[index] = node; }}
+          id={`${baseId}-${item.id}-tab`}
           type="button"
           role="tab"
           aria-selected={item.id === value}
+          aria-controls={item.panelId ?? `${baseId}-${item.id}-panel`}
+          tabIndex={item.id === value ? 0 : -1}
           className={cn(c.tab, item.id === value && c.tabSelected)}
           onClick={() => onChange(item.id)}
+          onKeyDown={(event) => {
+            let next = index;
+            if (event.key === "ArrowRight") next = (index + 1) % items.length;
+            else if (event.key === "ArrowLeft") next = (index - 1 + items.length) % items.length;
+            else if (event.key === "Home") next = 0;
+            else if (event.key === "End") next = items.length - 1;
+            else return;
+            event.preventDefault();
+            selectAt(next);
+          }}
         >
           {item.label}
         </button>
@@ -79,20 +105,23 @@ export function SegmentedControl<T extends string>({
   value,
   onChange,
   className,
+  disabled = false,
 }: {
   items: TabItem<T>[];
   value: T;
   onChange: (next: T) => void;
   className?: string;
+  disabled?: boolean;
 }) {
   return (
-    <div className={cn(c.segmented, className)} role="radiogroup">
+    <div className={cn(c.segmented, className)} role="radiogroup" aria-disabled={disabled}>
       {items.map((item) => (
         <button
           key={item.id}
           type="button"
           role="radio"
           aria-checked={item.id === value}
+          disabled={disabled}
           className={cn(c.segment, item.id === value && c.segmentSelected)}
           onClick={() => onChange(item.id)}
         >

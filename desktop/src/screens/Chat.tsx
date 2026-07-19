@@ -36,11 +36,13 @@ import {
 } from "../design/primitives";
 import {
   useChatSocket,
+  COMMAND_DECK_SESSION_ID,
   type AgentEvent,
   type ChatMessage,
   type ConfirmationRequest,
 } from "../hooks/useChatSocket";
 import { cn } from "../lib/cn";
+import { useI18n, type Translate } from "../i18n/I18n";
 import s from "./Chat.module.css";
 
 /* ---------------- helpers ---------------- */
@@ -52,24 +54,26 @@ function newSessionId(): string {
 }
 
 function getStoredSessionId(): string {
-  return localStorage.getItem(SESSION_KEY) || newSessionId();
+  const stored = localStorage.getItem(SESSION_KEY);
+  return stored && stored !== COMMAND_DECK_SESSION_ID ? stored : newSessionId();
 }
 
-function formatRelative(iso: string): string {
+function formatRelative(iso: string, t: Translate, locale: string): string {
   const then = new Date(iso).getTime();
   if (Number.isNaN(then)) return "";
   const mins = Math.floor((Date.now() - then) / 60_000);
-  if (mins < 1) return "Just now";
-  if (mins < 60) return `${mins}m ago`;
+  if (mins < 1) return t("chat.justNow");
+  if (mins < 60) return t("chat.minutesAgo", { count: mins });
   const hrs = Math.floor(mins / 60);
-  if (hrs < 24) return `${hrs}h ago`;
+  if (hrs < 24) return t("chat.hoursAgo", { count: hrs });
   const days = Math.floor(hrs / 24);
-  return days < 7 ? `${days}d ago` : new Date(iso).toLocaleDateString();
+  return days < 7 ? t("chat.daysAgo", { count: days }) : new Date(iso).toLocaleDateString(locale);
 }
 
 /* ---------------- agent event rendering ---------------- */
 
 function StepLine({ ev }: { ev: AgentEvent }) {
+  const { t } = useI18n();
   if (ev.type === "tool_call") {
     const label = ev.server ? `${ev.server} · ${ev.tool}` : (ev.tool ?? "");
     return (
@@ -86,7 +90,7 @@ function StepLine({ ev }: { ev: AgentEvent }) {
           {ev.error ? <AlertIcon size={11} /> : <CheckIcon size={11} />}
         </span>
         <span className={s.stepTool}>{ev.tool}</span>
-        <span>{ev.error ? "failed" : "done"}</span>
+        <span>{ev.error ? t("chat.failed") : t("chat.done")}</span>
       </div>
     );
   }
@@ -95,6 +99,7 @@ function StepLine({ ev }: { ev: AgentEvent }) {
 
 /** Post-hoc "Thought for Ns" disclosure on a completed assistant turn. */
 function ThoughtToggle({ events, elapsed }: { events: AgentEvent[]; elapsed?: number }) {
+  const { t } = useI18n();
   const [open, setOpen] = useState(false);
   const toolCalls = events.filter((e) => e.type === "tool_call");
   if (toolCalls.length === 0 && elapsed == null) return null;
@@ -103,10 +108,10 @@ function ThoughtToggle({ events, elapsed }: { events: AgentEvent[]; elapsed?: nu
     <div>
       <button type="button" className={s.thoughtToggle} onClick={() => setOpen((v) => !v)}>
         {open ? <ChevronDownIcon size={12} /> : <ChevronRightIcon size={12} />}
-        <span>{elapsed != null ? `Thought for ${elapsed}s` : "Reasoning"}</span>
+        <span>{elapsed != null ? t("chat.thought", { count: elapsed }) : t("chat.reasoning")}</span>
         {toolCalls.length > 0 && (
           <span>
-            · {toolCalls.length} tool{toolCalls.length !== 1 ? "s" : ""}
+            · {t("chat.toolsCount", { count: toolCalls.length })}
           </span>
         )}
       </button>
@@ -123,10 +128,11 @@ function ThoughtToggle({ events, elapsed }: { events: AgentEvent[]; elapsed?: nu
 
 /** Live trail while the turn is in flight. */
 function ThinkingTrail({ events }: { events: AgentEvent[] }) {
+  const { t } = useI18n();
   const lastCall = [...events].reverse().find((e) => e.type === "tool_call");
   const headline = lastCall
-    ? `Using ${lastCall.server ? `${lastCall.server} · ` : ""}${lastCall.tool}`
-    : "Thinking";
+    ? t("chat.using", { tool: `${lastCall.server ? `${lastCall.server} · ` : ""}${lastCall.tool}` })
+    : t("chat.thinking");
   const steps = events.filter((e) => e.type === "tool_call" || e.type === "tool_result");
 
   return (
@@ -187,6 +193,7 @@ function ActivityPanel({
   live: boolean;
   onClose: () => void;
 }) {
+  const { t } = useI18n();
   const items = events.filter(
     (e) => e.type === "tool_call" || e.type === "tool_result",
   );
@@ -196,16 +203,16 @@ function ActivityPanel({
       <div className={s.activityHeader}>
         <div className={s.activityTitle}>
           <ActivityIcon size={14} />
-          Activity
+          {t("chat.activity")}
           {live && <Spinner size={11} />}
           {elapsed != null && <span className={s.convMeta}>· {elapsed}s</span>}
         </div>
-        <IconButton label="Close activity panel" onClick={onClose}>
+        <IconButton label={t("chat.closeActivity")} onClick={onClose}>
           <XIcon size={14} />
         </IconButton>
       </div>
       <div className={s.activityBody}>
-        {items.length === 0 && <p className={s.activityEmpty}>No tool activity yet</p>}
+        {items.length === 0 && <p className={s.activityEmpty}>{t("chat.noToolActivity")}</p>}
         {items.map((ev, i) =>
           ev.type === "tool_call" ? (
             <div key={i} className={s.activityItem}>
@@ -226,7 +233,7 @@ function ActivityPanel({
                 <span className={ev.error ? s.stepErr : s.stepOk}>
                   {ev.error ? <AlertIcon size={11} /> : <CheckIcon size={11} />}
                 </span>
-                <span>{ev.error ? "Error" : "Result"}</span>
+                <span>{ev.error ? t("chat.error") : t("chat.result")}</span>
               </div>
               {ev.preview && <pre className={s.activityPre}>{ev.preview}</pre>}
             </div>
@@ -241,6 +248,31 @@ function ActivityPanel({
 
 const PROVIDERS = ["openai", "anthropic", "gemini", "deepseek", "ollama", "codex"];
 
+type ProviderModelField =
+  | "anthropic_model"
+  | "openai_model"
+  | "gemini_model"
+  | "deepseek_model"
+  | "ollama_model"
+  | "codex_model";
+
+export function providerModelField(provider: string): ProviderModelField {
+  switch (provider) {
+    case "anthropic":
+      return "anthropic_model";
+    case "openai":
+      return "openai_model";
+    case "gemini":
+      return "gemini_model";
+    case "deepseek":
+      return "deepseek_model";
+    case "codex":
+      return "codex_model";
+    default:
+      return "ollama_model";
+  }
+}
+
 function ModelSelector({
   provider,
   model,
@@ -250,6 +282,7 @@ function ModelSelector({
   model: string;
   onChange: (provider: string, model: string) => void;
 }) {
+  const { t } = useI18n();
   const [open, setOpen] = useState(false);
   const [models, setModels] = useState<Record<string, string[]>>({});
   const [loading, setLoading] = useState(false);
@@ -291,7 +324,7 @@ function ModelSelector({
     >
       <div className={s.modelMenu}>
         {loading ? (
-          <div className={s.modelLoading}>Loading models…</div>
+          <div className={s.modelLoading}>{t("chat.loadingModels")}</div>
         ) : (
           PROVIDERS.map((prov) => {
             const list = models[prov] ?? [];
@@ -340,6 +373,7 @@ function ConfirmationModal({
   onDecide: (approvalId: string, decision: string) => void;
   onExpire: () => void;
 }) {
+  const { t } = useI18n();
   const total = request.timeout_seconds || 60;
   const [remaining, setRemaining] = useState(total);
 
@@ -367,7 +401,7 @@ function ConfirmationModal({
       title={
         <>
           <ShieldIcon size={16} />
-          Confirm tool use
+           {t("chat.confirmTool")}
         </>
       }
       footer={
@@ -377,19 +411,19 @@ function ConfirmationModal({
               variant="ghost"
               onClick={() => onDecide(request.approval_id, "deny")}
             >
-              Deny
+               {t("chat.deny")}
             </Button>
             <Button
               variant="secondary"
               onClick={() => onDecide(request.approval_id, "once")}
             >
-              Approve once
+               {t("chat.approveOnce")}
             </Button>
             <Button
               variant="primary"
               onClick={() => onDecide(request.approval_id, "save")}
             >
-              Approve &amp; save
+               {t("chat.approveSave")}
             </Button>
           </>
         ) : (
@@ -398,13 +432,13 @@ function ConfirmationModal({
               variant="ghost"
               onClick={() => onDecide(request.approval_id, "deny")}
             >
-              Deny
+               {t("chat.deny")}
             </Button>
             <Button
               variant="primary"
               onClick={() => onDecide(request.approval_id, "approve")}
             >
-              Allow
+               {t("chat.allow")}
             </Button>
           </>
         )
@@ -423,14 +457,12 @@ function ConfirmationModal({
 
       {canSave && (
         <p className={s.confirmNote}>
-          <strong>Approve &amp; save</strong> adds this command to your allowlist so it
-          runs without asking next time. <strong>Approve once</strong> runs it just this
-          time. Manage the list under <em>Commands</em>.
+          {t("chat.confirmNote")}
         </p>
       )}
 
       <div className={cn(s.countdown, urgent && s.countdownUrgent)}>
-        <span>Auto-deny in {remaining}s</span>
+        <span>{t("chat.autoDeny", { count: remaining })}</span>
         <span className={s.countdownTrack}>
           <span
             className={cn(s.countdownFill, urgent && s.countdownFillUrgent)}
@@ -445,6 +477,7 @@ function ConfirmationModal({
 /* ---------------- screen ---------------- */
 
 export function Chat() {
+  const { intlLocale, t } = useI18n();
   const [sessionId, setSessionId] = useState<string>(getStoredSessionId);
   const [initialMessages, setInitialMessages] = useState<ChatMessage[]>([]);
   const [conversations, setConversations] = useState<ConversationSummary[]>([]);
@@ -488,16 +521,7 @@ export function Chat() {
       .then((cfg) => {
         const p = cfg.llm.default_provider;
         setProvider(p);
-        const m =
-          p === "anthropic"
-            ? cfg.llm.anthropic_model
-            : p === "openai"
-              ? cfg.llm.openai_model
-              : p === "gemini"
-                ? cfg.llm.gemini_model
-                : p === "deepseek"
-                  ? cfg.llm.deepseek_model
-                  : cfg.llm.ollama_model;
+        const m = cfg.llm[providerModelField(p)];
         if (m) setModel(m);
       })
       .catch(() => {
@@ -596,16 +620,7 @@ export function Chat() {
   const changeModel = async (nextProvider: string, nextModel: string) => {
     setProvider(nextProvider);
     setModel(nextModel);
-    const key =
-      nextProvider === "anthropic"
-        ? "anthropic_model"
-        : nextProvider === "openai"
-          ? "openai_model"
-          : nextProvider === "gemini"
-            ? "gemini_model"
-            : nextProvider === "deepseek"
-              ? "deepseek_model"
-              : "ollama_model";
+    const key = providerModelField(nextProvider);
     try {
       await api.updateLLM({ default_provider: nextProvider, [key]: nextModel });
     } catch {
@@ -634,16 +649,16 @@ export function Chat() {
   const title = activeConvId
     ? (conversations.find((c) => c.id === activeConvId)?.title ?? "Chat")
     : messages.length > 0
-      ? "New conversation"
-      : "New chat";
+      ? t("chat.newConversation")
+      : t("chat.newChat");
 
   return (
     <div className={s.chat}>
-      <aside className={s.convSidebar}>
+      <aside className={s.convSidebar} aria-label={t("chat.conversations")}>
         <div className={s.convHeader}>
           <Button variant="primary" size="sm" fullWidth onClick={startNewChat}>
             <PlusIcon size={14} />
-            New chat
+            {t("chat.newChat")}
           </Button>
         </div>
 
@@ -651,44 +666,46 @@ export function Chat() {
           <span className={s.searchIcon}>
             <SearchIcon size={13} />
           </span>
-          <input
+           <input
             className={s.searchInput}
             value={search}
             onChange={(e) => setSearch(e.target.value)}
-            placeholder="Search chats"
+             placeholder={t("chat.searchChats")}
+             aria-label={t("chat.searchConversations")}
           />
         </div>
 
-        <div className={s.groupHeader}>Recent</div>
+        <div className={s.groupHeader}>{t("chat.recent")}</div>
 
         <div className={s.convList}>
           {filtered.length === 0 && (
-            <p className={s.convEmpty}>{search ? "No matches" : "No conversations yet"}</p>
+            <p className={s.convEmpty}>{search ? t("chat.noMatches") : t("chat.noConversations")}</p>
           )}
           {filtered.map((conv) => (
             <div
               key={conv.id}
-              role="button"
-              tabIndex={0}
-              onClick={() => void openConversation(conv)}
-              onKeyDown={(e) => {
-                if (e.key === "Enter" || e.key === " ") void openConversation(conv);
-              }}
               className={cn(
                 s.convRow,
                 conv.session_key === sessionId && s.convRowSelected,
               )}
             >
-              <span className={s.convIcon}>
-                <ChatIcon size={14} />
-              </span>
-              <div className={s.convText}>
-                <div className={s.convTitle}>{conv.title || "New conversation"}</div>
-                <div className={s.convMeta}>{formatRelative(conv.updated_at)}</div>
-              </div>
+              <button
+                type="button"
+                className={s.convOpen}
+                aria-current={conv.session_key === sessionId ? "true" : undefined}
+                onClick={() => void openConversation(conv)}
+              >
+                <span className={s.convIcon}>
+                  <ChatIcon size={14} />
+                </span>
+                <span className={s.convText}>
+                  <span className={s.convTitle}>{conv.title || t("chat.newConversation")}</span>
+                  <span className={s.convMeta}>{formatRelative(conv.updated_at, t, intlLocale)}</span>
+                </span>
+              </button>
               <span className={s.convDelete}>
                 <IconButton
-                  label="Delete conversation"
+                  label={t("chat.deleteConversation", { name: conv.title || t("chat.newConversation") })}
                   danger
                   disabled={deletingId === conv.id}
                   onClick={(e) => void deleteConv(e, conv.id)}
@@ -710,10 +727,10 @@ export function Chat() {
                 type="button"
                 className={s.headerButton}
                 onClick={() => void copySessionId()}
-                title="Copy this conversation's session id"
+                title={t("chat.copySession")}
               >
                 {idCopied ? <CheckIcon size={13} /> : <LinkIcon size={13} />}
-                {idCopied ? "Copied" : "Session id"}
+                {idCopied ? t("chat.copied") : t("chat.sessionId")}
               </button>
               {panelEvents.length > 0 && (
                 <button
@@ -725,7 +742,7 @@ export function Chat() {
                   onClick={() => setActivityOpen((v) => !v)}
                 >
                   <ActivityIcon size={13} />
-                  Activity
+                  {t("chat.activity")}
                   {thinking && <Spinner size={10} />}
                   {panelElapsed != null && <span>· {panelElapsed}s</span>}
                 </button>
@@ -733,17 +750,16 @@ export function Chat() {
             </div>
           </div>
 
-          <div className={s.scroll} ref={scrollRef}>
+          <div className={s.scroll} ref={scrollRef} aria-live="polite" aria-busy={thinking}>
             <div className={s.thread}>
               {messages.length === 0 && !thinking && (
                 <div className={s.hero}>
                   <div className={s.heroMark}>
                     <SparkleIcon size={22} />
                   </div>
-                  <p className={s.heroTitle}>How can I help?</p>
+                  <p className={s.heroTitle}>{t("chat.heroTitle")}</p>
                   <p className={s.heroBody}>
-                    Ask anything — I can reach your files, run allowlisted commands, and
-                    use every connected MCP server.
+                    {t("chat.heroBody")}
                   </p>
                 </div>
               )}
@@ -771,7 +787,8 @@ export function Chat() {
                 }}
                 rows={1}
                 disabled={status !== "open"}
-                placeholder={status === "open" ? "Ask anything…" : "Connecting…"}
+                placeholder={status === "open" ? t("chat.ask") : t("common.connecting")}
+                aria-label={t("chat.message")}
               />
               <div className={s.composerBar}>
                 <ModelSelector
@@ -787,7 +804,7 @@ export function Chat() {
                   type="submit"
                   className={s.sendButton}
                   disabled={status !== "open" || !input.trim()}
-                  aria-label="Send"
+                  aria-label={t("deck.send")}
                 >
                   <SendIcon size={14} />
                 </button>
@@ -796,10 +813,10 @@ export function Chat() {
 
             {authFailed ? (
               <p className={cn(s.connectionNote, s.connectionNoteError)}>
-                Chat rejected this session. Sign out and back in.
+                {t("chat.rejected")}
               </p>
             ) : status !== "open" ? (
-              <p className={s.connectionNote}>Reconnecting to Dax…</p>
+              <p className={s.connectionNote}>{t("chat.reconnecting")}</p>
             ) : null}
           </div>
         </div>

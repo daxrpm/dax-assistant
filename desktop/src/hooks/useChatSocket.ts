@@ -1,5 +1,6 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useSyncExternalStore } from "react";
 import { currentToken, getWsUrl } from "../api/connection";
+import { DemandLifecycle } from "../stores/demandLifecycle";
 
 export interface ChatMessage {
   id: string;
@@ -31,72 +32,58 @@ export interface ConfirmationRequest {
 
 export type ChatStatus = "connecting" | "open" | "closed";
 
+interface ChatSnapshot {
+  messages: ChatMessage[];
+  status: ChatStatus;
+  thinking: boolean;
+  confirmation: ConfirmationRequest | null;
+  authFailed: boolean;
+  liveEvents: AgentEvent[];
+}
+
 let idSeq = 0;
 const nextId = () => `m${Date.now()}-${++idSeq}`;
 
-/**
- * `/ws/chat` client — ported from `web/src/hooks/useChatSocket.ts`.
- *
- * Two desktop-specific changes:
- *   1. The URL is derived from the configured backend origin and carries
- *      `?token=`, since the webview has no same-origin cookie (PLAN.md 3.5).
- *   2. Close code 1008 (auth rejected) stops the reconnect loop and is surfaced
- *      via `authFailed` — retrying every 2s with a token the server already
- *      refused just spins.
- */
-export function useChatSocket(sessionId: string, initialMessages: ChatMessage[] = []) {
-  const [messages, setMessages] = useState<ChatMessage[]>(initialMessages);
-  const [status, setStatus] = useState<ChatStatus>("connecting");
-  const [thinking, setThinking] = useState(false);
-  const [confirmation, setConfirmation] = useState<ConfirmationRequest | null>(null);
-  const [authFailed, setAuthFailed] = useState(false);
-  // Live events for the in-flight response — exposed as STATE so the UI shows
-  // tool calls happening in real time, not just after the answer arrives.
-  const [liveEvents, setLiveEvents] = useState<AgentEvent[]>([]);
+export const COMMAND_DECK_SESSION_ID = "dax:command-deck";
 
-  const pendingEvents = useRef<AgentEvent[]>([]);
-  const thinkingElapsed = useRef<number | undefined>(undefined);
-  const socketRef = useRef<WebSocket | null>(null);
-  const retryRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const closedRef = useRef(false);
-  const sessionIdRef = useRef(sessionId);
-  const initialRef = useRef(initialMessages);
-  initialRef.current = initialMessages;
+export function shouldAcceptChatFrame(
+  frame: Record<string, unknown>,
+  sessionId: string,
+): boolean {
+  return typeof frame.session_id !== "string" || frame.session_id === sessionId;
+}
 
-  // Switching conversations resets the transcript but keeps the socket: the
-  // session id travels per-message, not per-connection.
-  useEffect(() => {
-    sessionIdRef.current = sessionId;
-    setMessages(initialRef.current);
-    setThinking(false);
-    pendingEvents.current = [];
-    setLiveEvents([]);
-  }, [sessionId]);
+export function createChatStore(sessionId: string, initialMessages: ChatMessage[] = []) {
+  let snapshot: ChatSnapshot = {
+    messages: initialMessages,
+    status: "connecting",
+    thinking: false,
+    confirmation: null,
+    authFailed: false,
+    liveEvents: [],
+  };
+  let socket: WebSocket | null = null;
+  let retry: ReturnType<typeof setTimeout> | null = null;
+  let stopped = true;
+  let pendingEvents: AgentEvent[] = [];
+  let thinkingElapsed: number | undefined;
 
-  const connect = useCallback(() => {
-    if (closedRef.current) return;
+  const update = (patch: Partial<ChatSnapshot>) => {
+    snapshot = { ...snapshot, ...patch };
+    lifecycle.emit();
+  };
+  const connect = () => {
+    if (stopped || socket) return;
     const ws = new WebSocket(getWsUrl("/ws/chat", currentToken()));
-    socketRef.current = ws;
-    setStatus("connecting");
-
-    ws.onopen = () => {
-      setStatus("open");
-      setAuthFailed(false);
-    };
-
+    socket = ws;
+    update({ status: "connecting" });
+    ws.onopen = () => update({ status: "open", authFailed: false });
     ws.onclose = (event) => {
-      setStatus("closed");
-      // 1008 = auth rejected (src/dax/web/routes/chat.py). Reconnecting with the
-      // same credential cannot succeed, so stop and let the UI say so.
-      if (event.code === 1008) {
-        setAuthFailed(true);
-        return;
-      }
-      if (!closedRef.current) retryRef.current = setTimeout(connect, 2000);
+      if (socket === ws) socket = null;
+      update({ status: "closed", authFailed: event.code === 1008 });
+      if (event.code !== 1008 && !stopped) retry = setTimeout(connect, 2000);
     };
-
     ws.onerror = () => ws.close();
-
     ws.onmessage = (event) => {
       let data: Record<string, unknown>;
       try {
@@ -104,115 +91,123 @@ export function useChatSocket(sessionId: string, initialMessages: ChatMessage[] 
       } catch {
         return;
       }
-
+      // This socket never changes session, so even legacy untagged frames cannot
+      // leak into another conversation when the UI switches routes or threads.
+      if (!shouldAcceptChatFrame(data, sessionId)) return;
       if (data.type === "tool_confirmation_request") {
-        setConfirmation(data as unknown as ConfirmationRequest);
-        return;
-      }
-
-      if (data.type === "agent_event") {
-        const ev = data.event as AgentEvent;
-        if (ev.type === "thinking") {
-          setThinking(true);
-        } else if (ev.type === "done") {
-          thinkingElapsed.current = ev.elapsed_s;
+        update({ confirmation: data as unknown as ConfirmationRequest });
+      } else if (data.type === "agent_event") {
+        const agentEvent = data.event as AgentEvent;
+        if (agentEvent.type === "thinking") {
+          update({ thinking: true });
+        } else if (agentEvent.type === "done") {
+          thinkingElapsed = agentEvent.elapsed_s;
         } else {
-          pendingEvents.current = [...pendingEvents.current, ev];
-          setLiveEvents(pendingEvents.current);
+          pendingEvents = [...pendingEvents, agentEvent];
+          update({ liveEvents: pendingEvents });
         }
-        return;
-      }
-
-      if (
-        data.type === "message" &&
+      } else if (
         data.role === "assistant" &&
-        typeof data.content === "string"
+        typeof data.content === "string" &&
+        (data.type === "message" || !data.type)
       ) {
-        const events = [...pendingEvents.current];
-        const elapsed = thinkingElapsed.current;
-        pendingEvents.current = [];
-        thinkingElapsed.current = undefined;
-        setThinking(false);
-        setLiveEvents([]);
-        setMessages((prev) => [
-          ...prev,
-          {
-            id: nextId(),
-            role: "assistant",
-            content: data.content as string,
-            timestamp: (data.timestamp as string) ?? new Date().toISOString(),
-            agentEvents: events.length > 0 ? events : undefined,
-            thinkingElapsed: elapsed,
-          },
-        ]);
-        return;
-      }
-
-      // Legacy frame with no `type` field — still emitted by older paths.
-      if (!data.type && data.role === "assistant" && typeof data.content === "string") {
-        setThinking(false);
-        setMessages((prev) => [
-          ...prev,
-          {
-            id: nextId(),
-            role: "assistant",
-            content: data.content as string,
-            timestamp: (data.timestamp as string) ?? new Date().toISOString(),
-          },
-        ]);
+        const message: ChatMessage = {
+          id: nextId(),
+          role: "assistant",
+          content: data.content,
+          timestamp: (data.timestamp as string) ?? new Date().toISOString(),
+        };
+        if (data.type === "message" && pendingEvents.length > 0) {
+          message.agentEvents = pendingEvents;
+        }
+        if (data.type === "message" && thinkingElapsed !== undefined) {
+          message.thinkingElapsed = thinkingElapsed;
+        }
+        pendingEvents = [];
+        thinkingElapsed = undefined;
+        update({
+          messages: [...snapshot.messages, message],
+          thinking: false,
+          liveEvents: [],
+        });
       }
     };
-  }, []);
-
-  useEffect(() => {
-    closedRef.current = false;
-    connect();
-    return () => {
-      closedRef.current = true;
-      if (retryRef.current) clearTimeout(retryRef.current);
-      socketRef.current?.close();
-    };
-  }, [connect]);
-
-  const send = useCallback((content: string) => {
-    const ws = socketRef.current;
-    if (!ws || ws.readyState !== WebSocket.OPEN) return;
-    pendingEvents.current = [];
-    thinkingElapsed.current = undefined;
-    setLiveEvents([]);
-    setMessages((prev) => [
-      ...prev,
-      { id: nextId(), role: "user", content, timestamp: new Date().toISOString() },
-    ]);
-    setThinking(true);
-    ws.send(
-      JSON.stringify({ content, language: "auto", session_id: sessionIdRef.current }),
-    );
-  }, []);
-
-  const respondConfirmation = useCallback((approvalId: string, decision: string) => {
-    socketRef.current?.send(
-      JSON.stringify({ type: "tool_confirmation", approval_id: approvalId, decision }),
-    );
-    setConfirmation(null);
-  }, []);
-
-  /**
-   * Drop the modal without answering — used when the countdown reaches zero.
-   * The backend has already denied by then (`ApprovalManager` fail-safe), so
-   * sending a late decision would be meaningless.
-   */
-  const expireConfirmation = useCallback(() => setConfirmation(null), []);
+  };
+  const lifecycle = new DemandLifecycle(
+    () => {
+      stopped = false;
+      connect();
+    },
+    () => {
+      stopped = true;
+      if (retry) clearTimeout(retry);
+      retry = null;
+      const active = socket;
+      socket = null;
+      active?.close();
+      if (snapshot.status !== "closed") update({ status: "closed" });
+    },
+  );
 
   return {
-    messages,
-    status,
-    authFailed,
-    thinking,
-    liveEvents,
-    confirmation,
-    send,
-    respondConfirmation,
-    expireConfirmation,
+    sessionId,
+    subscribe: lifecycle.subscribe,
+    getSnapshot: () => snapshot,
+    send(content: string) {
+      if (!socket || socket.readyState !== WebSocket.OPEN) return;
+      pendingEvents = [];
+      thinkingElapsed = undefined;
+      update({
+        messages: [
+          ...snapshot.messages,
+          { id: nextId(), role: "user", content, timestamp: new Date().toISOString() },
+        ],
+        thinking: true,
+        liveEvents: [],
+      });
+      socket.send(JSON.stringify({ content, language: "auto", session_id: sessionId }));
+    },
+    respondConfirmation(approvalId: string, decision: string) {
+      socket?.send(JSON.stringify({
+        type: "tool_confirmation",
+        approval_id: approvalId,
+        decision,
+      }));
+      update({ confirmation: null });
+    },
+    expireConfirmation: () => update({ confirmation: null }),
+    shutdown: () => lifecycle.shutdown(),
+  };
+}
+
+export type ChatStore = ReturnType<typeof createChatStore>;
+const chatStores = new Map<string, ChatStore>();
+
+export function getChatStore(sessionId: string, initialMessages: ChatMessage[] = []) {
+  let store = chatStores.get(sessionId);
+  if (!store) {
+    store = createChatStore(sessionId, initialMessages);
+    chatStores.set(sessionId, store);
+  }
+  return store;
+}
+
+export function shutdownChatStores() {
+  for (const store of chatStores.values()) store.shutdown();
+  chatStores.clear();
+}
+
+export function useChatSocket(sessionId: string, initialMessages: ChatMessage[] = []) {
+  const store = getChatStore(sessionId, initialMessages);
+  const snapshot = useSyncExternalStore(
+    store.subscribe,
+    store.getSnapshot,
+    store.getSnapshot,
+  );
+  return {
+    ...snapshot,
+    send: store.send,
+    respondConfirmation: store.respondConfirmation,
+    expireConfirmation: store.expireConfirmation,
   };
 }

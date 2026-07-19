@@ -26,6 +26,7 @@ import {
 } from "../design/primitives";
 import p from "../screens/page.module.css";
 import s from "./McpServers.module.css";
+import { useI18n } from "../i18n/I18n";
 
 /* ---------------- text ↔ dict helpers (ported from web/McpTab.tsx) ---------------- */
 
@@ -134,6 +135,7 @@ function ServerForm({
   setDraft: (next: ServerDraft) => void;
   editing: boolean;
 }) {
+  const { text } = useI18n();
   const http = draft.transport !== "stdio";
   const set = <K extends keyof ServerDraft>(key: K, value: ServerDraft[K]) =>
     setDraft({ ...draft, [key]: value });
@@ -141,7 +143,7 @@ function ServerForm({
   return (
     <div className={p.stack}>
       <div className={p.row2}>
-        <Field label="Name">
+        <Field label={text("Nombre", "Name")}>
           {(id) => (
             <TextInput
               id={id}
@@ -152,15 +154,15 @@ function ServerForm({
             />
           )}
         </Field>
-        <Field label="Transport">
+        <Field label={text("Transporte", "Transport")}>
           {(id) => (
             <Select
               id={id}
               value={draft.transport}
               onChange={(e) => set("transport", e.target.value)}
             >
-              <option value="stdio">stdio (subprocess)</option>
-              <option value="http">streamable HTTP</option>
+              <option value="stdio">stdio ({text("subproceso", "subprocess")})</option>
+              <option value="http">HTTP {text("transmitible", "streamable")}</option>
             </Select>
           )}
         </Field>
@@ -179,8 +181,8 @@ function ServerForm({
             )}
           </Field>
           <Field
-            label="Headers"
-            description="One per line, `Name: value`. Stored encrypted — leave a masked value untouched to keep it."
+            label={text("Cabeceras", "Headers")}
+            description={text("Una por línea, `Nombre: valor`. Se guardan cifradas; no cambies un valor oculto para conservarlo.", "One per line, `Name: value`. Stored encrypted — leave a masked value untouched to keep it.")}
           >
             {(id) => (
               <TextArea
@@ -195,7 +197,7 @@ function ServerForm({
         </>
       ) : (
         <>
-          <Field label="Command">
+          <Field label={text("Comando", "Command")}>
             {(id) => (
               <TextInput
                 id={id}
@@ -205,7 +207,7 @@ function ServerForm({
               />
             )}
           </Field>
-          <Field label="Arguments" description="Space separated.">
+          <Field label={text("Argumentos", "Arguments")} description={text("Separados por espacios.", "Space separated.")}>
             {(id) => (
               <TextInput
                 id={id}
@@ -219,8 +221,8 @@ function ServerForm({
       )}
 
       <Field
-        label="Environment"
-        description="One per line, `KEY=value`. Every value is stored encrypted."
+        label={text("Entorno", "Environment")}
+        description={text("Una variable por línea, `CLAVE=valor`. Todos los valores se guardan cifrados.", "One per line, `KEY=value`. Every value is stored encrypted.")}
       >
         {(id) => (
           <TextArea
@@ -237,17 +239,17 @@ function ServerForm({
         <Checkbox
           checked={draft.enabled}
           onChange={(v) => set("enabled", v)}
-          label="Enabled"
+          label={text("Activado", "Enabled")}
         />
         <Checkbox
           checked={draft.export_codex}
           onChange={(v) => set("export_codex", v)}
-          label="Export to Codex"
+          label={text("Exportar a Codex", "Export to Codex")}
         />
         <Checkbox
           checked={draft.export_claude}
           onChange={(v) => set("export_claude", v)}
-          label="Export to Claude"
+          label={text("Exportar a Claude", "Export to Claude")}
         />
       </div>
     </div>
@@ -265,6 +267,7 @@ function ServerForm({
  * explicitly not an option.
  */
 function OAuthControl({ name }: { name: string }) {
+  const { text } = useI18n();
   const toast = useToast();
   const [status, setStatus] = useState<{ authenticated: boolean; expired?: boolean } | null>(
     null,
@@ -288,7 +291,7 @@ function OAuthControl({ name }: { name: string }) {
       const { authorization_url } = await api.startMcpAuth(name);
       const { openUrl } = await import("@tauri-apps/plugin-opener");
       await openUrl(authorization_url);
-      toast.show("Finish signing in in your browser", "neutral");
+      toast.show(text("Termina de iniciar sesión en el navegador", "Finish signing in in your browser"), "neutral");
 
       // Poll until the backend records the token. Capped so a user who
       // abandons the browser tab does not leave a timer running forever.
@@ -316,7 +319,7 @@ function OAuthControl({ name }: { name: string }) {
       }, 2000);
     } catch (err) {
       setPolling(false);
-      toast.show(err instanceof Error ? err.message : "OAuth failed", "danger");
+      toast.show(err instanceof Error ? err.message : text("Falló OAuth", "OAuth failed"), "danger");
     }
   };
 
@@ -326,7 +329,7 @@ function OAuthControl({ name }: { name: string }) {
     return (
       <div className={p.actions}>
         <Badge tone="success" dot>
-          Authenticated
+          {text("Autenticado", "Authenticated")}
         </Badge>
         <Button
           size="sm"
@@ -335,10 +338,10 @@ function OAuthControl({ name }: { name: string }) {
             void api
               .logoutMcp(name)
               .then(refresh)
-              .catch(() => toast.show("Sign out failed", "danger"));
+               .catch(() => toast.show(text("No se pudo cerrar sesión", "Sign out failed"), "danger"));
           }}
         >
-          Sign out
+           {text("Cerrar sesión", "Sign out")}
         </Button>
       </div>
     );
@@ -346,9 +349,9 @@ function OAuthControl({ name }: { name: string }) {
 
   return (
     <div className={p.actions}>
-      {status.expired && <Badge tone="warning">Token expired</Badge>}
+      {status.expired && <Badge tone="warning">{text("Token caducado", "Token expired")}</Badge>}
       <Button size="sm" variant="secondary" loading={polling} onClick={() => void start()}>
-        {polling ? "Waiting for browser…" : "Authenticate"}
+        {polling ? text("Esperando al navegador…", "Waiting for browser…") : text("Autenticar", "Authenticate")}
       </Button>
     </div>
   );
@@ -368,6 +371,7 @@ export function McpServers({
   prefill?: ServerDraft | null;
   onPrefillConsumed?: () => void;
 }) {
+  const { text } = useI18n();
   const toast = useToast();
   const [statuses, setStatuses] = useState<MCPServerStatus[]>([]);
   const [draft, setDraft] = useState<ServerDraft | null>(null);
@@ -409,7 +413,7 @@ export function McpServers({
       onSaved();
       loadStatuses();
     } catch (err) {
-      toast.show(err instanceof Error ? err.message : "Save failed", "danger");
+      toast.show(err instanceof Error ? err.message : text("No se pudo guardar", "Save failed"), "danger");
     } finally {
       setBusy(null);
     }
@@ -419,10 +423,10 @@ export function McpServers({
     setBusy(name);
     try {
       const result = await api.reconnectMcpServer(name);
-      toast.show(`${name}: ${result.tools} tools`, "success");
+      toast.show(text(`${name}: ${result.tools} herramientas`, `${name}: ${result.tools} tools`), "success");
       loadStatuses();
     } catch (err) {
-      toast.show(err instanceof Error ? err.message : "Reconnect failed", "danger");
+      toast.show(err instanceof Error ? err.message : text("No se pudo reconectar", "Reconnect failed"), "danger");
     } finally {
       setBusy(null);
     }
@@ -432,11 +436,11 @@ export function McpServers({
     setBusy(name);
     try {
       await api.deleteMcpServer(name);
-      toast.show(`${name} removed`, "success");
+      toast.show(text(`${name} eliminado`, `${name} removed`), "success");
       onSaved();
       loadStatuses();
     } catch (err) {
-      toast.show(err instanceof Error ? err.message : "Delete failed", "danger");
+      toast.show(err instanceof Error ? err.message : text("No se pudo eliminar", "Delete failed"), "danger");
     } finally {
       setBusy(null);
     }
@@ -449,7 +453,7 @@ export function McpServers({
       onSaved();
       loadStatuses();
     } catch (err) {
-      toast.show(err instanceof Error ? err.message : "Update failed", "danger");
+      toast.show(err instanceof Error ? err.message : text("No se pudo actualizar", "Update failed"), "danger");
     } finally {
       setBusy(null);
     }
@@ -458,8 +462,8 @@ export function McpServers({
   return (
     <Panel>
       <PanelHeader
-        title="Servers"
-        subtitle={`${servers.length} configured`}
+        title={text("Servidores", "Servers")}
+        subtitle={text(`${servers.length} configurado(s)`, `${servers.length} configured`)}
         actions={
           <Button
             size="sm"
@@ -470,13 +474,13 @@ export function McpServers({
             }}
           >
             <PlusIcon size={13} />
-            Add server
+            {text("Añadir servidor", "Add server")}
           </Button>
         }
       />
       <PanelBody>
         {servers.length === 0 && (
-          <p className={p.hint}>No MCP servers yet. Add one, or install from the Marketplace.</p>
+          <p className={p.hint}>{text("Aún no hay servidores MCP. Añade uno o instálalo desde Marketplace.", "No MCP servers yet. Add one, or install from the Marketplace.")}</p>
         )}
 
         <div className={s.table}>
@@ -494,11 +498,11 @@ export function McpServers({
                     {name}
                   </button>
                   <Badge tone={status?.connected ? "success" : "neutral"} dot>
-                    {status?.connected ? "Connected" : "Offline"}
+                    {status?.connected ? text("Conectado", "Connected") : text("Fuera de línea", "Offline")}
                   </Badge>
                   <span className={s.serverMeta}>{cfg.transport}</span>
                   <span className={s.serverMeta}>
-                    {status?.tool_count ?? 0} tool{(status?.tool_count ?? 0) !== 1 ? "s" : ""}
+                    {text(`${status?.tool_count ?? 0} herramienta(s)`, `${status?.tool_count ?? 0} tool(s)`)}
                   </span>
 
                   <div className={s.serverActions}>
@@ -506,17 +510,17 @@ export function McpServers({
                       checked={cfg.enabled}
                       onChange={(v) => void toggleEnabled(name, cfg, v)}
                       disabled={busy === name}
-                      aria-label={`Enable ${name}`}
+                      aria-label={text(`Activar ${name}`, `Enable ${name}`)}
                     />
                     <IconButton
-                      label={`Reconnect ${name}`}
+                      label={text(`Reconectar ${name}`, `Reconnect ${name}`)}
                       disabled={busy === name}
                       onClick={() => void reconnect(name)}
                     >
                       <RefreshIcon size={13} />
                     </IconButton>
                     <IconButton
-                      label={`Edit ${name}`}
+                      label={text(`Editar ${name}`, `Edit ${name}`)}
                       onClick={() => {
                         setDraft(draftFromConfig(name, cfg));
                         setEditing(true);
@@ -525,7 +529,7 @@ export function McpServers({
                       <SettingsIcon size={13} />
                     </IconButton>
                     <IconButton
-                      label={`Delete ${name}`}
+                      label={text(`Eliminar ${name}`, `Delete ${name}`)}
                       danger
                       disabled={busy === name}
                       onClick={() => void remove(name)}
@@ -553,8 +557,8 @@ export function McpServers({
                       </div>
                     )}
                     <div className={p.actions}>
-                      {cfg.export_codex && <Badge tone="accent">Codex export</Badge>}
-                      {cfg.export_claude && <Badge tone="accent">Claude export</Badge>}
+                      {cfg.export_codex && <Badge tone="accent">{text("Exportar a Codex", "Codex export")}</Badge>}
+                      {cfg.export_claude && <Badge tone="accent">{text("Exportar a Claude", "Claude export")}</Badge>}
                     </div>
                   </div>
                 )}
@@ -567,12 +571,12 @@ export function McpServers({
       <Modal
         open={draft !== null}
         wide
-        title={editing ? `Edit ${draft?.name}` : "Add MCP server"}
+         title={editing ? text(`Editar ${draft?.name}`, `Edit ${draft?.name}`) : text("Añadir servidor MCP", "Add MCP server")}
         onClose={() => setDraft(null)}
         footer={
           <>
             <Button variant="ghost" onClick={() => setDraft(null)}>
-              Cancel
+               {text("Cancelar", "Cancel")}
             </Button>
             <Button
               variant="primary"
@@ -581,7 +585,7 @@ export function McpServers({
               onClick={() => void save()}
             >
               <CheckIcon size={13} />
-              Save
+               {text("Guardar", "Save")}
             </Button>
           </>
         }

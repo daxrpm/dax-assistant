@@ -20,6 +20,7 @@ import {
 import { cn } from "../../lib/cn";
 import p from "../page.module.css";
 import s from "./MemoryTab.module.css";
+import { useI18n } from "../../i18n/I18n";
 
 const TYPES: MemoryType[] = ["user", "feedback", "project", "reference"];
 
@@ -43,6 +44,7 @@ function emptyDraft(): Draft {
 }
 
 export function MemoryTab() {
+  const { text } = useI18n();
   const toast = useToast();
   const [entries, setEntries] = useState<MemoryEntry[]>([]);
   const [loading, setLoading] = useState(true);
@@ -55,7 +57,7 @@ export function MemoryTab() {
     try {
       setEntries(await api.listMemory());
     } catch (err) {
-      toast.show(err instanceof Error ? err.message : "Failed to load memory", "danger");
+       toast.show(err instanceof Error ? err.message : text("No se pudo cargar la memoria", "Failed to load memory"), "danger");
     } finally {
       setLoading(false);
     }
@@ -117,11 +119,11 @@ export function MemoryTab() {
           body: draft.body,
         });
       }
-      toast.show("Memory saved", "success");
+      toast.show(text("Memoria guardada", "Memory saved"), "success");
       setDraft(null);
       await load();
     } catch (err) {
-      toast.show(err instanceof Error ? err.message : "Save failed", "danger");
+      toast.show(err instanceof Error ? err.message : text("No se pudo guardar", "Save failed"), "danger");
     } finally {
       setSaving(false);
     }
@@ -130,23 +132,23 @@ export function MemoryTab() {
   const remove = async (slug: string) => {
     try {
       await api.deleteMemory(slug);
-      toast.show("Memory deleted", "success");
+      toast.show(text("Memoria eliminada", "Memory deleted"), "success");
       if (draft?.slug === slug) setDraft(null);
       await load();
     } catch (err) {
-      toast.show(err instanceof Error ? err.message : "Delete failed", "danger");
+      toast.show(err instanceof Error ? err.message : text("No se pudo eliminar", "Delete failed"), "danger");
     }
   };
 
   return (
     <Panel>
       <PanelHeader
-        title="Memory"
-        subtitle={`${entries.length} entr${entries.length === 1 ? "y" : "ies"}`}
+        title={text("Memoria", "Memory")}
+        subtitle={text(`${entries.length} entrada(s)`, `${entries.length} entries`)}
         actions={
           <Button size="sm" variant="primary" onClick={() => setDraft(emptyDraft())}>
             <PlusIcon size={13} />
-            New entry
+            {text("Nueva entrada", "New entry")}
           </Button>
         }
       />
@@ -160,7 +162,8 @@ export function MemoryTab() {
               <TextInput
                 className={s.searchInput}
                 value={search}
-                placeholder="Search memory"
+                placeholder={text("Buscar en la memoria", "Search memory")}
+                aria-label={text("Buscar en la memoria", "Search memory")}
                 onChange={(e) => setSearch(e.target.value)}
               />
             </div>
@@ -168,30 +171,31 @@ export function MemoryTab() {
             {loading ? (
               <Spinner size={16} />
             ) : filtered.length === 0 ? (
-              <p className={p.hint}>{search ? "No matches" : "No memory entries yet."}</p>
+              <p className={p.hint}>{search ? text("Sin coincidencias", "No matches") : text("Aún no hay entradas de memoria.", "No memory entries yet.")}</p>
             ) : (
-              <div className={s.entryList}>
+              <div className={s.entryList} aria-label={text("Entradas de memoria", "Memory entries")}>
                 {filtered.map((entry) => (
                   <div
                     key={entry.slug}
-                    role="button"
-                    tabIndex={0}
-                    onClick={() => void open(entry)}
-                    onKeyDown={(e) => {
-                      if (e.key === "Enter") void open(entry);
-                    }}
                     className={cn(
                       s.entry,
                       draft?.slug === entry.slug && s.entrySelected,
                     )}
                   >
-                    <div className={s.entryHead}>
-                      <span className={s.entryName}>{entry.name}</span>
-                      <Badge tone={TYPE_TONE[entry.type]}>{entry.type}</Badge>
-                    </div>
-                    {entry.description && (
-                      <p className={s.entryDesc}>{entry.description}</p>
-                    )}
+                    <button
+                      type="button"
+                      className={s.entryOpen}
+                      aria-pressed={draft?.slug === entry.slug}
+                      onClick={() => void open(entry)}
+                    >
+                      <span className={s.entryHead}>
+                        <span className={s.entryName}>{entry.name}</span>
+                        <Badge tone={TYPE_TONE[entry.type]}>{entry.type}</Badge>
+                      </span>
+                      {entry.description && (
+                        <span className={s.entryDesc}>{entry.description}</span>
+                      )}
+                    </button>
                     <span className={s.entryDelete}>
                       <IconButton
                         label={`Delete ${entry.name}`}
@@ -214,13 +218,13 @@ export function MemoryTab() {
             {!draft ? (
               <EmptyState
                 icon={<BrainIcon size={20} />}
-                title="No entry selected"
-                body="Pick an entry to edit it, or create a new one. Entries are markdown and are injected into the assistant's context."
+                title={text("Ninguna entrada seleccionada", "No entry selected")}
+                body={text("Selecciona una entrada para editarla o crea una nueva. Son markdown y se incorporan al contexto del asistente.", "Pick an entry to edit it, or create a new one. Entries are markdown and are injected into the assistant's context.")}
               />
             ) : (
               <div className={p.rows}>
                 <div className={p.row2}>
-                  <Field label="Title">
+                   <Field label={text("Título", "Title")}>
                     {(id) => (
                       <TextInput
                         id={id}
@@ -229,7 +233,7 @@ export function MemoryTab() {
                       />
                     )}
                   </Field>
-                  <Field label="Type">
+                   <Field label={text("Tipo", "Type")}>
                     {(id) => (
                       <Select
                         id={id}
@@ -248,7 +252,7 @@ export function MemoryTab() {
                   </Field>
                 </div>
 
-                <Field label="Description" description="One line, shown in the list.">
+                 <Field label={text("Descripción", "Description")} description={text("Una línea, visible en la lista.", "One line, shown in the list.")}>
                   {(id) => (
                     <TextInput
                       id={id}
@@ -260,7 +264,7 @@ export function MemoryTab() {
                   )}
                 </Field>
 
-                <Field label="Body" description="Markdown.">
+                 <Field label={text("Contenido", "Body")} description="Markdown.">
                   {(id) => (
                     <TextArea
                       id={id}
@@ -273,7 +277,7 @@ export function MemoryTab() {
 
                 <div className={p.actionsEnd}>
                   <Button variant="ghost" onClick={() => setDraft(null)}>
-                    Cancel
+                     {text("Cancelar", "Cancel")}
                   </Button>
                   <Button
                     variant="primary"
@@ -281,7 +285,7 @@ export function MemoryTab() {
                     disabled={!draft.name.trim() || saving}
                     onClick={() => void save()}
                   >
-                    Save
+                     {text("Guardar", "Save")}
                   </Button>
                 </div>
               </div>

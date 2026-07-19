@@ -149,5 +149,32 @@
 .scrollPage {
   height: 100%;
   overflow-y: auto;
-  padding: var(--space-8);
+  padding: var(--space-6);
+}
+
+@media (max-width: 900px) {
+  .scrollPage {
+    padding: var(--space-5);
+  }
+}
+
+@media (max-width: 720px) {
+  .scrollPage {
+    padding: var(--space-4);
+  }
+
+  .page {
+    gap: var(--space-5);
+  }
+
+  .row2 {
+    grid-template-columns: minmax(0, 1fr);
+    gap: var(--space-4);
+  }
+
+  .spread,
+  .actions {
+    align-items: stretch;
+    flex-wrap: wrap;
+  }
 }

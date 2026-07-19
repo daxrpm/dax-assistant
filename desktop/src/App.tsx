@@ -1,34 +1,90 @@
-import { useCallback, useEffect, useState } from "react";
+import {
+  lazy,
+  Suspense,
+  useCallback,
+  useEffect,
+  useMemo,
+  useState,
+  useSyncExternalStore,
+} from "react";
 import { ApiError, api } from "./api/client";
-import { clearToken, loadToken } from "./api/connection";
+import {
+  clearToken,
+  getConnectionSettings,
+  loadConnectionSettings,
+  loadToken,
+  resolveConnection,
+} from "./api/connection";
 import type { AuthStatus } from "./api/types";
 import { AppShell } from "./components/AppShell";
-import { Spinner, ToastProvider } from "./design/primitives";
+import { CommandDeck } from "./components/CommandDeck";
+import { WindowFrame } from "./components/WindowFrame";
+import {
+  CommandPalette,
+  usePaletteShortcut,
+  type PaletteAction,
+} from "./components/CommandPalette";
+import { Spinner, ToastProvider, useToast } from "./design/primitives";
 import { useHashRoute } from "./lib/useHashRoute";
 import { useTheme } from "./lib/useTheme";
-import { Chat } from "./screens/Chat";
+import { useI18n } from "./i18n/I18n";
+import { BackendConnection } from "./native/BackendConnection";
+import { Onboarding } from "./native/Onboarding";
+import { VoiceHud } from "./native/VoiceHud";
+import { MediaDuckingBridge } from "./native/mediaDucking";
+import { desktopRuntime, isTauriRuntime } from "./native/runtime";
+import {
+  createDisconnectMonitor,
+  sendNativeNotification,
+} from "./native/notifications";
+import { shutdownRealtimeStores } from "./stores/realtime";
 import { Commands } from "./screens/Commands";
 import { Dashboard } from "./screens/Dashboard";
 import { Login } from "./screens/Login";
-import { Logs } from "./screens/Logs";
-import { Marketplace } from "./screens/Marketplace";
-import { Mcp } from "./screens/Mcp";
-import { Settings } from "./screens/Settings";
 import s from "./App.module.css";
 
-type Phase = "booting" | "unauthenticated" | "authenticated" | "unreachable";
+const Chat = lazy(() => import("./screens/Chat").then((module) => ({ default: module.Chat })));
+const Logs = lazy(() => import("./screens/Logs").then((module) => ({ default: module.Logs })));
+const Marketplace = lazy(() =>
+  import("./screens/Marketplace").then((module) => ({ default: module.Marketplace })),
+);
+const Mcp = lazy(() => import("./screens/Mcp").then((module) => ({ default: module.Mcp })));
+const Settings = lazy(() =>
+  import("./screens/Settings").then((module) => ({ default: module.Settings })),
+);
+
+type Phase = "booting" | "onboarding" | "unauthenticated" | "authenticated" | "unreachable";
 
 function AppInner() {
   const [phase, setPhase] = useState<Phase>("booting");
   const [authStatus, setAuthStatus] = useState<AuthStatus | null>(null);
   const [bootError, setBootError] = useState<string | null>(null);
-  const [route, navigate] = useHashRoute("/chat");
+  // The app opens on the command deck, not on a screen (PLAN.md 5.0).
+  const [route, navigate] = useHashRoute("/");
   const { mode, setMode } = useTheme();
+  const { locale, setLocale, t } = useI18n();
+  const [paletteOpen, setPaletteOpen] = useState(false);
 
-  const checkAuth = useCallback(async () => {
+  const togglePalette = useCallback(() => setPaletteOpen((open) => !open), []);
+  usePaletteShortcut(togglePalette);
+
+  const checkAuth = useCallback(async (resolveBackend = true) => {
     try {
-      // The token must be in memory before any request so `authStatus` is
-      // evaluated with the bearer header attached.
+      const settings = resolveBackend
+        ? await loadConnectionSettings()
+        : getConnectionSettings();
+      if (settings && !settings.onboarding_complete) {
+        setPhase("onboarding");
+        return;
+      }
+      if (resolveBackend) {
+        const resolution = await resolveConnection(false);
+        if (!resolution.healthy) {
+          setBootError(t("backend.failed"));
+          setPhase("unreachable");
+          return;
+        }
+      }
       await loadToken();
       const status = await api.authStatus();
       setAuthStatus(status);
@@ -47,11 +103,40 @@ function AppInner() {
       setBootError(err instanceof Error ? err.message : String(err));
       setPhase("unauthenticated");
     }
-  }, []);
+  }, [t]);
 
   useEffect(() => {
     void checkAuth();
   }, [checkAuth]);
+
+  useEffect(() => {
+    const openOnboarding = () => setPhase("onboarding");
+    window.addEventListener("dax:open-onboarding", openOnboarding);
+    return () => window.removeEventListener("dax:open-onboarding", openOnboarding);
+  }, []);
+
+  useEffect(() => {
+    if (!isTauriRuntime() || phase !== "authenticated") return;
+    const monitor = createDisconnectMonitor({
+      probe: api.health,
+      notify: () =>
+        sendNativeNotification(
+          "Dax backend disconnected",
+          "The backend has not responded to three consecutive health checks.",
+        ),
+      onDisconnected: async () => {
+        if (getConnectionSettings()?.strategy !== "hybrid") return;
+        const resolution = await resolveConnection(false);
+        if (!resolution.changed) return;
+        setPhase("booting");
+        shutdownRealtimeStores();
+        await loadToken();
+        await checkAuth(false);
+      },
+    });
+    const timer = window.setInterval(() => void monitor.check(), 15_000);
+    return () => window.clearInterval(timer);
+  }, [checkAuth, phase]);
 
   const logout = useCallback(async () => {
     try {
@@ -59,10 +144,56 @@ function AppInner() {
     } catch {
       // Signing out locally matters more than the server round-trip.
     }
+    shutdownRealtimeStores();
     await clearToken();
     setPhase("unauthenticated");
     void checkAuth();
   }, [checkAuth]);
+
+  /**
+   * Verbs, as opposed to destinations. They live in the palette because the
+   * deck's side panels are glanceable, not navigable (PLAN.md 5.0) — putting a
+   * theme switcher in one of them would make it a control surface.
+   */
+  const paletteActions = useMemo<PaletteAction[]>(
+    () => [
+      {
+        id: "voice:on",
+        label: t("palette.voiceOn"),
+        hint: "voice/toggle",
+        group: t("common.actions"),
+        run: () => void api.toggleVoice(true).catch(() => undefined),
+      },
+      {
+        id: "voice:off",
+        label: t("palette.voiceOff"),
+        hint: "voice/toggle",
+        group: t("common.actions"),
+        run: () => void api.toggleVoice(false).catch(() => undefined),
+      },
+      {
+        id: "theme",
+        label: t("palette.theme"),
+        hint: mode,
+        group: t("common.actions"),
+        run: () => setMode(mode === "dark" ? "light" : mode === "light" ? "system" : "dark"),
+      },
+      {
+        id: "language",
+        label: locale === "es" ? t("language.change") : t("language.change.es"),
+        hint: locale === "es" ? "EN" : "ES",
+        group: t("common.actions"),
+        run: () => setLocale(locale === "es" ? "en" : "es"),
+      },
+      {
+        id: "logout",
+        label: t("palette.logout"),
+        group: t("common.actions"),
+        run: () => void logout(),
+      },
+    ],
+    [locale, logout, mode, setLocale, setMode, t],
+  );
 
   if (phase === "booting") {
     return (
@@ -72,19 +203,21 @@ function AppInner() {
     );
   }
 
+  if (phase === "onboarding") {
+    const settings = getConnectionSettings();
+    return settings ? (
+      <Onboarding initial={settings} onComplete={() => void checkAuth(false)} />
+    ) : null;
+  }
+
   if (phase === "unreachable") {
     return (
       <div className={s.center}>
-        <div className={s.message}>
-          <div className={s.messageTitle}>Backend unreachable</div>
-          <div className={s.messageBody}>{bootError}</div>
-          <div className={s.messageHint}>
-            Start it with <code>uv run dax</code> or the systemd user unit, then retry.
-          </div>
-          <button type="button" className={s.retry} onClick={() => void checkAuth()}>
-            Retry
-          </button>
-        </div>
+        <BackendConnection
+          error={bootError}
+          onRetry={() => void checkAuth()}
+          onConfigure={() => setPhase("onboarding")}
+        />
       </div>
     );
   }
@@ -96,6 +229,17 @@ function AppInner() {
   // Screens that lay out their own full-height chrome opt out of the shell's
   // padded scroll container.
   const BARE_ROUTES = ["/chat", "/logs", "/settings"];
+
+  const palette = (
+    <CommandPalette
+      open={paletteOpen}
+      onClose={() => setPaletteOpen(false)}
+      onNavigate={navigate}
+      extraActions={paletteActions}
+    />
+  );
+
+  const isDeck = route === "/" || route === "";
 
   const screen =
     route === "/chat" ? (
@@ -115,23 +259,68 @@ function AppInner() {
     );
 
   return (
-    <AppShell
-      route={route}
-      onNavigate={navigate}
-      themeMode={mode}
-      onCycleTheme={setMode}
-      onLogout={() => void logout()}
-      bare={BARE_ROUTES.includes(route)}
-    >
-      {screen}
-    </AppShell>
+    <>
+      <MediaDuckingBridge />
+      {isDeck ? (
+        <CommandDeck onOpenPalette={() => setPaletteOpen(true)} />
+      ) : (
+        <AppShell
+          route={route}
+          onNavigate={navigate}
+          onOpenPalette={() => setPaletteOpen(true)}
+          themeMode={mode}
+          onCycleTheme={setMode}
+          onLogout={() => void logout()}
+          bare={BARE_ROUTES.includes(route)}
+        >
+          <Suspense fallback={<div className={s.center}><Spinner size={20} /></div>}>
+            {screen}
+          </Suspense>
+        </AppShell>
+      )}
+      {palette}
+    </>
   );
 }
 
 export function App() {
+  const windowKind = new URLSearchParams(window.location.search).get("window");
+  const isHud = windowKind === "hud" || windowKind === "voice-hud";
+  useEffect(() => {
+    if (isTauriRuntime()) void desktopRuntime.start(!isHud);
+  }, [isHud]);
+  if (isHud) {
+    return <HudApp />;
+  }
   return (
-    <ToastProvider>
-      <AppInner />
-    </ToastProvider>
+    <WindowFrame>
+      <ToastProvider>
+        <DesktopRuntimeError />
+        <AppInner />
+      </ToastProvider>
+    </WindowFrame>
   );
+}
+
+function DesktopRuntimeError() {
+  const runtime = useSyncExternalStore(
+    desktopRuntime.subscribe,
+    desktopRuntime.getSnapshot,
+    desktopRuntime.getSnapshot,
+  );
+  const toast = useToast();
+  useEffect(() => {
+    if (runtime.pttError) toast.show(runtime.pttError, "danger");
+  }, [runtime.pttError, toast]);
+  return null;
+}
+
+function HudApp() {
+  const [ready, setReady] = useState(false);
+  useEffect(() => {
+    void loadConnectionSettings()
+      .then(loadToken)
+      .then(() => setReady(true));
+  }, []);
+  return ready ? <VoiceHud /> : null;
 }

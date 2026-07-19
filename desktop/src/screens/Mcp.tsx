@@ -12,9 +12,11 @@ import {
 } from "../design/primitives";
 import { useConfig } from "../hooks/useConfig";
 import p from "./page.module.css";
+import { useI18n } from "../i18n/I18n";
 
 /** Copy the generated Codex TOML / Claude JSON for the flagged servers. */
 function ExportPanel() {
+  const { text } = useI18n();
   const toast = useToast();
   const [copied, setCopied] = useState<"codex" | "claude" | null>(null);
 
@@ -22,38 +24,38 @@ function ExportPanel() {
     try {
       const data =
         which === "codex" ? await api.codexConfig() : await api.claudeConfig();
-      const text = "toml" in data ? data.toml : data.json;
+      const configText = "toml" in data ? data.toml : data.json;
       if (data.server_count === 0) {
         toast.show(
-          `No servers flagged for ${which === "codex" ? "Codex" : "Claude"} export yet`,
+          text(`Aún no hay servidores marcados para exportar a ${which === "codex" ? "Codex" : "Claude"}`, `No servers flagged for ${which === "codex" ? "Codex" : "Claude"} export yet`),
           "neutral",
         );
         return;
       }
-      await navigator.clipboard.writeText(text);
+      await navigator.clipboard.writeText(configText);
       setCopied(which);
       setTimeout(() => setCopied(null), 1500);
-      toast.show(`${data.server_count} server(s) copied`, "success");
+      toast.show(text(`${data.server_count} servidor(es) copiado(s)`, `${data.server_count} server(s) copied`), "success");
     } catch (err) {
-      toast.show(err instanceof Error ? err.message : "Export failed", "danger");
+      toast.show(err instanceof Error ? err.message : text("Error al exportar", "Export failed"), "danger");
     }
   };
 
   return (
     <Panel>
       <PanelHeader
-        title="Export to other AI clients"
-        subtitle="Generates config for the servers you flagged per row above"
+        title={text("Exportar a otros clientes de IA", "Export to other AI clients")}
+        subtitle={text("Genera configuración para los servidores marcados arriba", "Generates config for the servers you flagged per row above")}
       />
       <PanelBody>
         <div className={p.actions}>
           <Button size="sm" variant="secondary" onClick={() => void copy("codex")}>
             {copied === "codex" ? <CheckIcon size={13} /> : <CopyIcon size={13} />}
-            Copy Codex config
+            {text("Copiar configuración de Codex", "Copy Codex config")}
           </Button>
           <Button size="sm" variant="secondary" onClick={() => void copy("claude")}>
             {copied === "claude" ? <CheckIcon size={13} /> : <CopyIcon size={13} />}
-            Copy Claude config
+            {text("Copiar configuración de Claude", "Copy Claude config")}
           </Button>
         </div>
       </PanelBody>
@@ -62,6 +64,7 @@ function ExportPanel() {
 }
 
 export function Mcp() {
+  const { text } = useI18n();
   const { config, loading, refresh } = useConfig();
 
   return (
@@ -71,9 +74,9 @@ export function Mcp() {
           <McpIcon size={19} />
         </div>
         <div>
-          <h1 className={p.pageTitle}>MCP Servers</h1>
+          <h1 className={p.pageTitle}>{text("Servidores MCP", "MCP Servers")}</h1>
           <p className={p.pageSubtitle}>
-            Manage tool servers, authenticate remotes, and export per server
+            {text("Gestiona servidores de herramientas, autentica remotos y exporta cada servidor", "Manage tool servers, authenticate remotes, and export per server")}
           </p>
         </div>
       </div>

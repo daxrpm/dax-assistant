@@ -1,0 +1,615 @@
+/*
+ * The command deck.
+ *
+ * A status bar across the top and three columns beneath it, every one of them
+ * a pane floating on the window ground with --gutter of air around it. The
+ * three rules from PLAN.md 5.0 hold throughout: separation is space and
+ * elevation (no pane has a border), radii are 18px on panes and never below
+ * 10px on anything interactive, and 500 is the heaviest weight in the file.
+ */
+
+.deck {
+  display: grid;
+  /* The columns are fixed and the stage takes the rest: the orb is the
+     subject, and side panels that grow with the window would compete. */
+  grid-template-columns: 268px minmax(0, 1fr) 300px;
+  grid-template-rows: auto minmax(0, 1fr);
+  gap: var(--gutter);
+  padding: var(--gutter);
+  height: 100%;
+  background: var(--bg-window);
+}
+
+/* ---------------- top bar ---------------- */
+
+.topBar {
+  position: relative;
+  grid-column: 1 / -1;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-6);
+  height: 44px;
+  padding: 0 var(--space-5);
+  background: var(--bg-sidebar);
+  border-radius: var(--radius-xl);
+  box-shadow: var(--shadow-2);
+}
+
+.brandGroup {
+  display: flex;
+  align-items: center;
+  gap: var(--space-4);
+  min-width: 0;
+}
+
+.brand {
+  font-size: var(--text-title3);
+  line-height: var(--text-title3-lh);
+  font-weight: 500;
+  letter-spacing: var(--tracking-tight);
+}
+
+.paletteHint {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  height: 28px;
+  padding: 0 var(--space-3);
+  border: none;
+  border-radius: var(--radius-md);
+  background: transparent;
+  color: var(--fg-tertiary);
+  font-family: var(--font-sans);
+  font-size: var(--text-footnote);
+  line-height: var(--text-footnote-lh);
+  cursor: default;
+  transition: background-color var(--dur-fast) var(--ease-standard);
+}
+
+.paletteHint:hover {
+  background: var(--bg-hover);
+  color: var(--fg-secondary);
+}
+
+.kbd {
+  padding: 2px var(--space-2);
+  border-radius: var(--radius-xs);
+  background: var(--bg-inset);
+  color: var(--fg-secondary);
+  font-family: var(--font-mono);
+  font-size: var(--text-caption);
+  line-height: var(--text-caption-lh);
+}
+
+.statusSet {
+  display: flex;
+  align-items: center;
+  gap: var(--space-6);
+  min-width: 0;
+}
+
+.statusItem {
+  display: flex;
+  align-items: baseline;
+  gap: var(--space-2);
+  white-space: nowrap;
+}
+
+.statusLabel {
+  color: var(--fg-quaternary);
+  font-size: var(--text-caption);
+  line-height: var(--text-caption-lh);
+  font-weight: 500;
+  letter-spacing: var(--tracking-label);
+  text-transform: uppercase;
+}
+
+.statusValue {
+  color: var(--fg-secondary);
+  font-size: var(--text-footnote);
+  line-height: var(--text-footnote-lh);
+}
+
+/* Machine facts are mono and tabular so the bar does not reflow every tick. */
+.statusMono {
+  color: var(--fg-primary);
+  font-family: var(--font-mono);
+  font-size: var(--text-footnote);
+  line-height: var(--text-footnote-lh);
+  font-variant-numeric: tabular-nums;
+}
+
+/* ---------------- columns ---------------- */
+
+.column {
+  display: flex;
+  flex-direction: column;
+  gap: var(--gutter);
+  min-height: 0;
+  overflow: hidden;
+}
+
+.pane {
+  display: flex;
+  flex-direction: column;
+  flex: none;
+  padding: var(--space-4) var(--space-5) var(--space-5);
+  background: var(--bg-panel);
+  border-radius: var(--radius-xl);
+  box-shadow: var(--shadow-3);
+  overflow: hidden;
+}
+
+/* The log tail is the one pane that takes the slack — it is the only content
+   here that is unbounded. */
+.logPane {
+  flex: 1;
+  min-height: 0;
+}
+
+.paneHead {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: var(--space-3);
+  flex: none;
+  padding-bottom: var(--space-3);
+}
+
+.paneTitle {
+  color: var(--fg-quaternary);
+  font-size: var(--text-caption);
+  line-height: var(--text-caption-lh);
+  font-weight: 500;
+  letter-spacing: var(--tracking-label);
+  text-transform: uppercase;
+}
+
+.paneMeta {
+  color: var(--fg-quaternary);
+  font-family: var(--font-mono);
+  font-size: var(--text-caption);
+  line-height: var(--text-caption-lh);
+  font-variant-numeric: tabular-nums;
+}
+
+.row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-3);
+  min-height: 26px;
+}
+
+.rowLabel {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  min-width: 0;
+  overflow: hidden;
+  color: var(--fg-secondary);
+  font-size: var(--text-callout);
+  line-height: var(--text-callout-lh);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.rowValue {
+  flex: none;
+  color: var(--fg-primary);
+  font-family: var(--font-mono);
+  font-size: var(--text-footnote);
+  line-height: var(--text-footnote-lh);
+  font-variant-numeric: tabular-nums;
+}
+
+.toolServer {
+  flex: none;
+  max-width: 42%;
+  overflow: hidden;
+  font-family: var(--font-mono);
+  font-size: var(--text-footnote);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.toolServer::after {
+  color: var(--fg-quaternary);
+  content: "/";
+  margin-left: var(--space-1);
+}
+
+.toolServerRunning {
+  color: var(--accent-hover);
+}
+
+.toolServerDone {
+  color: var(--success);
+}
+
+.toolName {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.muted {
+  color: var(--fg-quaternary);
+}
+
+.warning {
+  color: var(--warning);
+}
+
+.danger {
+  color: var(--danger);
+}
+
+.success {
+  color: var(--success);
+}
+
+.note {
+  margin: var(--space-2) 0 0;
+  color: var(--fg-quaternary);
+  font-size: var(--text-footnote);
+  line-height: var(--text-footnote-lh);
+}
+
+.meterRow {
+  padding-bottom: var(--space-2);
+}
+
+.meterTrack {
+  height: 3px;
+  margin-top: var(--space-1);
+  border-radius: var(--radius-pill);
+  background: var(--bg-inset);
+  overflow: hidden;
+}
+
+.meterFill {
+  height: 100%;
+  border-radius: var(--radius-pill);
+  background: var(--fg-tertiary);
+  transition: width var(--dur-normal) var(--ease-out-soft);
+}
+
+/* ---------------- LEDs ---------------- */
+
+.led {
+  flex: none;
+  width: 6px;
+  height: 6px;
+  border-radius: var(--radius-pill);
+  background: var(--fg-quaternary);
+}
+
+.ledOk {
+  background: var(--success);
+}
+
+.ledBad {
+  background: var(--danger);
+}
+
+.ledOff {
+  background: var(--fg-quaternary);
+}
+
+.ledIdle {
+  background: var(--fg-tertiary);
+}
+
+.ledLive {
+  background: var(--accent);
+  box-shadow: 0 0 8px var(--accent-glow);
+}
+
+/* ---------------- centre stage ---------------- */
+
+.stage {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: var(--space-4);
+  min-width: 0;
+  padding: var(--space-8);
+  background:
+    radial-gradient(circle at 50% 34%, var(--accent-dim), transparent 34%),
+    linear-gradient(160deg, var(--bg-elevated), var(--bg-content) 48%, var(--bg-inset));
+  border-radius: var(--radius-xl);
+  box-shadow: var(--shadow-3);
+  overflow-x: hidden;
+  overflow-y: auto;
+}
+
+.orbWrap {
+  position: relative;
+  flex: none;
+  display: grid;
+  place-items: center;
+}
+
+.orbWrap::before {
+  position: absolute;
+  width: 75%;
+  height: 18%;
+  bottom: 5%;
+  border-radius: 50%;
+  background: var(--accent-glow);
+  filter: blur(24px);
+  opacity: 0.22;
+  content: "";
+  pointer-events: none;
+}
+
+.stageState {
+  flex: none;
+  color: var(--fg-tertiary);
+  font-family: var(--font-mono);
+  font-size: var(--text-footnote);
+  line-height: var(--text-footnote-lh);
+  letter-spacing: var(--tracking-label);
+  text-transform: uppercase;
+}
+
+.transcript {
+  flex: none;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--space-2);
+  width: 100%;
+  max-width: 520px;
+  min-height: 76px;
+  text-align: center;
+}
+
+.transcriptLabel {
+  color: var(--fg-quaternary);
+  font-size: var(--text-caption);
+  line-height: var(--text-caption-lh);
+  font-weight: 500;
+  letter-spacing: var(--tracking-label);
+  text-transform: uppercase;
+}
+
+.transcriptText {
+  margin: 0;
+  color: var(--fg-primary);
+  font-size: var(--text-title3);
+  line-height: var(--text-title3-lh);
+  letter-spacing: var(--tracking-tight);
+}
+
+.commandBar {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  width: 100%;
+  max-width: 520px;
+  padding: var(--space-1) var(--space-1) var(--space-1) var(--space-4);
+  background: var(--bg-inset);
+  border-radius: var(--radius-lg);
+}
+
+.commandInput {
+  flex: 1;
+  min-width: 0;
+  height: 34px;
+  border: none;
+  background: transparent;
+  color: var(--fg-primary);
+  font-family: var(--font-sans);
+  font-size: var(--text-body);
+  line-height: var(--text-body-lh);
+  outline: none;
+}
+
+.commandInput::placeholder {
+  color: var(--fg-quaternary);
+}
+
+/* The one rationed accent on this view, alongside the orb. */
+.send {
+  flex: none;
+  display: grid;
+  place-items: center;
+  width: 34px;
+  height: 34px;
+  border: none;
+  border-radius: var(--radius-md);
+  background: var(--accent);
+  color: var(--fg-on-accent);
+  cursor: default;
+  transition:
+    background-color var(--dur-fast) var(--ease-standard),
+    opacity var(--dur-fast) var(--ease-standard);
+}
+
+.send:hover:not(:disabled) {
+  background: var(--accent-hover);
+}
+
+.send:disabled {
+  background: var(--bg-elevated);
+  color: var(--fg-quaternary);
+}
+
+/* ---------------- log tail ---------------- */
+
+.logTail {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  flex: 1;
+  min-height: 0;
+  overflow: hidden;
+  /* Newest at the bottom, and the pane crops from the top as lines arrive. */
+  justify-content: flex-end;
+}
+
+.logLine {
+  display: flex;
+  gap: var(--space-2);
+  width: 100%;
+  padding: 1px 0;
+  border: 0;
+  border-radius: var(--radius-xs);
+  background: transparent;
+  min-width: 0;
+  color: inherit;
+  cursor: default;
+  font-family: var(--font-mono);
+  font-size: var(--text-caption);
+  line-height: var(--text-caption-lh);
+}
+
+.logLine:hover,
+.logLine:focus-visible {
+  background: var(--bg-hover);
+}
+
+.logLineExpanded {
+  align-items: flex-start;
+  padding: var(--space-2);
+  background: var(--bg-inset);
+}
+
+.logLevel {
+  flex: none;
+  width: 30px;
+  color: var(--fg-quaternary);
+}
+
+.logMessage {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  /* Quiet by default: the log is always present but must never shout. */
+  color: var(--fg-tertiary);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.logLineExpanded .logMessage {
+  overflow: visible;
+  text-overflow: clip;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+@media (max-width: 1100px) {
+  .deck {
+    grid-template-columns: 230px minmax(260px, 1fr) 252px;
+    gap: 7px;
+    padding: 7px;
+  }
+
+  .column {
+    gap: 7px;
+  }
+
+  .pane {
+    padding: var(--space-3) var(--space-4) var(--space-4);
+  }
+
+  .stage {
+    gap: var(--space-4);
+    padding: var(--space-5);
+  }
+
+  .statusSet {
+    gap: var(--space-4);
+  }
+}
+
+@media (max-width: 900px) {
+  .deck {
+    grid-template-columns: 208px minmax(240px, 1fr) 224px;
+  }
+
+  .topBar {
+    padding: 0 var(--space-3);
+  }
+
+  .statusSet {
+    gap: var(--space-3);
+    overflow-x: auto;
+  }
+
+  .statusLabel,
+  .paletteHint > span {
+    display: none;
+  }
+
+  .statusItem:nth-child(2),
+  .statusItem:nth-child(3) {
+    display: none;
+  }
+
+  .stage {
+    padding: var(--space-4);
+  }
+
+  .orbWrap {
+    transform: scale(0.84);
+    margin: -15px;
+  }
+
+  .transcriptText {
+    font-size: var(--text-body);
+    line-height: var(--text-body-lh);
+  }
+}
+
+@media (max-width: 720px) {
+  .deck {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr);
+    grid-template-rows: auto auto auto auto;
+    height: 100%;
+    overflow-y: auto;
+  }
+
+  .topBar {
+    position: sticky;
+    top: 0;
+    z-index: 5;
+    grid-column: 1;
+    min-height: 44px;
+  }
+
+  .brandGroup {
+    flex: none;
+  }
+
+  .statusSet {
+    justify-content: flex-end;
+  }
+
+  .stage {
+    grid-row: 2;
+    min-height: 560px;
+    overflow: visible;
+  }
+
+  .column {
+    overflow: visible;
+  }
+
+  .logPane {
+    min-height: 180px;
+  }
+
+  .logTail {
+    max-height: 160px;
+    overflow-y: auto;
+  }
+}

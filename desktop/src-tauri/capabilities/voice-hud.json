@@ -1,0 +1,8 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "voice-hud",
+  "description": "Minimum event and window access for the voice HUD.",
+  "windows": ["voice-hud"],
+  "platforms": ["linux", "macOS", "windows"],
+  "permissions": ["core:default"]
+}

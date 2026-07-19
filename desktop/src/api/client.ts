@@ -175,6 +175,16 @@ export const api = {
       body: JSON.stringify({ enabled }),
     }),
 
+  pushToTalkPress: () =>
+    request<{ status: string; state: string }>("/voice/push-to-talk/press", {
+      method: "POST",
+    }),
+
+  pushToTalkRelease: () =>
+    request<{ status: string; state: string }>("/voice/push-to-talk/release", {
+      method: "POST",
+    }),
+
   /* ---------------- conversations ---------------- */
 
   conversations: (limit = 50) =>
