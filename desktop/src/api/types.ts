@@ -1,0 +1,321 @@
+/**
+ * Backend response shapes.
+ *
+ * Mirrored from `web/src/api/client.ts` and `web/src/types/config.ts` rather
+ * than imported — PLAN.md 3.9 defers unifying the two build systems to M5.
+ * Kept in the same order as the source files so drift is easy to spot.
+ */
+
+export interface AuthStatus {
+  auth_enabled: boolean;
+  configured: boolean;
+  authenticated: boolean;
+}
+
+/**
+ * `token` is the desktop-relevant addition: the backend now returns the signed
+ * session token alongside the Set-Cookie header so a native client can use
+ * `Authorization: Bearer` instead of relying on cookie replay.
+ */
+export interface LoginResponse {
+  ok: boolean;
+  token?: string | null;
+}
+
+export interface HealthResponse {
+  status: string;
+}
+
+export interface StatusResponse {
+  name: string;
+  version: string;
+  status: string;
+  voice_listening: boolean;
+  llm_provider: string;
+  mcp_servers: number;
+  mcp_tools: number;
+}
+
+export interface MCPServerStatus {
+  name: string;
+  connected: boolean;
+  transport: string;
+  enabled: boolean;
+  tool_count: number;
+  tools: string[];
+}
+
+/**
+ * `GET /api/logs` returns `timestamp`; the `/ws/logs` stream returns `ts`.
+ * Both are optional here and normalized at the edge — see `hooks/useLogStream`.
+ */
+export interface LogEntry {
+  ts?: string;
+  timestamp?: string;
+  level: string;
+  logger: string;
+  message: string;
+}
+
+export interface ToolAuditEntry {
+  timestamp: string;
+  server_name: string;
+  tool_name: string;
+  arguments: Record<string, unknown>;
+  status: string;
+}
+
+export interface ToolPolicyResponse {
+  default: string;
+  allow: string[];
+  ask: string[];
+  deny: string[];
+  confirm_timeout_seconds: number;
+}
+
+/* ---------------- conversations ---------------- */
+
+export interface ConversationSummary {
+  id: string;
+  session_key: string;
+  title: string;
+  preview: string;
+  updated_at: string;
+  message_count: number;
+}
+
+export interface ConversationMessage {
+  id: string;
+  role: string;
+  content: string;
+  timestamp: string;
+}
+
+export interface ConversationDetail {
+  id: string;
+  session_key: string;
+  created_at: string;
+  updated_at: string;
+  messages: ConversationMessage[];
+}
+
+/* ---------------- memory ---------------- */
+
+export type MemoryType = "user" | "feedback" | "project" | "reference";
+
+export interface MemoryEntry {
+  slug: string;
+  name: string;
+  description: string;
+  type: MemoryType;
+  body: string;
+  filename: string;
+}
+
+/* ---------------- MCP ---------------- */
+
+export interface MCPPreset {
+  id: string;
+  name: string;
+  category: string;
+  description: string;
+  transport: string;
+  command: string;
+  args: string[];
+  env: Record<string, string>;
+}
+
+export interface RegistryServer {
+  name: string;
+  description: string;
+  version: string;
+  packages: { registry_type: string; identifier: string; version: string }[];
+  remotes: { type: string; url: string }[];
+}
+
+export interface RegistrySearchResponse {
+  servers: RegistryServer[];
+  count?: number;
+  error?: string;
+}
+
+export interface ShellAllowResponse {
+  commands: string[];
+  default: string[];
+}
+
+export interface MCPAuthStatus {
+  authenticated: boolean;
+  expired?: boolean;
+}
+
+/* ---------------- voice ---------------- */
+
+export interface VoiceProfileResponse {
+  status?: string;
+  enrolled: boolean;
+  samples?: number;
+}
+
+export interface VoicePreviewOptions {
+  engine: "kokoro" | "piper" | "openai";
+  voice: string;
+  language?: "es" | "en";
+  text?: string;
+  speed?: number;
+  model?: string;
+  instructions?: string;
+  timeout_s?: number;
+}
+
+export interface OllamaModel {
+  name: string;
+  size_gb: number;
+  modified: string;
+  family: string;
+  parameters: string;
+  quantization: string;
+}
+
+/* ---------------- config ---------------- */
+
+export interface GeneralConfig {
+  name: string;
+  language_default: string;
+  log_level: string;
+  memory_path: string;
+  system_prompt: string;
+  system_prompt_custom: boolean;
+}
+
+export interface VoiceConfig {
+  enabled: boolean;
+  wake_word_model: string;
+  wake_word_threshold: number;
+  stt_backend: "local" | "openai";
+  stt_model: string;
+  stt_compute_type: string;
+  stt_device: string;
+  stt_beam_size: number;
+  stt_language: string;
+  stt_openai_model: string;
+  stt_openai_timeout_s: number;
+  stt_openai_prompt: string;
+  stt_openai_configured: boolean;
+  stt_fallback_to_local: boolean;
+  tts_engine: string;
+  tts_voice_es: string;
+  tts_voice_en: string;
+  tts_kokoro_voice_es: string;
+  tts_kokoro_voice_en: string;
+  tts_kokoro_speed: number;
+  tts_openai_model: string;
+  tts_openai_voice: string;
+  tts_openai_instructions_es: string;
+  tts_openai_instructions_en: string;
+  tts_openai_timeout_s: number;
+  tts_fallback_to_local: boolean;
+  vad_threshold: number;
+  silence_duration_ms: number;
+  adaptive_endpointing: boolean;
+  denoise: boolean;
+  barge_in: boolean;
+  earcon: boolean;
+  conversation_timeout_s: number;
+  followup_activation_ms: number;
+  thinking_pause_ms: number;
+  response_timeout_s: number;
+  voice_confirm: boolean;
+  require_wake_word_each_turn: boolean;
+  speaker_verification: boolean;
+  speaker_threshold: number;
+  speaker_fail_open: boolean;
+  speaker_profile_enrolled: boolean;
+}
+
+export interface LLMConfig {
+  default_provider: string;
+  fallback_order: string[];
+  max_tools: number;
+  ollama_model: string;
+  ollama_base_url: string;
+  ollama_timeout: number;
+  anthropic_model: string;
+  anthropic_configured: boolean;
+  openai_model: string;
+  openai_base_url: string;
+  openai_configured: boolean;
+  openai_reasoning_effort: string;
+  gemini_model: string;
+  gemini_configured: boolean;
+  deepseek_model: string;
+  deepseek_base_url: string;
+  deepseek_configured: boolean;
+  codex_binary: string;
+  codex_model: string;
+}
+
+export interface WebConfig {
+  host: string;
+  port: number;
+  cors_origins: string[];
+  expose_lan: boolean;
+}
+
+export interface WhatsAppConfig {
+  enabled: boolean;
+  evolution_api_url: string;
+  evolution_api_instance: string;
+  respond_with_audio: boolean;
+  has_api_key: boolean;
+}
+
+export interface TelegramConfig {
+  enabled: boolean;
+  allowed_user_ids: number[];
+  respond_with_audio: boolean;
+  has_token: boolean;
+}
+
+export interface MCPServerConfig {
+  command: string;
+  args: string[];
+  env: Record<string, string>;
+  transport: string;
+  url: string;
+  headers: Record<string, string>;
+  enabled: boolean;
+  export_codex: boolean;
+  export_claude: boolean;
+}
+
+export interface SecurityConfig {
+  auth_enabled: boolean;
+  configured: boolean;
+  session_ttl_hours: number;
+  cookie_secure: boolean;
+}
+
+export interface ToolsConfig {
+  confirm_timeout_seconds: number;
+  policy: {
+    default: string;
+    allow: string[];
+    ask: string[];
+    deny: string[];
+  };
+}
+
+export interface FullConfig {
+  general: GeneralConfig;
+  voice: VoiceConfig;
+  llm: LLMConfig;
+  web: WebConfig;
+  whatsapp: WhatsAppConfig;
+  telegram: TelegramConfig;
+  security: SecurityConfig;
+  tools: ToolsConfig;
+  mcp: {
+    servers: Record<string, MCPServerConfig>;
+  };
+}

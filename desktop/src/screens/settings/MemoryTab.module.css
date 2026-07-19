@@ -1,0 +1,95 @@
+.split {
+  display: grid;
+  grid-template-columns: 268px 1fr;
+  gap: var(--space-5);
+  align-items: start;
+}
+
+.listPane {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+}
+
+.searchWrap {
+  position: relative;
+}
+
+.searchIcon {
+  position: absolute;
+  top: 50%;
+  left: var(--space-2);
+  color: var(--fg-tertiary);
+  transform: translateY(-50%);
+  pointer-events: none;
+}
+
+.searchInput {
+  padding-left: var(--space-8);
+}
+
+.entryList {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  max-height: 520px;
+  overflow-y: auto;
+}
+
+.entry {
+  position: relative;
+  padding: var(--space-3);
+  border-radius: var(--radius-md);
+  cursor: pointer;
+  transition: background var(--dur-fast) var(--ease-standard);
+}
+
+.entry:hover {
+  background: var(--bg-hover);
+}
+
+/* Raised, not tinted. */
+.entrySelected,
+.entrySelected:hover {
+  background: var(--bg-elevated);
+  box-shadow: var(--shadow-1);
+}
+
+.entryHead {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+.entryName {
+  overflow: hidden;
+  font-size: var(--text-callout);
+  font-weight: 500;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.entryDesc {
+  margin-top: 2px;
+  overflow: hidden;
+  font-size: var(--text-footnote);
+  color: var(--fg-tertiary);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.entryDelete {
+  position: absolute;
+  top: var(--space-1);
+  right: var(--space-1);
+  opacity: 0;
+  transition: opacity var(--dur-fast) var(--ease-standard);
+}
+
+.entry:hover .entryDelete {
+  opacity: 1;
+}
+
+.editorPane {
+  min-width: 0;
+}

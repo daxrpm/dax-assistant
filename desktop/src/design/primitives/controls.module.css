@@ -1,0 +1,463 @@
+/*
+ * Second half of the primitive set (PLAN.md 5.10): overlays, tabs, selection
+ * controls, lists and code display. Split from `primitives.module.css` purely
+ * to keep each file navigable — the token vocabulary is identical.
+ */
+
+/* ---------------- Modal ---------------- */
+
+.overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 100;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: var(--space-6);
+  background: rgba(0, 0, 0, 0.28);
+  animation: overlayIn var(--dur-fast) var(--ease-standard);
+}
+
+@keyframes overlayIn {
+  from {
+    opacity: 0;
+  }
+}
+
+.modal {
+  display: flex;
+  flex-direction: column;
+  width: 100%;
+  max-width: 520px;
+  max-height: 100%;
+  overflow: hidden;
+  background: var(--bg-elevated);
+  border-radius: var(--radius-xl);
+  box-shadow: var(--shadow-4);
+  animation: modalIn var(--dur-slow) var(--ease-out-soft);
+}
+
+.modalWide {
+  max-width: 760px;
+}
+
+@keyframes modalIn {
+  from {
+    opacity: 0;
+    transform: translateY(8px) scale(0.98);
+  }
+}
+
+.modalHeader {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-3);
+  padding: var(--space-5) var(--space-6) var(--space-2);
+}
+
+.modalTitle {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  font-size: var(--text-title3);
+  line-height: var(--text-title3-lh);
+  font-weight: 500;
+  letter-spacing: var(--tracking-tight);
+}
+
+.modalBody {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  padding: var(--space-4) var(--space-6);
+}
+
+/*
+ * The footer separates itself by sinking a step, not by a rule on top of it.
+ */
+.modalFooter {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: var(--space-2);
+  padding: var(--space-4) var(--space-6);
+  margin-top: var(--space-2);
+  background: var(--bg-inset);
+}
+
+/* ---------------- IconButton ---------------- */
+
+.iconButton {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 30px;
+  height: 30px;
+  padding: 0;
+  color: var(--fg-secondary);
+  background: transparent;
+  border: none;
+  border-radius: var(--radius-md);
+  cursor: pointer;
+  transition:
+    background var(--dur-instant) var(--ease-standard),
+    color var(--dur-instant) var(--ease-standard);
+}
+
+.iconButton:hover:not(:disabled) {
+  background: var(--bg-hover);
+  color: var(--fg-primary);
+}
+
+.iconButton:active:not(:disabled) {
+  background: var(--bg-active);
+}
+
+.iconButton:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+
+.iconButtonDanger:hover:not(:disabled) {
+  color: var(--danger);
+}
+
+/* ---------------- Tabs ---------------- */
+
+/*
+ * Tabs are floating pills, not folder tabs riding a rule. The selected one
+ * rises on a raised surface — the same device the sidebar uses for selection,
+ * which keeps the accent free for the orb and the primary action.
+ */
+.tabList {
+  display: flex;
+  gap: var(--space-1);
+  align-items: center;
+  padding-bottom: var(--space-2);
+}
+
+.tab {
+  position: relative;
+  padding: var(--space-2) var(--space-4);
+  font-size: var(--text-callout);
+  line-height: var(--text-callout-lh);
+  font-weight: 500;
+  color: var(--fg-secondary);
+  background: transparent;
+  border: none;
+  border-radius: var(--radius-md);
+  cursor: pointer;
+  white-space: nowrap;
+  transition:
+    background-color var(--dur-fast) var(--ease-standard),
+    color var(--dur-fast) var(--ease-standard);
+}
+
+.tab:hover {
+  color: var(--fg-primary);
+  background: var(--bg-hover);
+}
+
+.tabSelected,
+.tabSelected:hover {
+  color: var(--fg-primary);
+  background: var(--bg-elevated);
+  box-shadow: var(--shadow-1);
+}
+
+/* ---------------- SegmentedControl ---------------- */
+
+.segmented {
+  display: inline-flex;
+  padding: 3px;
+  background: var(--bg-inset);
+  border-radius: var(--radius-lg);
+}
+
+.segment {
+  padding: var(--space-2) var(--space-4);
+  font-size: var(--text-callout);
+  line-height: var(--text-callout-lh);
+  font-weight: 500;
+  color: var(--fg-secondary);
+  background: transparent;
+  border: none;
+  border-radius: calc(var(--radius-lg) - 3px);
+  cursor: pointer;
+  white-space: nowrap;
+  transition:
+    background var(--dur-fast) var(--ease-standard),
+    color var(--dur-fast) var(--ease-standard);
+}
+
+.segmentSelected {
+  color: var(--fg-primary);
+  background: var(--bg-panel);
+  box-shadow: var(--shadow-1);
+}
+
+/* ---------------- Slider ---------------- */
+
+.sliderRow {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+}
+
+.slider {
+  flex: 1;
+  height: 20px;
+  appearance: none;
+  background: transparent;
+  cursor: pointer;
+}
+
+.slider::-webkit-slider-runnable-track {
+  height: 4px;
+  background: var(--bg-active);
+  border-radius: 999px;
+}
+
+.slider::-webkit-slider-thumb {
+  appearance: none;
+  width: 14px;
+  height: 14px;
+  margin-top: -5px;
+  background: #fff;
+  border-radius: 999px;
+  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.3);
+}
+
+.slider:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+
+.sliderValue {
+  min-width: 48px;
+  font-size: var(--text-callout);
+  color: var(--fg-secondary);
+  text-align: right;
+}
+
+/* ---------------- Checkbox ---------------- */
+
+.checkboxRow {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  cursor: pointer;
+}
+
+.checkbox {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 18px;
+  height: 18px;
+  flex-shrink: 0;
+  color: var(--fg-on-accent);
+  /* Unchecked is a well, not an outlined box. */
+  background: var(--bg-inset);
+  border-radius: var(--radius-md);
+  transition: background var(--dur-fast) var(--ease-standard);
+}
+
+.checkboxOn {
+  background: var(--accent);
+}
+
+.checkboxLabel {
+  font-size: var(--text-body);
+  color: var(--fg-primary);
+}
+
+/* ---------------- List ---------------- */
+
+.list {
+  display: flex;
+  flex-direction: column;
+  padding: var(--space-2);
+  background: var(--bg-panel);
+  border-radius: var(--radius-xl);
+  box-shadow: var(--shadow-1);
+}
+
+/*
+ * Rows are separated by their own height and by hover, not by hairlines.
+ * A stack of ruled rows is a table on a web page; this is a list in an app.
+ */
+.listRow {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  width: 100%;
+  padding: var(--space-3) var(--space-4);
+  font-size: var(--text-body);
+  color: var(--fg-primary);
+  text-align: left;
+  background: transparent;
+  border: none;
+  border-radius: var(--radius-md);
+  transition: background var(--dur-fast) var(--ease-standard);
+}
+
+.listRowInteractive {
+  cursor: pointer;
+}
+
+.listRowInteractive:hover {
+  background: var(--bg-hover);
+}
+
+/* Selection is elevation, not an accent wash. */
+.listRowSelected,
+.listRowSelected:hover {
+  background: var(--bg-elevated);
+  box-shadow: var(--shadow-1);
+}
+
+/* ---------------- EmptyState ---------------- */
+
+.empty {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: var(--space-2);
+  padding: var(--space-12) var(--space-6);
+  text-align: center;
+}
+
+.emptyIcon {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 48px;
+  height: 48px;
+  margin-bottom: var(--space-2);
+  color: var(--fg-tertiary);
+  background: var(--bg-inset);
+  border-radius: var(--radius-xl);
+}
+
+.emptyTitle {
+  font-size: var(--text-title3);
+  line-height: var(--text-title3-lh);
+  font-weight: 500;
+}
+
+.emptyBody {
+  max-width: 320px;
+  font-size: var(--text-callout);
+  line-height: 17px;
+  color: var(--fg-secondary);
+}
+
+/* ---------------- CodeBlock ---------------- */
+
+.code {
+  max-height: 320px;
+  margin: 0;
+  padding: var(--space-4);
+  overflow: auto;
+  font-family: var(--font-mono);
+  font-size: var(--text-footnote);
+  line-height: 15px;
+  color: var(--fg-secondary);
+  background: var(--bg-inset);
+  border-radius: var(--radius-lg);
+  user-select: text;
+  white-space: pre;
+}
+
+/* ---------------- Separator ---------------- */
+
+.separator {
+  height: 1px;
+  margin: 0;
+  background: var(--separator);
+  border: none;
+}
+
+/* ---------------- Tooltip ---------------- */
+
+.tooltipWrap {
+  position: relative;
+  display: inline-flex;
+}
+
+.tooltip {
+  position: absolute;
+  bottom: calc(100% + 6px);
+  left: 50%;
+  z-index: 60;
+  padding: var(--space-2) var(--space-3);
+  font-size: var(--text-subhead);
+  line-height: var(--text-subhead-lh);
+  color: var(--fg-primary);
+  white-space: nowrap;
+  pointer-events: none;
+  background: var(--bg-elevated);
+  border-radius: var(--radius-md);
+  box-shadow: var(--shadow-2);
+  transform: translateX(-50%);
+  animation: tooltipIn var(--dur-fast) var(--ease-out-soft);
+}
+
+@keyframes tooltipIn {
+  from {
+    opacity: 0;
+    transform: translateX(-50%) translateY(2px);
+  }
+}
+
+/* ---------------- Popover ---------------- */
+
+.popoverWrap {
+  position: relative;
+  display: inline-flex;
+}
+
+.popover {
+  position: absolute;
+  z-index: 70;
+  min-width: 220px;
+  padding: var(--space-2);
+  background: var(--bg-elevated);
+  border-radius: var(--radius-xl);
+  box-shadow: var(--shadow-3);
+  animation: popoverIn var(--dur-normal) var(--ease-out-soft);
+}
+
+.popoverTop {
+  bottom: calc(100% + 6px);
+  left: 0;
+}
+
+.popoverBottom {
+  top: calc(100% + 6px);
+  left: 0;
+}
+
+.popoverBottomEnd {
+  top: calc(100% + 6px);
+  right: 0;
+}
+
+@keyframes popoverIn {
+  from {
+    opacity: 0;
+    transform: translateY(-4px) scale(0.98);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .overlay,
+  .modal,
+  .tooltip,
+  .popover {
+    animation-duration: 1ms;
+  }
+}

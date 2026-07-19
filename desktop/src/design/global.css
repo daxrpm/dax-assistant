@@ -1,0 +1,99 @@
+@import "./tokens.css";
+
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+
+html,
+body,
+#root {
+  height: 100%;
+  margin: 0;
+}
+
+body {
+  font-family: var(--font-sans);
+  font-size: var(--text-body);
+  line-height: var(--text-body-lh);
+  color: var(--fg-primary);
+  background: var(--bg-window);
+  /* Tabular figures matter for the log viewer, token counts, elapsed timers. */
+  font-variant-numeric: tabular-nums;
+  font-optical-sizing: auto;
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
+}
+
+/* Desktop chrome, not a web page: no text selection or drag on UI furniture. */
+body {
+  user-select: none;
+  cursor: default;
+  overflow: hidden;
+}
+
+/* ...but content the user reads must stay selectable. */
+.selectable,
+input,
+textarea {
+  user-select: text;
+  cursor: auto;
+}
+
+h1,
+h2,
+h3,
+h4,
+p,
+figure {
+  margin: 0;
+}
+
+button,
+input,
+select,
+textarea {
+  font: inherit;
+  color: inherit;
+}
+
+/*
+ * macOS focus treatment (5.8): a soft wide halo, never a hard outline, and
+ * only on :focus-visible so mouse clicks stay ring-free.
+ */
+:focus {
+  outline: none;
+}
+
+:focus-visible {
+  outline: none;
+  box-shadow: 0 0 0 var(--focus-ring-width) var(--focus-ring);
+  border-radius: inherit;
+}
+
+::selection {
+  background: var(--bg-selected);
+}
+
+/* Thin overlay scrollbars, macOS-like. */
+::-webkit-scrollbar {
+  width: 11px;
+  height: 11px;
+}
+
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+::-webkit-scrollbar-thumb {
+  background: var(--fg-quaternary);
+  border: 3px solid transparent;
+  background-clip: padding-box;
+  border-radius: 999px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: var(--fg-tertiary);
+  background-clip: padding-box;
+}

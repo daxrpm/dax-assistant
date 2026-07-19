@@ -1,0 +1,50 @@
+/*
+ * The orb is the subject of this panel, so it gets the room. Everything else
+ * is a caption beneath it.
+ */
+.orbStage {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--space-4);
+  padding: var(--space-6) var(--space-4) var(--space-5);
+}
+
+.orbCaption {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+}
+
+.transcript {
+  display: flex;
+  align-items: baseline;
+  gap: var(--space-3);
+  padding: var(--space-3) var(--space-4);
+  font-size: var(--text-body);
+  line-height: var(--text-body-lh);
+  user-select: text;
+  background: var(--bg-inset);
+  border-radius: var(--radius-lg);
+}
+
+.transcriptLang {
+  flex-shrink: 0;
+  font-family: var(--font-mono);
+  font-size: var(--text-subhead);
+  color: var(--fg-tertiary);
+  text-transform: uppercase;
+}
+
+.transcriptText {
+  flex: 1;
+}
+
+.error {
+  padding: var(--space-3) var(--space-4);
+  font-size: var(--text-callout);
+  line-height: var(--text-callout-lh);
+  color: var(--danger);
+  background: color-mix(in srgb, var(--danger) 12%, transparent);
+  border-radius: var(--radius-lg);
+}

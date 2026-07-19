@@ -1,0 +1,8 @@
+node_modules/
+dist/
+*.tsbuildinfo
+
+src-tauri/target/
+src-tauri/gen/
+# Sidecar binaries are built artifacts, not sources (PLAN.md 3.7).
+src-tauri/binaries/

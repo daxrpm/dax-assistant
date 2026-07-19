@@ -1,0 +1,221 @@
+/*
+ * Dax Desktop design tokens — direction D, "Órbita".
+ *
+ * Dark-first. The app is an instrument you operate, not a document you read,
+ * so the ground is a deep blue-biased near-black and every surface floats
+ * above it.
+ *
+ * Three rules drive every value here, and the previous iteration broke all
+ * three — it read as a web page because of them:
+ *
+ *   1. Depth comes from shadow and elevation, never from a border. There is
+ *      no `0 0 0 0.5px` ring in any shadow. Separators exist but are close to
+ *      invisible and are a last resort, not the primary device.
+ *   2. Radii are large. Small radii are the single strongest tell of a web
+ *      widget; nothing interactive goes below 10px, panels sit at 18px.
+ *   3. Space is generous. Rows breathe, type is a step larger than a dense
+ *      admin UI would use, and panels never touch the window edge.
+ *
+ * Dark is the default palette on :root, so the opt-in class on <html> is
+ * `.light` — see lib/useTheme.ts. The light palette is a genuine second
+ * design, not an inversion: it keeps the same floating architecture on a cool
+ * paper ground.
+ */
+
+:root {
+  /* ---- Type ----
+     The system stack resolves to Cantarell on GNOME, which is the native
+     integration we want on the target platform. Mono is reserved for machine
+     facts — ids, tool names, levels, metrics — and that sans/mono split is
+     the typographic personality of the app. */
+  --font-sans: system-ui, -apple-system, "Cantarell", "Inter", "SF Pro Text",
+    "Segoe UI", sans-serif;
+  --font-mono: ui-monospace, "JetBrains Mono", "SF Mono", "Cascadia Code",
+    "Liberation Mono", Menlo, monospace;
+
+  --text-largetitle: 28px;
+  --text-largetitle-lh: 34px;
+  --text-title1: 22px;
+  --text-title1-lh: 29px;
+  --text-title2: 17px;
+  --text-title2-lh: 23px;
+  --text-title3: 15px;
+  --text-title3-lh: 21px;
+  --text-body: 14px;
+  --text-body-lh: 21px;
+  --text-callout: 13px;
+  --text-callout-lh: 19px;
+  --text-subhead: 12px;
+  --text-subhead-lh: 17px;
+  --text-footnote: 11px;
+  --text-footnote-lh: 15px;
+  --text-caption: 10.5px;
+  --text-caption-lh: 14px;
+  --text-chat: 14.5px;
+  --text-chat-lh: 24px;
+
+  /* Uppercase machine labels get tracking; body text never does. */
+  --tracking-label: 0.08em;
+  --tracking-tight: -0.011em;
+
+  /* ---- Spacing — 4pt subdivisions on an 8pt grid ---- */
+  --space-0: 0;
+  --space-1: 4px;
+  --space-2: 8px;
+  --space-3: 12px;
+  --space-4: 16px;
+  --space-5: 20px;
+  --space-6: 24px;
+  --space-8: 32px;
+  --space-10: 40px;
+  --space-12: 48px;
+  --space-16: 64px;
+
+  /* Gap between floating panes and the window edge. Nothing bleeds. */
+  --gutter: 12px;
+
+  /* ---- Radii ---- */
+  --radius-xs: 6px;
+  --radius-sm: 8px;
+  --radius-md: 10px;
+  --radius-lg: 12px;
+  --radius-xl: 18px;
+  --radius-2xl: 24px;
+  --radius-pill: 999px;
+  --radius-window: 14px;
+
+  /* ---- Elevation ----
+     Two layers only: a diffused drop that sells the float, plus a 1px inset
+     highlight on the top edge, which is how real glass catches light. No
+     outline ring — that was the border in disguise. */
+  --shadow-0: none;
+  --shadow-1: 0 1px 0 rgba(255, 255, 255, 0.04) inset,
+    0 4px 12px -4px rgba(0, 0, 0, 0.5);
+  --shadow-2: 0 1px 0 rgba(255, 255, 255, 0.045) inset,
+    0 10px 26px -10px rgba(0, 0, 0, 0.62);
+  --shadow-3: 0 1px 0 rgba(255, 255, 255, 0.05) inset,
+    0 22px 48px -14px rgba(0, 0, 0, 0.8);
+  --shadow-4: 0 1px 0 rgba(255, 255, 255, 0.06) inset,
+    0 36px 80px -18px rgba(0, 0, 0, 0.9);
+
+  /* ---- Surfaces ---- */
+  --bg-window: #08090c;
+  --bg-sidebar: #111319;
+  --bg-content: #111319;
+  --bg-panel: #111319;
+  --bg-elevated: #181b22;
+  --bg-inset: #0c0e12;
+  --bg-hover: rgba(255, 255, 255, 0.045);
+  --bg-active: rgba(255, 255, 255, 0.075);
+  --bg-selected: rgba(110, 139, 255, 0.15);
+
+  /* ---- Text ---- */
+  --fg-primary: #e9ebf1;
+  --fg-secondary: #98a0b0;
+  --fg-tertiary: #5c6373;
+  --fg-quaternary: #3a4050;
+  --fg-on-accent: #0a0f24;
+
+  /* ---- Separators ----
+     Deliberately near-invisible. If a separator is doing visible work, the
+     layout needs space instead. */
+  --separator: rgba(255, 255, 255, 0.055);
+  --separator-opaque: #1c202a;
+
+  /* ---- Accent — indigo, direction D ----
+     Used for the voice orb and one primary action per view. Everywhere else
+     is cool neutral; an accent that appears everywhere stops meaning
+     anything. */
+  --accent: #6e8bff;
+  --accent-hover: #8aa1ff;
+  --accent-pressed: #5673e8;
+  --accent-dim: rgba(110, 139, 255, 0.14);
+  --accent-glow: rgba(110, 139, 255, 0.4);
+
+  /* Semantic colors are separate from the accent and never stand in for it. */
+  --success: #4fd1a0;
+  --warning: #e8b44c;
+  --danger: #ff6b6b;
+  --info: #6e8bff;
+  --purple: #a78bfa;
+
+  --focus-ring: rgba(110, 139, 255, 0.55);
+  --focus-ring-width: 3px;
+
+  /* ---- Motion ---- */
+  --ease-standard: cubic-bezier(0.25, 0.1, 0.25, 1);
+  --ease-out-soft: cubic-bezier(0.16, 1, 0.3, 1);
+  --ease-in-out: cubic-bezier(0.65, 0, 0.35, 1);
+  --ease-spring: cubic-bezier(0.34, 1.56, 0.64, 1);
+
+  --dur-instant: 80ms;
+  --dur-fast: 140ms;
+  --dur-normal: 220ms;
+  --dur-slow: 340ms;
+  --dur-hud: 420ms;
+
+  /* ---- Layout ---- */
+  --sidebar-width: 218px;
+  --sidebar-width-collapsed: 60px;
+  --sidebar-row-height: 36px;
+}
+
+/*
+ * Light theme. Same floating architecture on a cool paper ground — the panes
+ * still hover, the shadows still carry the separation, and the accent still
+ * reads. Not an inversion of the dark values.
+ */
+:root.light {
+  --bg-window: #e8e9ee;
+  --bg-sidebar: #f7f8fb;
+  --bg-content: #ffffff;
+  --bg-panel: #ffffff;
+  --bg-elevated: #ffffff;
+  --bg-inset: #f1f2f6;
+  --bg-hover: rgba(16, 20, 40, 0.04);
+  --bg-active: rgba(16, 20, 40, 0.07);
+  --bg-selected: rgba(78, 106, 232, 0.12);
+
+  --fg-primary: #171a22;
+  --fg-secondary: #565d70;
+  --fg-tertiary: #878ea1;
+  --fg-quaternary: #b3b9c7;
+  --fg-on-accent: #ffffff;
+
+  --separator: rgba(16, 20, 40, 0.07);
+  --separator-opaque: #dfe1e9;
+
+  /* Darkened so it holds contrast on white. */
+  --accent: #4e6ae8;
+  --accent-hover: #3f5ad4;
+  --accent-pressed: #3550bd;
+  --accent-dim: rgba(78, 106, 232, 0.12);
+  --accent-glow: rgba(78, 106, 232, 0.32);
+
+  --success: #12a071;
+  --warning: #b47908;
+  --danger: #d84343;
+  --info: #4e6ae8;
+  --purple: #7c56d4;
+
+  --focus-ring: rgba(78, 106, 232, 0.5);
+
+  --shadow-1: 0 1px 0 rgba(255, 255, 255, 0.9) inset,
+    0 3px 10px -3px rgba(16, 20, 40, 0.13);
+  --shadow-2: 0 1px 0 rgba(255, 255, 255, 0.9) inset,
+    0 10px 24px -10px rgba(16, 20, 40, 0.2);
+  --shadow-3: 0 1px 0 rgba(255, 255, 255, 0.95) inset,
+    0 20px 44px -14px rgba(16, 20, 40, 0.26);
+  --shadow-4: 0 1px 0 rgba(255, 255, 255, 1) inset,
+    0 34px 72px -18px rgba(16, 20, 40, 0.3);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  :root {
+    --dur-instant: 1ms;
+    --dur-fast: 1ms;
+    --dur-normal: 1ms;
+    --dur-slow: 1ms;
+    --dur-hud: 1ms;
+  }
+}

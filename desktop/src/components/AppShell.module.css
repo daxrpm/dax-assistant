@@ -1,0 +1,147 @@
+/*
+ * The floating-pane shell.
+ *
+ * The rail and the stage are two separate objects hovering over the window
+ * ground, with air between them and against every window edge. Nothing bleeds
+ * to the frame and nothing is separated by a rule — that full-bleed grid with
+ * a 1px divider is what made the previous iteration read as a web page.
+ */
+.shell {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: var(--gutter);
+  padding: var(--gutter);
+  height: 100%;
+  background: var(--bg-window);
+}
+
+.sidebar {
+  display: flex;
+  flex-direction: column;
+  width: var(--sidebar-width);
+  background: var(--bg-sidebar);
+  border-radius: var(--radius-xl);
+  box-shadow: var(--shadow-3);
+  padding: var(--space-3) var(--space-2);
+  transition: width var(--dur-normal) var(--ease-out-soft);
+  overflow: hidden;
+}
+
+.collapsed {
+  width: var(--sidebar-width-collapsed);
+}
+
+.sidebarHeader {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  height: 36px;
+  padding: 0 var(--space-2) var(--space-2);
+  flex: none;
+}
+
+.wordmark {
+  font-size: var(--text-title3);
+  line-height: var(--text-title3-lh);
+  /* 500, not 600: heavy weights read as web chrome at this size. */
+  font-weight: 500;
+  letter-spacing: var(--tracking-tight);
+  white-space: nowrap;
+}
+
+.nav {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  flex: 1;
+  overflow-y: auto;
+}
+
+.groupHeader {
+  padding: var(--space-5) var(--space-2) var(--space-1);
+  font-size: var(--text-caption);
+  line-height: var(--text-caption-lh);
+  font-weight: 500;
+  letter-spacing: var(--tracking-label);
+  text-transform: uppercase;
+  color: var(--fg-quaternary);
+  white-space: nowrap;
+}
+
+.navItem {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  height: var(--sidebar-row-height);
+  padding: 0 var(--space-3);
+  border: none;
+  border-radius: var(--radius-md);
+  background: transparent;
+  color: var(--fg-secondary);
+  font-size: var(--text-callout);
+  text-align: left;
+  white-space: nowrap;
+  cursor: default;
+  transition:
+    background-color var(--dur-fast) var(--ease-standard),
+    color var(--dur-fast) var(--ease-standard);
+}
+
+.navItem:hover {
+  background: var(--bg-hover);
+  color: var(--fg-primary);
+}
+
+/*
+ * Selection is a raised surface, not a tinted block. The accent stays
+ * reserved for the voice orb and the primary action.
+ */
+.navItemSelected,
+.navItemSelected:hover {
+  background: var(--bg-elevated);
+  color: var(--fg-primary);
+  font-weight: 500;
+}
+
+.navIcon {
+  flex: none;
+  width: 16px;
+  height: 16px;
+  display: grid;
+  place-items: center;
+  color: var(--fg-tertiary);
+  transition: color var(--dur-fast) var(--ease-standard);
+}
+
+.navItem:hover .navIcon,
+.navItemSelected .navIcon {
+  color: var(--fg-secondary);
+}
+
+.sidebarFooter {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding: var(--space-3) var(--space-2) 0;
+  margin-top: var(--space-2);
+  border-top: 1px solid var(--separator);
+}
+
+/* ---- stage ---- */
+
+.content {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  background: var(--bg-content);
+  border-radius: var(--radius-xl);
+  box-shadow: var(--shadow-3);
+  overflow: hidden;
+}
+
+.contentScroll {
+  flex: 1;
+  overflow-y: auto;
+  padding: var(--space-6) var(--space-8);
+}

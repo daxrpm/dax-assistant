@@ -1,0 +1,68 @@
+/* Rows are spaced, not ruled — the hairline stack was the rejected look. */
+.table {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+  margin: 0 calc(-1 * var(--space-2));
+}
+
+.serverRow {
+  border-radius: var(--radius-lg);
+  transition: background var(--dur-fast) var(--ease-standard);
+}
+
+.serverRow:hover {
+  background: var(--bg-hover);
+}
+
+.serverMain {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  padding: var(--space-4) var(--space-3);
+}
+
+.serverName {
+  font-size: var(--text-body);
+  font-weight: 500;
+  color: var(--fg-primary);
+  background: transparent;
+  border: none;
+  padding: 0;
+  cursor: pointer;
+}
+
+.serverName:hover {
+  color: var(--accent);
+}
+
+.serverMeta {
+  font-size: var(--text-callout);
+  color: var(--fg-tertiary);
+}
+
+.serverActions {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  margin-left: auto;
+}
+
+.serverDetail {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+  padding: 0 var(--space-3) var(--space-4);
+}
+
+.serverCmd {
+  padding: var(--space-3);
+  overflow-x: auto;
+  font-family: var(--font-mono);
+  font-size: var(--text-footnote);
+  color: var(--fg-secondary);
+  white-space: nowrap;
+  user-select: text;
+  background: var(--bg-inset);
+  border-radius: var(--radius-md);
+}

@@ -1,0 +1,46 @@
+.recorder {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+}
+
+.meterTrack {
+  flex: 1;
+  height: 8px;
+  overflow: hidden;
+  background: var(--bg-inset);
+  border-radius: 999px;
+}
+
+.meterFill {
+  height: 100%;
+  background: linear-gradient(90deg, var(--success), var(--warning));
+  border-radius: 999px;
+  transition: width 60ms linear;
+}
+
+.sampleList {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+
+.sample {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  padding: var(--space-3) var(--space-4);
+  font-size: var(--text-callout);
+  background: var(--bg-inset);
+  border-radius: var(--radius-lg);
+}
+
+.sample > :first-child {
+  flex: 1;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .meterFill {
+    transition: none;
+  }
+}

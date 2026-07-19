@@ -1,0 +1,59 @@
+.screen {
+  display: grid;
+  place-items: center;
+  height: 100%;
+  background: var(--bg-window);
+}
+
+.card {
+  width: 380px;
+  padding: var(--space-10) var(--space-8) var(--space-8);
+  background: var(--bg-elevated);
+  border-radius: var(--radius-xl);
+  box-shadow: var(--shadow-3);
+}
+
+.brand {
+  text-align: center;
+  margin-bottom: var(--space-6);
+}
+
+.title {
+  font-size: var(--text-title1);
+  line-height: var(--text-title1-lh);
+  font-weight: 500;
+  letter-spacing: var(--tracking-tight);
+}
+
+.subtitle {
+  margin-top: var(--space-1);
+  font-size: var(--text-callout);
+  line-height: var(--text-callout-lh);
+  color: var(--fg-secondary);
+}
+
+.form {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+}
+
+.footer {
+  margin-top: var(--space-8);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-2);
+  font-size: var(--text-footnote);
+  line-height: var(--text-footnote-lh);
+  color: var(--fg-tertiary);
+}
+
+.endpoint {
+  font-family: var(--font-mono);
+  font-size: var(--text-footnote);
+  color: var(--fg-tertiary);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}

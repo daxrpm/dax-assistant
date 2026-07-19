@@ -1,0 +1,700 @@
+.chat {
+  display: flex;
+  height: 100%;
+  min-height: 0;
+}
+
+/* ---------------- conversation sidebar ---------------- */
+
+/*
+ * The rail separates itself by sitting one step down from the stage, not by a
+ * vertical rule. Same device the composer and the activity panel use.
+ */
+.convSidebar {
+  display: flex;
+  flex-direction: column;
+  width: 248px;
+  flex-shrink: 0;
+  background: var(--bg-inset);
+}
+
+.convHeader {
+  padding: var(--space-4) var(--space-3) var(--space-3);
+}
+
+.searchWrap {
+  position: relative;
+  padding: 0 var(--space-3) var(--space-3);
+}
+
+.searchIcon {
+  position: absolute;
+  top: 50%;
+  left: calc(var(--space-3) + var(--space-3));
+  color: var(--fg-tertiary);
+  transform: translateY(-50%);
+  pointer-events: none;
+}
+
+.searchInput {
+  width: 100%;
+  height: 32px;
+  padding: 0 var(--space-3) 0 var(--space-8);
+  font-size: var(--text-callout);
+  color: var(--fg-primary);
+  background: var(--bg-elevated);
+  border: none;
+  border-radius: var(--radius-md);
+  outline: none;
+}
+
+.searchInput::placeholder {
+  color: var(--fg-tertiary);
+}
+
+.groupHeader {
+  padding: var(--space-5) var(--space-3) var(--space-1);
+  font-size: var(--text-caption);
+  line-height: var(--text-caption-lh);
+  font-weight: 500;
+  letter-spacing: var(--tracking-label);
+  text-transform: uppercase;
+  color: var(--fg-quaternary);
+}
+
+.convList {
+  flex: 1;
+  min-height: 0;
+  padding: 0 var(--space-2) var(--space-3);
+  overflow-y: auto;
+}
+
+.convRow {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  width: 100%;
+  padding: var(--space-3);
+  text-align: left;
+  color: var(--fg-primary);
+  background: transparent;
+  border: none;
+  border-radius: var(--radius-md);
+  cursor: pointer;
+  transition: background var(--dur-fast) var(--ease-standard);
+}
+
+.convRow:hover {
+  background: var(--bg-hover);
+}
+
+/* Raised, not tinted — the accent stays reserved. */
+.convRowSelected,
+.convRowSelected:hover {
+  background: var(--bg-elevated);
+  box-shadow: var(--shadow-1);
+}
+
+.convIcon {
+  flex-shrink: 0;
+  color: var(--fg-tertiary);
+}
+
+.convRowSelected .convIcon {
+  color: var(--fg-secondary);
+}
+
+.convText {
+  flex: 1;
+  min-width: 0;
+}
+
+.convTitle {
+  overflow: hidden;
+  font-size: var(--text-callout);
+  font-weight: 500;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.convMeta {
+  font-size: var(--text-footnote);
+  line-height: var(--text-footnote-lh);
+  color: var(--fg-tertiary);
+}
+
+.convDelete {
+  flex-shrink: 0;
+  opacity: 0;
+  transition: opacity var(--dur-fast) var(--ease-standard);
+}
+
+.convRow:hover .convDelete,
+.convDelete:focus-visible {
+  opacity: 1;
+}
+
+.convEmpty {
+  padding: var(--space-6) var(--space-3);
+  font-size: var(--text-callout);
+  color: var(--fg-tertiary);
+  text-align: center;
+}
+
+/* ---------------- main column ---------------- */
+
+.main {
+  display: flex;
+  flex: 1;
+  min-width: 0;
+}
+
+.column {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  min-width: 0;
+  background: var(--bg-content);
+}
+
+.header {
+  display: flex;
+  flex-shrink: 0;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-3);
+  height: 56px;
+  padding: 0 var(--space-6);
+}
+
+.headerTitle {
+  overflow: hidden;
+  font-size: var(--text-title3);
+  font-weight: 500;
+  letter-spacing: var(--tracking-tight);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.headerActions {
+  display: flex;
+  flex-shrink: 0;
+  align-items: center;
+  gap: var(--space-1);
+}
+
+.headerButton {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  height: 30px;
+  padding: 0 var(--space-3);
+  font-size: var(--text-callout);
+  color: var(--fg-secondary);
+  background: transparent;
+  border: none;
+  border-radius: var(--radius-md);
+  cursor: pointer;
+  transition:
+    background var(--dur-instant) var(--ease-standard),
+    color var(--dur-instant) var(--ease-standard);
+}
+
+.headerButton:hover {
+  background: var(--bg-hover);
+  color: var(--fg-primary);
+}
+
+.headerButtonActive,
+.headerButtonActive:hover {
+  color: var(--fg-primary);
+  background: var(--bg-elevated);
+  box-shadow: var(--shadow-1);
+}
+
+/* ---------------- messages ---------------- */
+
+.scroll {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+}
+
+.thread {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-6);
+  max-width: 720px;
+  margin: 0 auto;
+  padding: var(--space-10) var(--space-8);
+}
+
+.userRow {
+  display: flex;
+  justify-content: flex-end;
+}
+
+.userBubble {
+  max-width: 80%;
+  padding: var(--space-3) var(--space-5);
+  font-size: var(--text-chat);
+  line-height: var(--text-chat-lh);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  user-select: text;
+  background: var(--bg-elevated);
+  box-shadow: var(--shadow-1);
+  border-radius: var(--radius-xl) var(--radius-xl) var(--radius-md) var(--radius-xl);
+}
+
+.assistantRow {
+  display: flex;
+  gap: var(--space-3);
+}
+
+.avatar {
+  display: flex;
+  flex-shrink: 0;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  color: var(--fg-on-accent);
+  background: linear-gradient(135deg, var(--accent), var(--purple));
+  border-radius: 999px;
+  box-shadow: var(--shadow-1);
+}
+
+.assistantBody {
+  flex: 1;
+  min-width: 0;
+  padding-top: 2px;
+}
+
+/* ---------------- thinking trail ---------------- */
+
+.trailHeadline {
+  font-size: var(--text-body);
+  font-weight: 500;
+  color: var(--fg-secondary);
+  animation: pulse 2s var(--ease-in-out) infinite;
+}
+
+@keyframes pulse {
+  50% {
+    color: var(--fg-primary);
+  }
+}
+
+/*
+ * The trail rail is the one line that survives in this file: it marks the
+ * extent of a nested sequence inside a flowing thread, which space alone
+ * cannot express. It is drawn at the near-invisible separator value.
+ */
+.steps {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  margin-top: var(--space-3);
+  padding-left: var(--space-4);
+  border-left: 1px solid var(--separator);
+}
+
+.step {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  font-size: var(--text-callout);
+  color: var(--fg-secondary);
+}
+
+.stepTool {
+  overflow: hidden;
+  font-family: var(--font-mono);
+  color: var(--fg-primary);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.stepOk {
+  flex-shrink: 0;
+  color: var(--success);
+}
+
+.stepErr {
+  flex-shrink: 0;
+  color: var(--danger);
+}
+
+.stepIcon {
+  flex-shrink: 0;
+  color: var(--fg-tertiary);
+}
+
+.thoughtToggle {
+  display: flex;
+  align-items: center;
+  gap: var(--space-1);
+  margin-bottom: var(--space-2);
+  padding: 0;
+  font-size: var(--text-callout);
+  color: var(--fg-tertiary);
+  background: transparent;
+  border: none;
+  cursor: pointer;
+  transition: color var(--dur-fast) var(--ease-standard);
+}
+
+.thoughtToggle:hover {
+  color: var(--fg-primary);
+}
+
+/* ---------------- empty state ---------------- */
+
+.hero {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  margin-top: var(--space-16);
+  text-align: center;
+}
+
+.heroMark {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 60px;
+  height: 60px;
+  margin-bottom: var(--space-5);
+  color: var(--fg-on-accent);
+  background: linear-gradient(135deg, var(--accent), var(--purple));
+  border-radius: var(--radius-2xl);
+  box-shadow: var(--shadow-2);
+}
+
+.heroTitle {
+  font-size: var(--text-title1);
+  line-height: var(--text-title1-lh);
+  font-weight: 500;
+  letter-spacing: var(--tracking-tight);
+}
+
+.heroBody {
+  max-width: 360px;
+  margin-top: var(--space-2);
+  font-size: var(--text-body);
+  color: var(--fg-secondary);
+}
+
+/* ---------------- composer ---------------- */
+
+.composerWrap {
+  flex-shrink: 0;
+  padding: 0 var(--space-8) var(--space-6);
+}
+
+/*
+ * The composer floats over the thread. Focus lifts it rather than outlining
+ * it — the accent lives on the send button, the one primary action here.
+ */
+.composer {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  max-width: 720px;
+  margin: 0 auto;
+  padding: var(--space-4);
+  background: var(--bg-elevated);
+  border: none;
+  border-radius: var(--radius-xl);
+  box-shadow: var(--shadow-2);
+  transition: box-shadow var(--dur-normal) var(--ease-out-soft);
+}
+
+.composer:focus-within {
+  box-shadow: var(--shadow-3);
+}
+
+.composerInput {
+  width: 100%;
+  max-height: 200px;
+  padding: var(--space-1) var(--space-2);
+  font-size: var(--text-chat);
+  line-height: var(--text-chat-lh);
+  color: var(--fg-primary);
+  resize: none;
+  background: transparent;
+  border: none;
+  outline: none;
+}
+
+.composerInput::placeholder {
+  color: var(--fg-tertiary);
+}
+
+.composerBar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-2);
+}
+
+.sendButton {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 34px;
+  height: 34px;
+  flex-shrink: 0;
+  color: var(--fg-on-accent);
+  background: var(--accent);
+  border: none;
+  border-radius: 999px;
+  cursor: pointer;
+  transition:
+    background var(--dur-instant) var(--ease-standard),
+    opacity var(--dur-instant) var(--ease-standard);
+}
+
+.sendButton:hover:not(:disabled) {
+  background: var(--accent-hover);
+}
+
+.sendButton:disabled {
+  opacity: 0.35;
+  cursor: default;
+}
+
+.connectionNote {
+  max-width: 720px;
+  margin: var(--space-2) auto 0;
+  font-size: var(--text-callout);
+  color: var(--warning);
+  text-align: center;
+}
+
+.connectionNoteError {
+  color: var(--danger);
+}
+
+/* ---------------- model selector ---------------- */
+
+.modelTrigger {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+  height: 28px;
+  padding: 0 var(--space-3);
+  font-size: var(--text-callout);
+  color: var(--fg-secondary);
+  background: transparent;
+  border: none;
+  border-radius: var(--radius-pill);
+  cursor: pointer;
+  transition:
+    background var(--dur-instant) var(--ease-standard),
+    color var(--dur-instant) var(--ease-standard);
+}
+
+.modelTrigger:hover {
+  background: var(--bg-hover);
+  color: var(--fg-primary);
+}
+
+.modelProvider {
+  text-transform: capitalize;
+}
+
+.modelName {
+  font-family: var(--font-mono);
+}
+
+.modelMenu {
+  width: 280px;
+  max-height: 320px;
+  overflow-y: auto;
+}
+
+.modelGroup {
+  position: sticky;
+  top: 0;
+  padding: var(--space-3) var(--space-3) var(--space-1);
+  font-size: var(--text-caption);
+  font-weight: 500;
+  letter-spacing: var(--tracking-label);
+  text-transform: uppercase;
+  color: var(--fg-quaternary);
+  background: var(--bg-elevated);
+}
+
+.modelOption {
+  display: flex;
+  width: 100%;
+  padding: var(--space-2) var(--space-3);
+  font-family: var(--font-mono);
+  font-size: var(--text-callout);
+  color: var(--fg-primary);
+  text-align: left;
+  background: transparent;
+  border: none;
+  border-radius: var(--radius-md);
+  cursor: pointer;
+}
+
+.modelOption:hover {
+  background: var(--bg-hover);
+}
+
+.modelOptionSelected,
+.modelOptionSelected:hover {
+  font-weight: 500;
+  color: var(--fg-primary);
+  background: var(--bg-active);
+}
+
+.modelLoading {
+  padding: var(--space-3);
+  font-size: var(--text-callout);
+  color: var(--fg-secondary);
+}
+
+/* ---------------- activity panel ---------------- */
+
+.activity {
+  display: flex;
+  flex-direction: column;
+  width: 300px;
+  flex-shrink: 0;
+  background: var(--bg-inset);
+}
+
+.activityHeader {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  height: 56px;
+  padding: 0 var(--space-5);
+}
+
+.activityTitle {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  font-size: var(--text-body);
+  font-weight: 500;
+}
+
+.activityBody {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  gap: var(--space-5);
+  min-height: 0;
+  padding: var(--space-2) var(--space-5) var(--space-5);
+  overflow-y: auto;
+}
+
+.activityItem {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+}
+
+.activityItemHead {
+  display: flex;
+  align-items: center;
+  gap: var(--space-1);
+  font-size: var(--text-callout);
+  font-weight: 500;
+}
+
+.activityServer {
+  padding-left: var(--space-4);
+  font-size: var(--text-footnote);
+  color: var(--fg-tertiary);
+}
+
+.activityPre {
+  margin: 0 0 0 var(--space-4);
+  padding: var(--space-3);
+  overflow-x: auto;
+  font-family: var(--font-mono);
+  font-size: var(--text-footnote);
+  line-height: 14px;
+  color: var(--fg-secondary);
+  white-space: pre;
+  user-select: text;
+  background: var(--bg-window);
+  border-radius: var(--radius-md);
+}
+
+.activityEmpty {
+  font-size: var(--text-callout);
+  color: var(--fg-tertiary);
+}
+
+/* ---------------- confirmation modal ---------------- */
+
+.confirmHead {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  margin-bottom: var(--space-3);
+}
+
+.confirmTool {
+  font-family: var(--font-mono);
+  font-size: var(--text-body);
+  font-weight: 500;
+}
+
+.confirmNote {
+  margin-top: var(--space-3);
+  font-size: var(--text-callout);
+  line-height: var(--text-callout-lh);
+  color: var(--fg-secondary);
+}
+
+.countdown {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  margin-top: var(--space-3);
+  font-size: var(--text-callout);
+  color: var(--fg-secondary);
+}
+
+.countdownUrgent {
+  font-weight: 500;
+  color: var(--danger);
+}
+
+.countdownTrack {
+  flex: 1;
+  height: 3px;
+  overflow: hidden;
+  background: var(--bg-active);
+  border-radius: 999px;
+}
+
+.countdownFill {
+  height: 100%;
+  background: var(--warning);
+  border-radius: 999px;
+  transition: width 1s linear;
+}
+
+.countdownFillUrgent {
+  background: var(--danger);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .trailHeadline {
+    animation: none;
+  }
+
+  .countdownFill {
+    transition: none;
+  }
+}

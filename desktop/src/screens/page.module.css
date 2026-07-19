@@ -1,0 +1,153 @@
+/*
+ * Shared layout for the document-style screens (MCP, Marketplace, Commands,
+ * Settings). Chat and Logs own their own full-height chrome instead.
+ */
+
+.page {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-6);
+  max-width: 880px;
+  margin: 0 auto;
+}
+
+.pageHead {
+  display: flex;
+  align-items: center;
+  gap: var(--space-4);
+  padding-bottom: var(--space-1);
+}
+
+/*
+ * The page mark used to be a solid accent tile on every screen, which spent
+ * the accent on decoration. It is a raised neutral surface now; the accent is
+ * reserved for the orb and the one primary action a view actually has.
+ */
+.pageMark {
+  display: flex;
+  flex-shrink: 0;
+  align-items: center;
+  justify-content: center;
+  width: 44px;
+  height: 44px;
+  color: var(--fg-secondary);
+  background: var(--bg-elevated);
+  border-radius: var(--radius-xl);
+  box-shadow: var(--shadow-1);
+}
+
+.pageTitle {
+  font-size: var(--text-title1);
+  line-height: var(--text-title1-lh);
+  font-weight: 500;
+  letter-spacing: var(--tracking-tight);
+}
+
+.pageSubtitle {
+  margin-top: 2px;
+  font-size: var(--text-body);
+  color: var(--fg-secondary);
+}
+
+.rows {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-5);
+}
+
+.row2 {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: var(--space-5);
+}
+
+.actions {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+.actionsEnd {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: var(--space-2);
+}
+
+.hint {
+  font-size: var(--text-callout);
+  line-height: var(--text-callout-lh);
+  color: var(--fg-secondary);
+}
+
+/* Restart-required notice — host/port and Telegram do not apply live. */
+.notice {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-3);
+  padding: var(--space-4);
+  font-size: var(--text-callout);
+  line-height: var(--text-callout-lh);
+  color: var(--fg-secondary);
+  background: color-mix(in srgb, var(--warning) 12%, transparent);
+  border-radius: var(--radius-lg);
+}
+
+.noticeIcon {
+  flex-shrink: 0;
+  margin-top: 1px;
+  color: var(--warning);
+}
+
+.tagList {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+}
+
+.tag {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+  padding: var(--space-1) var(--space-1) var(--space-1) var(--space-3);
+  font-family: var(--font-mono);
+  font-size: var(--text-callout);
+  background: var(--bg-inset);
+  border-radius: var(--radius-pill);
+}
+
+.tagDefault {
+  color: var(--fg-secondary);
+}
+
+.mono {
+  font-family: var(--font-mono);
+}
+
+.dim {
+  color: var(--fg-secondary);
+}
+
+.spread {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-3);
+}
+
+.grow {
+  flex: 1;
+  min-width: 0;
+}
+
+.stack {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+}
+
+.scrollPage {
+  height: 100%;
+  overflow-y: auto;
+  padding: var(--space-8);
+}

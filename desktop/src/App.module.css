@@ -1,0 +1,64 @@
+.center {
+  display: grid;
+  place-items: center;
+  height: 100%;
+  background: var(--bg-window);
+}
+
+.message {
+  max-width: 400px;
+  padding: var(--space-8);
+  text-align: center;
+  background: var(--bg-elevated);
+  border-radius: var(--radius-xl);
+  box-shadow: var(--shadow-3);
+}
+
+.messageTitle {
+  font-size: var(--text-title2);
+  line-height: var(--text-title2-lh);
+  font-weight: 500;
+  letter-spacing: var(--tracking-tight);
+}
+
+.messageBody {
+  margin-top: var(--space-2);
+  font-size: var(--text-callout);
+  line-height: var(--text-callout-lh);
+  color: var(--fg-secondary);
+}
+
+.messageHint {
+  margin-top: var(--space-3);
+  font-size: var(--text-footnote);
+  line-height: var(--text-footnote-lh);
+  color: var(--fg-tertiary);
+}
+
+.messageHint code {
+  font-family: var(--font-mono);
+  padding: 2px var(--space-2);
+  border-radius: var(--radius-md);
+  background: var(--bg-inset);
+}
+
+.retry {
+  margin-top: var(--space-5);
+  height: 34px;
+  padding: 0 var(--space-5);
+  border: none;
+  border-radius: var(--radius-md);
+  background: var(--accent);
+  color: var(--fg-on-accent);
+  font-size: var(--text-body);
+  font-weight: 500;
+  cursor: default;
+}
+
+.placeholder {
+  display: grid;
+  place-content: center;
+  gap: var(--space-1);
+  height: 100%;
+  text-align: center;
+}

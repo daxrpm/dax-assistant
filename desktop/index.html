@@ -1,0 +1,18 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <!--
+      No remote origins: the app talks to the backend over fetch/WebSocket at a
+      user-configured origin, which is granted at runtime via connect-src below.
+      Keep this iframe-free (see PLAN.md 3.8 — Tauri cannot distinguish iframe
+      from window requests on Linux, and we render LLM-produced markdown).
+    -->
+    <title>Dax</title>
+  </head>
+  <body>
+    <div id="root"></div>
+    <script type="module" src="/src/main.tsx"></script>
+  </body>
+</html>
