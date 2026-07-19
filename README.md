@@ -29,6 +29,10 @@ and storage are all swappable behind small interfaces.
 - **Memory.** Conversations are persisted per channel/session in SQLite and replayed into
   each turn, plus a tool-execution audit log.
 - **Modern web UI.** React + HeroUI v3 + Tailwind v4, minimalist, light/dark (follows your OS theme).
+- **Native Linux client.** Tauri v2 + React desktop app with chat, declarative
+  Settings, system metrics, systemd controls, tray, native notifications,
+  autostart, global PTT, a configurable custom/native frame, and a separate
+  Canvas 2D voice HUD.
 
 ---
 
@@ -135,6 +139,45 @@ providers, integrations, voice, and MCP servers from Settings.
 If you only want the default local provider, make sure Ollama is running and has the model
 selected in Settings, e.g. `ollama pull llama3.1:8b`.
 
+### Desktop client
+
+The desktop client is a separate first-class UI under `desktop/`. It connects
+directly to the same authenticated HTTP and WebSocket API. The supported local
+architecture is:
+
+```text
+Dax Desktop (Tauri/Rust + React)
+  ├─ HTTP + /ws/chat + /ws/logs + /ws/voice
+  ├─ OS keyring, tray, HUD, shortcuts, notifications, autostart
+  └─ systemctl --user control + host metrics
+                    │
+                    ▼
+dax-assistant.service (FastAPI + agent + MCP + voice)
+```
+
+There is no bundled Python sidecar. For a remote backend, the desktop client
+requires HTTPS/WSS; HTTP/WS is accepted only for loopback. The backend
+automatically trusts the packaged Tauri webview origins, so a fresh installation
+does not require a manual CORS entry.
+
+Native first-run onboarding completes before authentication and configures a
+schema-v2 `local`, `remote`, or `hybrid` strategy. Starting the existing local
+systemd service requires explicit consent. Hybrid is remote-first, falls back to
+loopback after three confirmed failures, and does not fail back during the active
+session. Authentication tokens are isolated by backend origin. The same
+connection editor is available later in Desktop Settings.
+
+Orbita uses stepped cool surfaces over a blue-black ground. Its default main
+window chrome is a 31 px custom frame, with native decorations configurable in
+Settings. The voice orb is pseudo-3D Canvas 2D: separate input/output waves use
+RMS, peak, and spectrum frames through imperative buffers without routing level
+data through React state.
+
+See [`desktop/README.md`](desktop/README.md) for prerequisites, development,
+packaging, verified test counts and known validation gaps. See
+[`docs/desktop-architecture.md`](docs/desktop-architecture.md) for the primary
+desktop architecture reference.
+
 ---
 
 ## Configuration
@@ -200,7 +243,8 @@ Disable PC control entirely by setting `enabled = false` on the `dax-system` ser
 ## Voice assistant (Alexa-style, 100% open source)
 
 Say the wake word and talk — Dax wakes, listens, transcribes, answers out loud, and keeps
-the conversation going for follow-ups without re-triggering. Everything runs locally.
+the conversation going for follow-ups without re-triggering. In the normal deployment,
+everything runs locally on the backend host.
 
 **The stack**
 
@@ -236,8 +280,10 @@ speaker_verification = false       # set true after enrolling your voice
 
 **Voice behaviour worth knowing**
 
-- **Fresh per activation.** Each wake word starts a new conversation scope, so Dax doesn't
-  bleed context from past chats; follow-ups within the same activation keep context.
+- **Session-scoped context.** Voice turns reuse a `session_id` across activations until its
+  inactivity TTL expires (or an explicit farewell ends it), preserving useful follow-up
+  context without retaining it indefinitely. `/ws/voice` reports the absolute
+  `session_expires_at` value.
 - **Spoken confirmations.** When a tool needs approval and the request came from voice, Dax
   asks out loud (“¿lo ejecuto? sí/no”) instead of waiting on the (unseen) web modal.
 - **Voice ID.** Enroll once, then enable it to ignore other voices:
@@ -258,6 +304,9 @@ speaker_verification = false       # set true after enrolling your voice
 # Lint
 ~/.local/bin/uv run ruff check src tests
 
+# Strict type check
+~/.local/bin/uv run mypy src
+
 # Web UI (from web/)
 cd web
 npm install
@@ -265,6 +314,24 @@ npm run dev        # Vite dev server (set [web] dev_mode = true for CORS)
 npm run build      # outputs into src/dax/web/static, served by FastAPI
 npm run test:run   # vitest
 ```
+
+Desktop verification and packaging:
+
+```bash
+cd desktop
+npm run typecheck
+npm test           # 49 tests in the recorded 2026-07-19 run
+npm run build
+npm audit --omit=dev # 0 vulnerabilities in the recorded run
+cd src-tauri
+cargo test --all-targets --all-features # 16 tests in the recorded run
+cargo clippy --all-targets --all-features -- -D warnings
+```
+
+The same recorded run passed 312 backend tests; ruff, mypy and clippy were
+clean, as was the frontend build. These automated gates do not claim a human
+visual review, hardware audio, interactive Wayland behavior, remote audio
+between two hosts, or clean-system package installation.
 
 The wheel `force-include`s `src/dax/web/static`, so a production build of the web UI is
 served directly by the FastAPI app at `/`.
@@ -295,6 +362,11 @@ the port. If you must listen on the LAN, set `[web] expose_lan = true` and
 in the host firewall only for the trusted subnet and never expose it directly to the
 internet. When using a reverse proxy, preserve WebSocket upgrades for `/api/chat/ws` and
 proxy to `http://127.0.0.1:8420`.
+
+For desktop remote voice, microphone PCM travels from the client to
+`/ws/voice` as bounded PTT-only mono 16 kHz PCM. In protocol v1, synthesized
+speech is played on the backend server's speakers; audio output is not streamed
+back to the desktop client. See [`docs/voice-websocket.md`](docs/voice-websocket.md).
 
 ---
 
