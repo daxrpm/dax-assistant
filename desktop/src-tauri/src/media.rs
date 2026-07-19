@@ -1,6 +1,8 @@
+use base64::Engine;
 use serde::{Deserialize, Serialize};
 use std::collections::HashSet;
 use std::io::ErrorKind;
+use std::path::{Path, PathBuf};
 use std::process::Stdio;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
@@ -17,6 +19,7 @@ const FIELD_SEPARATOR: char = '\u{1f}';
 const SPECTRUM_BANDS: usize = 40;
 const SPECTRUM_FRAMES: usize = 2048;
 const SPECTRUM_RATE: f32 = 48_000.0;
+const ARTWORK_LIMIT: u64 = 5 * 1024 * 1024;
 type SpectrumStop = Arc<Mutex<Option<(u64, oneshot::Sender<()>)>>>;
 
 #[derive(Default)]
@@ -25,6 +28,7 @@ pub struct MediaState {
     ducking: Mutex<DuckingSession>,
     spectrum_stop: SpectrumStop,
     spectrum_id: AtomicU64,
+    artwork_cache: Mutex<Option<(String, String)>>,
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -163,12 +167,12 @@ pub enum DuckingState {
 }
 
 impl DuckingState {
-    fn volume_factor(self) -> Option<f64> {
+    fn volume_factor(self, configured: f64) -> Option<f64> {
         match self {
             Self::Idle => None,
-            Self::Listening => Some(0.20),
-            Self::Processing => Some(0.55),
-            Self::Speaking => Some(0.15),
+            Self::Listening => Some(configured.max(0.60)),
+            Self::Processing => Some(configured.max(0.75)),
+            Self::Speaking => Some(configured),
         }
     }
 }
@@ -226,6 +230,7 @@ pub struct MediaSnapshot {
     pub title: Option<String>,
     pub artist: Option<String>,
     pub album: Option<String>,
+    pub art_url: Option<String>,
     pub position_seconds: Option<f64>,
     pub duration_seconds: Option<f64>,
 }
@@ -330,11 +335,12 @@ struct ParsedMetadata {
     artist: Option<String>,
     album: Option<String>,
     duration_seconds: Option<f64>,
+    art_url: Option<String>,
 }
 
 fn parse_metadata(output: &str) -> ParsedMetadata {
     let mut fields = output.split(FIELD_SEPARATOR);
-    ParsedMetadata {
+    let metadata = ParsedMetadata {
         identity: optional(fields.next()),
         title: optional(fields.next()),
         artist: optional(fields.next()),
@@ -344,7 +350,98 @@ fn parse_metadata(output: &str) -> ParsedMetadata {
             .and_then(|value| value.trim().parse::<f64>().ok())
             .filter(|value| *value >= 0.0)
             .map(|microseconds| microseconds / 1_000_000.0),
+        art_url: optional(fields.next()),
+    };
+    metadata
+}
+
+fn trusted_remote_art_url(
+    player: &str,
+    identity: Option<&str>,
+    value: Option<&str>,
+) -> Option<String> {
+    let provider = format!("{player} {}", identity.unwrap_or_default()).to_lowercase();
+    if !provider.contains("spotify") {
+        return None;
     }
+    let parsed = url::Url::parse(value?).ok()?;
+    let host = parsed.host_str()?;
+    let trusted_host = host == "i.scdn.co" || host.ends_with(".spotifycdn.com");
+    (parsed.scheme() == "https"
+        && trusted_host
+        && parsed.username().is_empty()
+        && parsed.password().is_none()
+        && parsed.port().is_none())
+    .then(|| parsed.to_string())
+}
+
+fn browser_art_path(player: &str, value: Option<&str>) -> Option<PathBuf> {
+    let player = player.to_lowercase();
+    if !["brave", "chromium", "chrome"]
+        .iter()
+        .any(|browser| player.contains(browser))
+    {
+        return None;
+    }
+    let path = url::Url::parse(value?).ok()?.to_file_path().ok()?;
+    let name = path.file_name()?.to_str()?;
+    (path.parent() == Some(Path::new("/tmp")) && name.starts_with(".org.chromium.Chromium."))
+        .then_some(path)
+}
+
+fn artwork_data_url(bytes: &[u8]) -> Option<String> {
+    let mime = if bytes.starts_with(&[0x89, b'P', b'N', b'G', 0x0d, 0x0a, 0x1a, 0x0a]) {
+        "image/png"
+    } else if bytes.starts_with(&[0xff, 0xd8, 0xff]) {
+        "image/jpeg"
+    } else if bytes.starts_with(b"RIFF") && bytes.get(8..12) == Some(b"WEBP") {
+        "image/webp"
+    } else {
+        return None;
+    };
+    Some(format!(
+        "data:{mime};base64,{}",
+        base64::engine::general_purpose::STANDARD.encode(bytes)
+    ))
+}
+
+async fn resolve_art_url(
+    state: &MediaState,
+    player: &str,
+    identity: Option<&str>,
+    value: Option<&str>,
+) -> Option<String> {
+    if let Some(url) = trusted_remote_art_url(player, identity, value) {
+        return Some(url);
+    }
+    let source = browser_art_path(player, value)?;
+    let source_key = source.to_string_lossy();
+    if let Ok(cache) = state.artwork_cache.lock() {
+        if let Some((cached_source, data_url)) = cache.as_ref() {
+            if cached_source == source_key.as_ref() {
+                return Some(data_url.clone());
+            }
+        }
+    }
+    let metadata = tokio::fs::metadata(&source).await.ok()?;
+    if !metadata.is_file() || metadata.len() > ARTWORK_LIMIT {
+        return None;
+    }
+    let canonical = tokio::fs::canonicalize(&source).await.ok()?;
+    if canonical.parent() != Some(Path::new("/tmp"))
+        || !canonical
+            .file_name()?
+            .to_str()?
+            .starts_with(".org.chromium.Chromium.")
+    {
+        return None;
+    }
+    let bytes = tokio::fs::read(&canonical).await.ok()?;
+    let data_url = artwork_data_url(&bytes)?;
+    if let Ok(mut cache) = state.artwork_cache.lock() {
+        *cache = Some((source_key.into_owned(), data_url.clone()));
+    }
+    Some(data_url)
 }
 
 async fn discover_players() -> Result<Vec<String>, PlayerctlError> {
@@ -406,7 +503,7 @@ pub async fn status(state: &MediaState) -> Result<MediaSnapshot, String> {
         player.clone(),
         "metadata".into(),
         "--format".into(),
-        "{{playerName}}\u{1f}{{title}}\u{1f}{{artist}}\u{1f}{{album}}\u{1f}{{mpris:length}}".into(),
+        "{{playerName}}\u{1f}{{title}}\u{1f}{{artist}}\u{1f}{{album}}\u{1f}{{mpris:length}}\u{1f}{{mpris:artUrl}}".into(),
     ])
     .await
     .ok()
@@ -420,6 +517,13 @@ pub async fn status(state: &MediaState) -> Result<MediaSnapshot, String> {
         .and_then(|output| output.stdout.parse::<f64>().ok())
         .filter(|value| *value >= 0.0);
 
+    let art_url = resolve_art_url(
+        state,
+        &player,
+        metadata.identity.as_deref(),
+        metadata.art_url.as_deref(),
+    )
+    .await;
     Ok(MediaSnapshot {
         available: true,
         player: Some(player),
@@ -428,6 +532,7 @@ pub async fn status(state: &MediaState) -> Result<MediaSnapshot, String> {
         title: metadata.title,
         artist: metadata.artist,
         album: metadata.album,
+        art_url,
         position_seconds: position,
         duration_seconds: metadata.duration_seconds,
     })
@@ -538,7 +643,14 @@ async fn restore_ducking(session: DuckingSession) {
     }
 }
 
-pub async fn set_ducking(state: &MediaState, next: DuckingState) -> Result<(), String> {
+pub async fn set_ducking(
+    state: &MediaState,
+    next: DuckingState,
+    volume_factor: f64,
+) -> Result<(), String> {
+    if !volume_factor.is_finite() || !(0.10..=1.0).contains(&volume_factor) {
+        return Err("media ducking volume factor must be between 0.10 and 1.0".into());
+    }
     if next == DuckingState::Idle {
         let session = {
             let mut ducking = state
@@ -596,7 +708,7 @@ pub async fn set_ducking(state: &MediaState, next: DuckingState) -> Result<(), S
         .lock()
         .map_err(|_| "media state unavailable")?
         .original_volume;
-    if let (Some(original), Some(factor)) = (original_volume, next.volume_factor()) {
+    if let (Some(original), Some(factor)) = (original_volume, next.volume_factor(volume_factor)) {
         let output = run_playerctl(&[
             "--player".into(),
             player.clone(),
@@ -648,11 +760,59 @@ mod tests {
     }
 
     #[test]
-    fn parses_metadata_without_exposing_art_urls() {
-        let parsed = parse_metadata("Spotify\u{1f}Song\u{1f}Artist\u{1f}Album\u{1f}245000000");
+    fn parses_metadata_with_art_url() {
+        let parsed = parse_metadata(
+            "Spotify\u{1f}Song\u{1f}Artist\u{1f}Album\u{1f}245000000\u{1f}https://i.scdn.co/image/cover",
+        );
         assert_eq!(parsed.identity.as_deref(), Some("Spotify"));
         assert_eq!(parsed.title.as_deref(), Some("Song"));
         assert_eq!(parsed.duration_seconds, Some(245.0));
+        assert_eq!(
+            parsed.art_url.as_deref(),
+            Some("https://i.scdn.co/image/cover")
+        );
+    }
+
+    #[test]
+    fn exposes_only_trusted_spotify_artwork() {
+        assert_eq!(
+            trusted_remote_art_url(
+                "spotify",
+                Some("Spotify"),
+                Some("https://i.scdn.co/image/cover")
+            )
+            .as_deref(),
+            Some("https://i.scdn.co/image/cover")
+        );
+        assert!(trusted_remote_art_url(
+            "spotify",
+            Some("Spotify"),
+            Some("https://images.spotifycdn.com/cover.jpg")
+        )
+        .is_some());
+        assert!(
+            trusted_remote_art_url("spotify", None, Some("file:///home/user/private.jpg"))
+                .is_none()
+        );
+        assert!(trusted_remote_art_url("spotify", None, Some("http://127.0.0.1/cover")).is_none());
+        assert!(
+            trusted_remote_art_url("firefox", None, Some("https://i.scdn.co/image/cover"))
+                .is_none()
+        );
+    }
+
+    #[test]
+    fn accepts_only_bounded_browser_cache_paths_and_image_formats() {
+        assert_eq!(
+            browser_art_path("brave", Some("file:///tmp/.org.chromium.Chromium.cover")),
+            Some(PathBuf::from("/tmp/.org.chromium.Chromium.cover"))
+        );
+        assert!(browser_art_path("brave", Some("file:///home/user/private.png")).is_none());
+        assert!(
+            browser_art_path("vlc", Some("file:///tmp/.org.chromium.Chromium.cover")).is_none()
+        );
+        assert!(artwork_data_url(&[0x89, b'P', b'N', b'G', 0x0d, 0x0a, 0x1a, 0x0a]).is_some());
+        assert!(artwork_data_url(b"not an image").is_none());
     }
 
     #[test]
@@ -674,10 +834,11 @@ mod tests {
 
     #[test]
     fn maps_ducking_states_to_relative_volume_factors() {
-        assert_eq!(DuckingState::Idle.volume_factor(), None);
-        assert_eq!(DuckingState::Listening.volume_factor(), Some(0.20));
-        assert_eq!(DuckingState::Processing.volume_factor(), Some(0.55));
-        assert_eq!(DuckingState::Speaking.volume_factor(), Some(0.15));
+        assert_eq!(DuckingState::Idle.volume_factor(0.40), None);
+        assert_eq!(DuckingState::Listening.volume_factor(0.40), Some(0.60));
+        assert_eq!(DuckingState::Processing.volume_factor(0.40), Some(0.75));
+        assert_eq!(DuckingState::Speaking.volume_factor(0.40), Some(0.40));
+        assert_eq!(DuckingState::Speaking.volume_factor(0.85), Some(0.85));
     }
 
     #[test]

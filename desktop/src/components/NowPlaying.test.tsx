@@ -12,6 +12,7 @@ const media: MediaSnapshot = {
   title: "Northern Lights",
   artist: "Dax Quartet",
   album: "Night Shift",
+  art_url: null,
   position_seconds: 30,
   duration_seconds: 120,
 };
@@ -64,6 +65,16 @@ describe("NowPlaying", () => {
     expect(bars).toHaveLength(3);
     expect(bars.item(1).getAttribute("style")).toContain("54%");
     expect(screen.getByText("1:00")).toBeTruthy();
+  });
+
+  it("uses trusted Spotify artwork as a decorative background", () => {
+    const view = render(
+      <I18nProvider initialLocale="en">
+        <NowPlayingView media={{ ...media, art_url: "https://i.scdn.co/image/cover" }} onControl={vi.fn()} />
+      </I18nProvider>,
+    );
+    const artwork = view.container.querySelector("img[src='https://i.scdn.co/image/cover']");
+    expect(artwork?.getAttribute("aria-hidden")).toBe("true");
   });
 
   it("stays hidden when playerctl or playback is unavailable", () => {

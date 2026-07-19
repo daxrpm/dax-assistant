@@ -87,8 +87,9 @@ async fn media_control(
 async fn media_set_ducking(
     state: tauri::State<'_, media::MediaState>,
     ducking_state: media::DuckingState,
+    volume_factor: f64,
 ) -> Result<(), String> {
-    media::set_ducking(&state, ducking_state).await
+    media::set_ducking(&state, ducking_state, volume_factor).await
 }
 
 #[tauri::command]

@@ -18,6 +18,7 @@ import {
   PanelBody,
   PanelHeader,
   SegmentedControl,
+  Slider,
   TextInput,
   Toggle,
   useToast,
@@ -35,7 +36,9 @@ import {
 } from "../../native/notifications";
 import {
   setMediaDuckingEnabled,
+  setMediaDuckingLevel,
   useMediaDuckingEnabled,
+  useMediaDuckingLevel,
 } from "../../native/mediaDucking";
 
 /**
@@ -66,6 +69,7 @@ export function DesktopTab({
   const [notifications, setNotificationState] = useState<NotificationState | null>(null);
   const [nativeSaving, setNativeSaving] = useState(false);
   const mediaDucking = useMediaDuckingEnabled();
+  const mediaDuckingLevel = useMediaDuckingLevel();
 
   const probe = async () => {
     setChecking(true);
@@ -279,6 +283,23 @@ export function DesktopTab({
                   checked={mediaDucking}
                   onChange={setMediaDuckingEnabled}
                   aria-label={t("settings.desktop.mediaDucking")}
+                />
+              )}
+            </Field>
+            <Field
+              label={t("settings.desktop.mediaDuckingLevel")}
+              description={t("settings.desktop.mediaDuckingLevelDescription")}
+            >
+              {(id) => (
+                <Slider
+                  id={id}
+                  min={0.10}
+                  max={1}
+                  step={0.05}
+                  value={mediaDuckingLevel}
+                  disabled={!mediaDucking}
+                  onChange={setMediaDuckingLevel}
+                  format={(value) => `${Math.round(value * 100)}%`}
                 />
               )}
             </Field>

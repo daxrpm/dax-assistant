@@ -12,6 +12,7 @@ export interface MediaSnapshot {
   title: string | null;
   artist: string | null;
   album: string | null;
+  art_url: string | null;
   position_seconds: number | null;
   duration_seconds: number | null;
 }
@@ -30,8 +31,11 @@ export function controlMedia(action: MediaAction): Promise<void> {
   return invoke<void>("media_control", { action });
 }
 
-export function setMediaDucking(duckingState: MediaDuckingState): Promise<void> {
-  return invoke<void>("media_set_ducking", { duckingState });
+export function setMediaDucking(
+  duckingState: MediaDuckingState,
+  volumeFactor: number,
+): Promise<void> {
+  return invoke<void>("media_set_ducking", { duckingState, volumeFactor });
 }
 
 export function startMediaSpectrum(): Promise<void> {

@@ -90,6 +90,7 @@ export function NowPlayingView({
     ? spectrum.bands.map((band) => Math.max(12, Math.min(100, band * 108)))
     : progressWaveform(title, media.artist ?? "");
   const provider = mediaProvider(media.player, media.identity);
+  const hasArtwork = Boolean(media.art_url);
   const spectrumStyle = spectrum ? {
     "--spectrum-level": spectrum.level,
     "--spectrum-bass": spectrum.bass,
@@ -101,7 +102,8 @@ export function NowPlayingView({
   };
 
   return (
-    <section className={`${s.island} ${spectrum ? s.hasSpectrum : ""}`} style={spectrumStyle} data-provider={provider} aria-label={t("media.nowPlaying")}>
+    <section className={`${s.island} ${spectrum ? s.hasSpectrum : ""} ${hasArtwork ? s.hasArtwork : ""}`} style={spectrumStyle} data-provider={provider} aria-label={t("media.nowPlaying")}>
+      {hasArtwork && <img className={s.artwork} src={media.art_url ?? undefined} alt="" aria-hidden="true" />}
       <div className={s.header}>
         <span className={s.provider}><ProviderIcon provider={provider} /></span>
         <span className={s.track}>
