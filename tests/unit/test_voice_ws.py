@@ -125,6 +125,22 @@ def test_events_are_streamed_to_a_subscriber():
     assert frame["data"]["language"] == "es"
 
 
+def test_current_speech_sentence_is_streamed_to_a_subscriber():
+    app, hub = _make_app()
+    client = TestClient(app)
+
+    with client.websocket_connect(f"/ws/voice?token={_token(app)}") as ws:
+        ws.receive_json()
+        hub.emit_speech("Ahora mismo está sonando.", "es")
+        frame = ws.receive_json()
+
+    assert frame == {
+        "type": "speech",
+        "data": {"text": "Ahora mismo está sonando.", "language": "es"},
+        "timestamp": frame["timestamp"],
+    }
+
+
 def test_unsubscribe_runs_on_disconnect():
     """A leaked subscriber would keep the pipeline metering forever."""
     app, hub = _make_app()

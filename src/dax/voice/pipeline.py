@@ -871,6 +871,7 @@ class VoicePipeline:
             try:
                 for sentence in sentences:
                     audio = self._tts.synthesize(sentence, language=tts_lang)
+                    self._events.emit_speech(sentence, tts_lang)
                     self._player.play(audio, sample_rate=self._tts.sample_rate)
             finally:
                 time.sleep(0.3)
@@ -883,6 +884,7 @@ class VoicePipeline:
         interrupted = False
         for sentence in sentences:
             audio = self._tts.synthesize(sentence, language=tts_lang)
+            self._events.emit_speech(sentence, tts_lang)
             interrupted = self._player.play_blocks(
                 audio,
                 sample_rate=self._tts.sample_rate,

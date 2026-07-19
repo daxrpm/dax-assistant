@@ -22,6 +22,11 @@ export interface VoiceTranscript {
   final: boolean;
 }
 
+export interface VoiceSpeech {
+  text: string;
+  language: string;
+}
+
 export interface SpeakerVerdict {
   verified: boolean;
   score: number | null;
@@ -31,6 +36,7 @@ export interface VoiceSnapshot {
   state: PipelineState;
   conversationId: string | null;
   transcript: VoiceTranscript | null;
+  speech: VoiceSpeech | null;
   speaker: SpeakerVerdict | null;
   error: string | null;
   connected: boolean;
@@ -42,6 +48,7 @@ const INITIAL_SNAPSHOT: VoiceSnapshot = {
   state: "idle",
   conversationId: null,
   transcript: null,
+  speech: null,
   speaker: null,
   error: null,
   connected: false,
@@ -136,15 +143,19 @@ export function createVoiceStore() {
       if (frame.type === "state") {
         const conversationId = (frame.data.conversation_id as string | null) ?? null;
         const expires = frame.data.session_expires_at;
+        const state = (frame.data.state as PipelineState) ?? "idle";
         update({
-          state: (frame.data.state as PipelineState) ?? "idle",
+          state,
           conversationId,
           sessionExpiresAt: typeof expires === "number" ? expires : null,
           turns: snapshot.conversationId === conversationId ? snapshot.turns : 0,
+          speech: state === "speaking" ? snapshot.speech : null,
         });
       } else if (frame.type === "transcript") {
         const transcript = frame.data as unknown as VoiceTranscript;
         update({ transcript, turns: snapshot.turns + (transcript.final ? 1 : 0) });
+      } else if (frame.type === "speech") {
+        update({ speech: frame.data as unknown as VoiceSpeech });
       } else if (frame.type === "speaker") {
         update({ speaker: frame.data as unknown as SpeakerVerdict });
       } else if (frame.type === "error") {

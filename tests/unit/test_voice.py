@@ -192,6 +192,28 @@ class TestPipelineEnabled:
         assert pipeline.state == PipelineState.LISTENING
         pipeline._drain_mic_buffer.assert_not_called()
 
+    def test_speech_text_is_emitted_after_synthesis_before_playback(self):
+        pipeline = self._make_pipeline()
+        pipeline._barge_in = False
+        pipeline._events = MagicMock()
+        pipeline._capture.read_chunk.return_value = None
+        pipeline._tts.synthesize.return_value = np.zeros(20, dtype=np.int16)
+        order: list[str] = []
+        pipeline._tts.synthesize.side_effect = lambda *_args, **_kwargs: (
+            order.append("synthesize") or np.zeros(20, dtype=np.int16)
+        )
+        pipeline._events.emit_speech.side_effect = lambda *_args: order.append("speech")
+        pipeline._player.play.side_effect = lambda *_args, **_kwargs: order.append("play")
+
+        text = "Esta primera frase tiene suficiente longitud para mantenerse sola. Segunda frase."
+        assert pipeline._speak(text, "es") is False
+
+        assert order == ["synthesize", "speech", "play"] * 2
+        assert pipeline._events.emit_speech.call_args_list[0].args == (
+            "Esta primera frase tiene suficiente longitud para mantenerse sola.",
+            "es",
+        )
+
     def test_followup_requires_sustained_speech(self):
         pipeline = self._make_pipeline()
         chunk = np.zeros(1280, dtype=np.int16)

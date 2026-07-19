@@ -42,6 +42,7 @@ class VoiceEventType(StrEnum):
     STATE = "state"
     LEVEL = "level"
     TRANSCRIPT = "transcript"
+    SPEECH = "speech"
     SPEAKER = "speaker"
     ERROR = "error"
 
@@ -179,6 +180,15 @@ class VoiceEventHub:
             VoiceEvent(
                 type=VoiceEventType.TRANSCRIPT,
                 data={"text": text, "language": language, "final": final},
+            )
+        )
+
+    def emit_speech(self, text: str, language: str) -> None:
+        """Publish the sentence whose synthesized audio is about to play."""
+        self.emit(
+            VoiceEvent(
+                type=VoiceEventType.SPEECH,
+                data={"text": text, "language": language},
             )
         )
 

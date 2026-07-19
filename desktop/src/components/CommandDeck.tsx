@@ -432,7 +432,12 @@ export function CommandDeck({ onOpenPalette }: { onOpenPalette: () => void }) {
         <div className={s.stageState}>{t(PIPELINE_KEY[voice.state])}</div>
 
         <div className={s.transcript}>
-          {voice.transcript?.text ? (
+          {voice.state === "speaking" && voice.speech?.text ? (
+            <>
+              <span className={s.transcriptLabel}>{t("deck.speakingNow")}</span>
+              <p className={s.transcriptText}>{voice.speech.text}</p>
+            </>
+          ) : voice.transcript?.text ? (
             <>
               <span className={s.transcriptLabel}>{t("deck.lastTranscript")}</span>
               <p className={s.transcriptText}>{voice.transcript.text}</p>

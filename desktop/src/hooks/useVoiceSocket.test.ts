@@ -109,4 +109,24 @@ describe("voice store", () => {
     unsubscribeSnapshot();
     store.shutdown();
   });
+
+  it("tracks the sentence being spoken and clears it after speaking", () => {
+    const store = createVoiceStore();
+    const unsubscribe = store.subscribe(() => undefined);
+    const ws = FakeWebSocket.instances[0];
+    ws?.onmessage?.(new MessageEvent("message", {
+      data: JSON.stringify({ type: "state", data: { state: "speaking" } }),
+    }));
+    ws?.onmessage?.(new MessageEvent("message", {
+      data: JSON.stringify({ type: "speech", data: { text: "Esta frase suena ahora.", language: "es" } }),
+    }));
+    expect(store.getSnapshot().speech?.text).toBe("Esta frase suena ahora.");
+
+    ws?.onmessage?.(new MessageEvent("message", {
+      data: JSON.stringify({ type: "state", data: { state: "conversing" } }),
+    }));
+    expect(store.getSnapshot().speech).toBeNull();
+    unsubscribe();
+    store.shutdown();
+  });
 });

@@ -195,6 +195,7 @@ export function VoiceHud() {
         <div className={runtime.pttError ? s.error : s.transcript} role="status">
           {runtime.pttError ||
             voice.error ||
+            (voice.state === "speaking" ? voice.speech?.text : null) ||
             voice.transcript?.text ||
             (voice.connected ? t("hud.ready") : t("common.connecting"))}
         </div>
