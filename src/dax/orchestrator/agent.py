@@ -133,6 +133,7 @@ class Agent:
         max_tools: int = 45,
         memory_path: str | None = None,
         system_prompt: str = "",
+        max_tool_iterations: int = MAX_TOOL_ITERATIONS,
     ) -> None:
         self._bus = bus
         self._llm = llm
@@ -141,6 +142,8 @@ class Agent:
         # Cap on tool schemas sent per LLM request — keeps prompts small and
         # responses fast. The relevance filter picks the best within this.
         self._max_tools = max_tools
+        # Round-trip budget for the tool loop below.
+        self._max_tool_iterations = max(1, max_tool_iterations)
         # Collaborators: prompt assembly and the policy/confirmation/exec gate.
         self._prompt = SystemPromptBuilder(memory_path, base_prompt=system_prompt)
         self._gate = ToolGate(
@@ -269,7 +272,7 @@ class Agent:
         execution_results: list[tuple[ToolCall, ToolResult]] = []
 
         # LLM call + tool execution loop
-        for iteration in range(MAX_TOOL_ITERATIONS):
+        for iteration in range(self._max_tool_iterations):
             try:
                 response = await self._llm.complete(
                     messages=llm_messages,
@@ -303,7 +306,7 @@ class Agent:
         # The tool budget is exhausted, but the last response only contains a
         # tool call. Make one tool-free pass so the user hears the real outcome
         # instead of a generic (and potentially false) success message.
-        logger.warning("Max tool iterations (%d) reached", MAX_TOOL_ITERATIONS)
+        logger.warning("Max tool iterations (%d) reached", self._max_tool_iterations)
         llm_messages.append({
             "role": "system",
             "content": (

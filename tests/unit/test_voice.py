@@ -355,3 +355,171 @@ class TestSpeakerVerifier:
             profile_path=str(tmp_path / "missing.npy"), fail_open=False
         )
         assert verifier.verify(np.zeros(16000, dtype=np.float32)) is False
+
+
+class TestVoiceSession:
+    """Session scoping — what gives consecutive voice turns shared memory.
+
+    The session id becomes ``metadata["session_id"]``, which the agent uses as
+    its conversation key. Minting a fresh one per wake word (the old behaviour)
+    meant every activation loaded an empty history, so "ponla de color rojo"
+    could not resolve what "la" referred to.
+    """
+
+    def _make_pipeline(self, **overrides) -> VoicePipeline:
+        from dax.core.config import VoiceConfig
+        from dax.orchestrator.bus import MessageBus
+
+        config = VoiceConfig(**overrides)
+        bus = MessageBus()
+        bus.start()
+        loop = asyncio.new_event_loop()
+
+        with (
+            patch("dax.voice.pipeline.AudioCapture"),
+            patch("dax.voice.pipeline.AudioPlayer"),
+            patch("dax.voice.pipeline.WakeWordDetector"),
+            patch("dax.voice.pipeline.VoiceActivityDetector"),
+            patch("dax.voice.pipeline.build_stt"),
+            patch("dax.voice.pipeline.build_tts"),
+        ):
+            pipeline = VoicePipeline(
+                config=config,
+                bus=bus,
+                voice_channel=VoiceChannel(),
+                loop=loop,
+            )
+
+        loop.close()
+        return pipeline
+
+    def test_second_activation_resumes_same_session(self):
+        """Back-to-back wake words must share one conversation."""
+        pipeline = self._make_pipeline(session_ttl_minutes=10)
+
+        pipeline._resume_or_start_session()
+        first = pipeline._conversation_id
+        pipeline._resume_or_start_session()
+
+        assert first is not None
+        assert pipeline._conversation_id == first
+
+    def test_session_expires_after_ttl(self):
+        """Once the user has been away long enough, context is dropped."""
+        pipeline = self._make_pipeline(session_ttl_minutes=10)
+
+        pipeline._resume_or_start_session()
+        first = pipeline._conversation_id
+        # Backdate the last activity past the TTL.
+        pipeline._session_last_activity -= 601
+
+        pipeline._resume_or_start_session()
+
+        assert pipeline._conversation_id != first
+
+    def test_ttl_zero_restores_per_activation_reset(self):
+        """session_ttl_minutes=0 opts back into a fresh session every time."""
+        pipeline = self._make_pipeline(session_ttl_minutes=0)
+
+        pipeline._resume_or_start_session()
+        first = pipeline._conversation_id
+        pipeline._resume_or_start_session()
+
+        assert pipeline._conversation_id != first
+
+    def test_farewell_ends_session(self):
+        """An explicit goodbye drops context immediately, without waiting."""
+        pipeline = self._make_pipeline(session_ttl_minutes=10)
+
+        pipeline._resume_or_start_session()
+        assert pipeline._conversation_id is not None
+
+        pipeline._end_session()
+
+        assert pipeline._conversation_id is None
+
+    def test_new_session_after_farewell(self):
+        pipeline = self._make_pipeline(session_ttl_minutes=10)
+
+        pipeline._resume_or_start_session()
+        first = pipeline._conversation_id
+        pipeline._end_session()
+        pipeline._resume_or_start_session()
+
+        assert pipeline._conversation_id != first
+
+
+class TestFollowUpDetection:
+    """Hands-free follow-up must survive the micro-pauses of real speech.
+
+    The original rule required consecutive voiced frames and reset on the first
+    quiet one, so natural speech onset intermittently failed to engage.
+    """
+
+    def _make_pipeline(self) -> VoicePipeline:
+        from dax.core.config import VoiceConfig
+        from dax.orchestrator.bus import MessageBus
+
+        bus = MessageBus()
+        bus.start()
+        loop = asyncio.new_event_loop()
+
+        with (
+            patch("dax.voice.pipeline.AudioCapture"),
+            patch("dax.voice.pipeline.AudioPlayer"),
+            patch("dax.voice.pipeline.WakeWordDetector"),
+            patch("dax.voice.pipeline.VoiceActivityDetector"),
+            patch("dax.voice.pipeline.build_stt"),
+            patch("dax.voice.pipeline.build_tts"),
+        ):
+            pipeline = VoicePipeline(
+                config=VoiceConfig(),
+                bus=bus,
+                voice_channel=VoiceChannel(),
+                loop=loop,
+            )
+
+        loop.close()
+        return pipeline
+
+    def _drive(self, pipeline: VoicePipeline, voiced_flags: list[bool]) -> None:
+        """Feed one 80 ms chunk per flag, voiced or not."""
+        chunk = np.zeros(1280, dtype=np.int16)
+        pipeline._capture.read_chunk.return_value = chunk
+        pipeline._vad.threshold = 0.5
+        pipeline._conversation_start = time.monotonic()
+        pipeline._state = PipelineState.CONVERSING
+
+        for voiced in voiced_flags:
+            pipeline._vad.speech_prob.return_value = 0.9 if voiced else 0.0
+            pipeline._handle_conversing()
+
+    def test_gap_mid_utterance_does_not_reset(self):
+        """A brief dip below threshold must not discard accumulated speech."""
+        pipeline = self._make_pipeline()
+
+        # Two voiced chunks (160 ms, past the speech-like floor), one dip.
+        self._drive(pipeline, [True, True, False])
+
+        assert pipeline.state == PipelineState.CONVERSING
+        assert pipeline._followup_voiced_ms == 160
+        assert pipeline._followup_buffer != []
+
+    def test_engages_across_a_gap(self):
+        """Speech interrupted by a micro-pause still triggers follow-up."""
+        pipeline = self._make_pipeline()
+
+        self._drive(pipeline, [True, True, False, True, True])
+
+        assert pipeline.state == PipelineState.LISTENING
+
+    def test_long_silence_still_discards(self):
+        """Past the tolerance the buffer is dropped, so noise cannot accrue."""
+        pipeline = self._make_pipeline()
+
+        # 160 ms voiced, then 400 ms of silence (5 chunks) exceeds tolerance.
+        self._drive(pipeline, [True, True, False, False, False, False, False])
+
+        assert pipeline.state == PipelineState.CONVERSING
+        assert pipeline._followup_buffer == []
+        assert pipeline._followup_voiced_ms == 0

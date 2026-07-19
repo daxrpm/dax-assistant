@@ -24,6 +24,7 @@ from dax.web.routes import (
     oauth,
     system,
     voice,
+    voice_ws,
     webhooks,
 )
 from dax.web.routes import (
@@ -93,9 +94,11 @@ def create_app(
     ):
         app.include_router(domain_router, prefix="/api", dependencies=protected)
     app.include_router(oauth.router, prefix="/api", dependencies=protected)
-    # Chat + logs WS authenticate in their own handshake; webhooks use a secret.
+    # Chat + logs + voice WS authenticate in their own handshake; webhooks use
+    # a secret.
     app.include_router(chat.router, prefix="/ws")
     app.include_router(logs.router, prefix="/ws")
+    app.include_router(voice_ws.router, prefix="/ws")
     app.include_router(webhooks.router, prefix="/webhook")
 
     # SPA static files — serves built React app with index.html fallback

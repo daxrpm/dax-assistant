@@ -24,6 +24,30 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
+# Whisper caps its prompt at 224 tokens and weights later tokens more heavily,
+# so the biasing prompt is trimmed from the FRONT — the most recent (and most
+# predictive) context survives.
+_MAX_PROMPT_CHARS = 600
+
+
+def _build_prompt(static: str, context: str) -> str:
+    """Combine a fixed vocabulary hint with live conversation context.
+
+    Biasing the decoder with what was just said is the cheapest defence against
+    the failure mode where a garbled transcript ("¿Cómo fuiste tú de Ricardo
+    Arjona?") sends the agent off on a doomed tool hunt.
+    """
+    parts = [p.strip() for p in (static, context) if p and p.strip()]
+    if not parts:
+        return ""
+    prompt = " ".join(parts)
+    if len(prompt) > _MAX_PROMPT_CHARS:
+        # Keep the tail: recent context outranks the static hint when both
+        # cannot fit, and Whisper attends most strongly to the end anyway.
+        prompt = prompt[-_MAX_PROMPT_CHARS:]
+    return prompt
+
+
 class SpeechToText:
     """Transcribe audio buffers to text using faster-whisper.
 
@@ -115,12 +139,14 @@ class SpeechToText:
 
     # ── Public API ─────────────────────────────────────────────────────────
 
-    def transcribe(self, audio: np.ndarray) -> tuple[str, str]:
+    def transcribe(self, audio: np.ndarray, context: str = "") -> tuple[str, str]:
         """Transcribe a float audio buffer to text.
 
         Args:
             audio: Mono ``float32`` numpy array at 16 kHz,
                 normalised to ``[-1.0, 1.0]``.
+            context: Recent conversation text used to bias decoding toward the
+                vocabulary actually in play (names, devices, artists).
 
         Returns:
             A ``(text, detected_language)`` tuple. *text* is the full
@@ -145,6 +171,12 @@ class SpeechToText:
             # Pinning the language stops Whisper from mis-guessing "ru"/etc. on
             # short or noisy clips — the single biggest accuracy win on CPU.
             kwargs["language"] = self._language
+        # initial_prompt is explicit vocabulary biasing, distinct from
+        # condition_on_previous_text above: it steers the decoder without
+        # feeding it a full transcript to drift on.
+        prompt = _build_prompt("", context)
+        if prompt:
+            kwargs["initial_prompt"] = prompt
 
         try:
             segments, info = self._model.transcribe(audio, **kwargs)
@@ -230,7 +262,7 @@ class OpenAISpeechToText:
             wav.writeframes(pcm.tobytes())
         return output.getvalue()
 
-    def transcribe(self, audio: np.ndarray) -> tuple[str, str]:
+    def transcribe(self, audio: np.ndarray, context: str = "") -> tuple[str, str]:
         if self._client is None:
             raise STTError("OpenAI hosted STT not started")
 
@@ -241,8 +273,9 @@ class OpenAISpeechToText:
         }
         if self._language != "auto":
             kwargs["language"] = self._language
-        if self._prompt:
-            kwargs["prompt"] = self._prompt
+        prompt = _build_prompt(self._prompt, context)
+        if prompt:
+            kwargs["prompt"] = prompt
 
         try:
             response = self._client.audio.transcriptions.create(**kwargs)
@@ -289,16 +322,16 @@ class FallbackSpeechToText:
             self._fallback.start()
             self._fallback_ready = True
 
-    def transcribe(self, audio: np.ndarray) -> tuple[str, str]:
+    def transcribe(self, audio: np.ndarray, context: str = "") -> tuple[str, str]:
         if self._primary_ready:
             try:
-                return self._primary.transcribe(audio)
+                return self._primary.transcribe(audio, context)
             except STTError as exc:
                 logger.warning("Hosted STT failed; retrying locally: %s", exc)
                 self._primary.stop()
                 self._primary_ready = False
         self._start_fallback()
-        return self._fallback.transcribe(audio)
+        return self._fallback.transcribe(audio, context)
 
 
 def build_stt(config: VoiceConfig) -> SpeechToText | OpenAISpeechToText | FallbackSpeechToText:

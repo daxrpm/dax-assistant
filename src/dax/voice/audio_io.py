@@ -133,12 +133,16 @@ class AudioPlayer:
         sample_rate: int = PLAYBACK_RATE,
         should_stop: Callable[[], bool] | None = None,
         block: int = 2_048,
+        on_block: Callable[[np.ndarray], None] | None = None,
     ) -> bool:
         """Play an int16 buffer in small blocks, stopping early on demand.
 
         ``should_stop`` is polled between blocks; when it returns True playback
         halts immediately. Enables barge-in (interrupting Dax mid-reply) and
         low-latency streaming playback.
+
+        ``on_block`` receives each block as it is written, so a UI can draw the
+        output waveform in step with what the speaker is actually playing.
 
         Returns:
             True if playback was interrupted, False if it played to the end.
@@ -155,7 +159,10 @@ class AudioPlayer:
                 if should_stop is not None and should_stop():
                     interrupted = True
                     break
-                stream.write(audio[offset: offset + block])
+                data = audio[offset: offset + block]
+                if on_block is not None:
+                    on_block(data)
+                stream.write(data)
         finally:
             stream.stop()
             stream.close()

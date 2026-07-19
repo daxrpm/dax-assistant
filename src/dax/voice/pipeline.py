@@ -28,6 +28,7 @@ import re
 import threading
 import time
 import uuid
+from collections import deque
 from enum import StrEnum
 from pathlib import Path
 from typing import TYPE_CHECKING
@@ -36,8 +37,10 @@ import numpy as np
 
 from dax.core.exceptions import STTError, TTSError, VoiceError
 from dax.core.models import ChannelType, Language, Message, MessageRole
+from dax.core.voice_events import LevelSource, VoiceEventHub
 from dax.llm.client import sanitize_assistant_text
 from dax.voice.audio_io import CHUNK_SIZE, SAMPLE_RATE, AudioCapture, AudioPlayer
+from dax.voice.events import emit_level
 from dax.voice.speaker import SpeakerVerifier
 from dax.voice.stt import build_stt
 from dax.voice.tts import build_tts
@@ -54,6 +57,19 @@ logger = logging.getLogger(__name__)
 
 # Safety limits
 _MAX_RECORDING_SECONDS = 30
+
+# How much silence may interrupt a follow-up utterance before the accumulated
+# speech is discarded. Covers the micro-pauses of natural speech onset.
+_FOLLOWUP_GAP_TOLERANCE_MS = 400
+
+# Minimum voiced audio before a gap is tolerated at all. Below this the signal
+# is an isolated VAD spike, not speech, and is discarded on the first quiet
+# frame so background noise never accumulates a phantom utterance.
+_FOLLOWUP_MIN_SPEECH_MS = 160
+
+# How many recent turns feed the STT biasing prompt. Whisper's prompt budget is
+# small (224 tokens), so this stays tight and recency-weighted.
+_STT_CONTEXT_TURNS = 4
 
 
 # Split assistant text into sentence-ish chunks for incremental TTS playback.
@@ -77,6 +93,16 @@ def _clean_for_speech(text: str) -> str:
     text = text.replace("|", " ")
     text = re.sub(r"[ \t]{2,}", " ", text)
     return text.strip()
+
+
+def _ends_with_question(text: str) -> bool:
+    """True if *text* closes on a question.
+
+    Used to widen the follow-up window: when Dax asks something he has invited
+    a reply, and the default timeout is too short to formulate one.
+    """
+    stripped = _clean_for_speech(text).rstrip().rstrip('"\'')
+    return stripped.endswith("?")
 
 
 def _split_sentences(text: str) -> list[str]:
@@ -131,14 +157,21 @@ class VoicePipeline:
         loop: asyncio.AbstractEventLoop,
         models_path: str = "models/",
         approval: ApprovalManager | None = None,
+        events: VoiceEventHub | None = None,
     ) -> None:
         self._config = config
         self._bus = bus
         self._voice_channel = voice_channel
         self._loop = loop
         self._approval = approval
+        # Event fan-out to UI clients. Defaults to a detached hub so the
+        # pipeline never has to null-check before emitting.
+        self._events = events if events is not None else VoiceEventHub(loop)
+        self._events.bind_loop(loop)
 
-        self._state = PipelineState.IDLE
+        # Backing field for the _state property below. Assigned directly here so
+        # __init__ does not fire a transition event before the object exists.
+        self.__state = PipelineState.IDLE
         self._running = False
         self._enabled = True
         self._thread: threading.Thread | None = None
@@ -174,6 +207,11 @@ class VoicePipeline:
         self._require_wake_each_turn = getattr(
             config, "require_wake_word_each_turn", False,
         )
+        # How long a voice session survives between activations. Beyond this,
+        # the next wake word starts a history-free conversation.
+        self._session_ttl_s = max(
+            0.0, getattr(config, "session_ttl_minutes", 10) * 60.0
+        )
 
         # Feature flags (best-practice defaults; see VoiceConfig).
         self._denoise = getattr(config, "denoise", True)
@@ -182,6 +220,10 @@ class VoicePipeline:
         self._adaptive = getattr(config, "adaptive_endpointing", True)
         self._silence_s = max(0.25, min(1.5, config.silence_duration_ms / 1000))
         self._conv_timeout = getattr(config, "conversation_timeout_s", 8)
+        self._conv_timeout_question = max(
+            self._conv_timeout,
+            getattr(config, "conversation_timeout_question_s", 20),
+        )
         self._followup_activation_ms = max(
             80, getattr(config, "followup_activation_ms", 320)
         )
@@ -213,14 +255,46 @@ class VoicePipeline:
         # past conversations), while follow-up turns within the same activation
         # share context. Reset to None when we return to IDLE.
         self._conversation_id: str | None = None
+        # Wall-clock of the last voice turn, used to decide whether the next
+        # wake word resumes the current session or starts a new one.
+        self._session_last_activity: float = 0.0
         self._followup_buffer: list[np.ndarray] = []
         self._followup_voiced_ms = 0
+        self._followup_silence_ms = 0
+        # Whether Dax's last reply ended in a question. When he asks something,
+        # he has invited an answer, so the follow-up window stays open longer.
+        self._last_reply_was_question = False
+        # Recent turn text, oldest first, used to bias the next transcription
+        # toward the vocabulary already in play.
+        self._recent_turns: deque[str] = deque(maxlen=_STT_CONTEXT_TURNS)
 
     # -- Properties --
 
     @property
+    def _state(self) -> PipelineState:
+        """Current state. Assigning to it broadcasts the transition.
+
+        Defined as a property so the ~20 ``self._state = ...`` assignments
+        scattered through the state handlers stay untouched and can never
+        forget to notify listeners.
+        """
+        return self.__state
+
+    @_state.setter
+    def _state(self, value: PipelineState) -> None:
+        if value == self.__state:
+            return
+        self.__state = value
+        self._events.emit_state(str(value), self._conversation_id)
+
+    @property
     def state(self) -> PipelineState:
         return self._state
+
+    @property
+    def events(self) -> VoiceEventHub:
+        """The hub UI clients subscribe to for state and level frames."""
+        return self._events
 
     @property
     def enabled(self) -> bool:
@@ -288,8 +362,9 @@ class VoicePipeline:
                     self._handle_listening()
                 elif self._state == PipelineState.CONVERSING:
                     self._handle_conversing()
-            except Exception:
+            except Exception as exc:
                 logger.exception("Voice pipeline error — resetting to IDLE")
+                self._events.emit_error(str(exc))
                 self._state = PipelineState.IDLE
                 self._vad.reset()
                 self._wakeword.reset()
@@ -299,19 +374,20 @@ class VoicePipeline:
     # -- State handlers --
 
     def _handle_idle(self) -> None:
-        """IDLE — listen for wake word activation."""
-        # Returning to IDLE ends the conversation: drop its id so the next
-        # activation starts a brand-new (history-free) session.
-        self._conversation_id = None
+        """IDLE — listen for wake word activation.
 
-        chunk = self._capture.read_chunk(timeout=0.5)
+        Note the session id is deliberately *not* cleared here. Returning to
+        IDLE ends the hands-free follow-up window, not the conversation;
+        :meth:`_resume_or_start_session` decides on the next wake word whether
+        enough time has passed to warrant forgetting.
+        """
+        chunk = self._read_metered_chunk(timeout=0.5)
         if chunk is None:
             return
         detected = self._wakeword.detect(chunk)
         if detected is not None:
             logger.info("Wake word detected: %s", detected)
-            # New activation → new conversation scope.
-            self._conversation_id = uuid.uuid4().hex
+            self._resume_or_start_session()
             # Immediate audible acknowledgement (like Alexa's tone) so the user
             # knows Dax is listening before they start speaking. Mic is muted
             # during the chime so the tone is never captured as speech.
@@ -327,7 +403,7 @@ class VoicePipeline:
         lengthens for longer utterances (allowing natural mid-sentence pauses).
         Falls back to Silero's VADIterator end-event when disabled.
         """
-        chunk = self._capture.read_chunk(timeout=0.5)
+        chunk = self._read_metered_chunk(timeout=0.5)
         if chunk is None:
             return
 
@@ -407,15 +483,22 @@ class VoicePipeline:
         for a few seconds. If the user speaks, transition to LISTENING.
         If silence timeout, go back to IDLE.
         """
+        timeout = (
+            self._conv_timeout_question
+            if self._last_reply_was_question
+            else self._conv_timeout
+        )
         elapsed = time.monotonic() - self._conversation_start
-        if elapsed > self._conv_timeout:
+        if elapsed > timeout:
             logger.info(
-                "Conversation timeout (%.0fs), returning to IDLE", elapsed,
+                "Conversation timeout (%.0fs of %ds), returning to IDLE",
+                elapsed,
+                timeout,
             )
             self._state = PipelineState.IDLE
             return
 
-        chunk = self._capture.read_chunk(timeout=0.5)
+        chunk = self._read_metered_chunk(timeout=0.5)
         if chunk is None:
             return
 
@@ -434,13 +517,39 @@ class VoicePipeline:
             if speaking:
                 voiced = True
 
+        chunk_ms = round(len(chunk) / SAMPLE_RATE * 1000)
+
         if not voiced:
-            self._followup_buffer = []
-            self._followup_voiced_ms = 0
+            # A lone spike is noise (a cough, a door) and must not hold the
+            # buffer open. But once enough voiced audio has accumulated to look
+            # like real speech, tolerate a short gap: the VAD flickers around
+            # its threshold and natural speech onset has micro-pauses, so
+            # resetting on the first quiet frame made follow-up fail
+            # intermittently.
+            speech_like = self._followup_voiced_ms >= _FOLLOWUP_MIN_SPEECH_MS
+            self._followup_silence_ms += chunk_ms
+            if (
+                not speech_like
+                or self._followup_silence_ms >= _FOLLOWUP_GAP_TOLERANCE_MS
+            ):
+                self._followup_buffer = []
+                self._followup_voiced_ms = 0
+                self._followup_silence_ms = 0
+            else:
+                # Keep the gap in the buffer so the pre-roll stays contiguous.
+                self._followup_buffer.append(chunk)
             return
 
+        if self._followup_voiced_ms == 0:
+            # First voiced frame of a candidate follow-up. Logged so a failure
+            # to engage can be told apart from the mic never hearing anything.
+            logger.info(
+                "Follow-up speech starting (need %d ms sustained)",
+                self._followup_activation_ms,
+            )
+        self._followup_silence_ms = 0
         self._followup_buffer.append(chunk)
-        self._followup_voiced_ms += round(len(chunk) / SAMPLE_RATE * 1000)
+        self._followup_voiced_ms += chunk_ms
         if self._followup_voiced_ms >= self._followup_activation_ms:
             logger.info("Sustained follow-up speech detected, continuing conversation")
             pre_roll = list(self._followup_buffer)
@@ -466,14 +575,19 @@ class VoicePipeline:
         # denoising can alter the speaker characteristics used by embeddings.
         if self._speaker is not None and not self._speaker.verify(float_audio):
             logger.info("Utterance rejected by speaker verification")
+            self._events.emit_speaker(verified=False)
             self._state = PipelineState.IDLE
             return
+        if self._speaker is not None:
+            self._events.emit_speaker(verified=True)
 
         if self._denoise:
             float_audio = self._denoise_audio(float_audio)
 
         try:
-            text, detected_lang = self._stt.transcribe(float_audio)
+            text, detected_lang = self._stt.transcribe(
+                float_audio, context=" ".join(self._recent_turns)
+            )
         except STTError:
             logger.exception("STT failed")
             self._state = PipelineState.IDLE
@@ -485,14 +599,18 @@ class VoicePipeline:
             return
 
         logger.info("Transcribed (%s): %s", detected_lang, text)
+        self._events.emit_transcript(text, detected_lang, final=True)
         language = self._map_language(detected_lang)
         self._last_language = language
         self._last_user_text = text
+        self._recent_turns.append(text)
 
         self._turn += 1
-        # Ensure a conversation scope exists (defensive — wake sets it).
+        # Ensure a conversation scope exists (defensive — wake sets it) and
+        # mark the session live so it does not expire mid-conversation.
         if self._conversation_id is None:
-            self._conversation_id = uuid.uuid4().hex
+            self._resume_or_start_session()
+        self._session_last_activity = time.monotonic()
         message = Message(
             role=MessageRole.USER,
             content=text,
@@ -552,12 +670,32 @@ class VoicePipeline:
                 return
 
             logger.info("Speaking response: %.80s...", response.content)
+            self._last_reply_was_question = _ends_with_question(response.content)
+            # Dax's own reply carries the entity names the user is most likely
+            # to echo back ("la luz del cuarto"), so it biases the next turn too.
+            self._recent_turns.append(_clean_for_speech(response.content))
 
             tts_lang = "en"
             if language == Language.SPANISH or response.language == Language.SPANISH:
                 tts_lang = "es"
 
             interrupted = self._speak(response.content, tts_lang)
+            # Restart the inactivity clock from the end of the reply, not from
+            # when the turn was published — a slow tool call must not eat into
+            # the session's idle budget.
+            self._session_last_activity = time.monotonic()
+
+            # One line that names the branch about to be taken. Without it the
+            # log simply stops after "Speaking response" and every diagnosis of
+            # "follow-up did not engage" is guesswork.
+            logger.info(
+                "Reply spoken — interrupted=%s question=%s farewell=%s "
+                "require_wake_each_turn=%s",
+                interrupted,
+                self._last_reply_was_question,
+                self._is_farewell(self._last_user_text),
+                self._require_wake_each_turn,
+            )
 
             if interrupted:
                 logger.info("Barge-in detected — listening to the user")
@@ -568,9 +706,19 @@ class VoicePipeline:
             # Dax's reply happens to contain filler like "listo".
             if self._is_farewell(self._last_user_text):
                 logger.info("Farewell detected, ending conversation")
+                # An explicit goodbye is the one reliable signal that the user
+                # is done — drop the session so the next wake word starts clean.
+                self._end_session()
                 self._state = PipelineState.IDLE
             elif self._require_wake_each_turn:
-                # No hands-free follow-up: wait for the wake word again.
+                # No hands-free follow-up: wait for the wake word again. Logged
+                # because a silent exit here is indistinguishable from a broken
+                # follow-up — this branch hid a config problem for three
+                # debugging rounds.
+                logger.info(
+                    "require_wake_word_each_turn is set — skipping follow-up, "
+                    "returning to IDLE"
+                )
                 self._state = PipelineState.IDLE
             else:
                 self._enter_conversing()
@@ -609,6 +757,7 @@ class VoicePipeline:
                 audio,
                 sample_rate=self._tts.sample_rate,
                 should_stop=self._bargein_detected,
+                on_block=self._emit_output_level,
             )
             if interrupted:
                 break
@@ -703,7 +852,7 @@ class VoicePipeline:
         last_voice_at = 0.0
         deadline = time.monotonic() + max_seconds
         while time.monotonic() < deadline:
-            chunk = self._capture.read_chunk(timeout=0.5)
+            chunk = self._read_metered_chunk(timeout=0.5)
             if chunk is None:
                 continue
             chunks.append(chunk)
@@ -760,6 +909,62 @@ class VoicePipeline:
             logger.debug("Denoise unavailable/failed — using raw audio", exc_info=True)
             return audio
 
+    # -- Session scope --
+
+    def _resume_or_start_session(self) -> None:
+        """Resume the current voice session, or start a fresh one if it expired.
+
+        The session id becomes ``metadata["session_id"]``, which the agent uses
+        as its conversation key — so this single decision is what gives voice
+        turns memory of each other. Resuming is the common case: consecutive
+        commands ("pon la luz en amarillo" → "ponla de color rojo") must share
+        history, and the follow-up window is far too short to rely on.
+
+        A session expires only after :attr:`_session_ttl_s` of real inactivity,
+        which is the point at which the user has almost certainly moved on and
+        stale context would hurt more than help.
+        """
+        now = time.monotonic()
+        idle_for = now - self._session_last_activity
+
+        current = self._conversation_id
+        expired = (
+            current is None
+            or self._session_ttl_s <= 0
+            or idle_for > self._session_ttl_s
+        )
+        if expired:
+            self._conversation_id = uuid.uuid4().hex
+            self._recent_turns.clear()
+            self._last_reply_was_question = False
+            logger.info(
+                "Starting new voice session %s (idle for %.0fs)",
+                self._conversation_id[:8],
+                idle_for if self._session_last_activity else 0.0,
+            )
+        else:
+            logger.info(
+                "Resuming voice session %s (idle for %.0fs)",
+                current[:8] if current else "?",
+                idle_for,
+            )
+        self._session_last_activity = now
+
+    def _end_session(self) -> None:
+        """Forget the current session so the next wake word starts clean.
+
+        Called on an explicit farewell — the one signal that the user really is
+        done, as opposed to merely pausing.
+        """
+        self._conversation_id = None
+        self._session_last_activity = 0.0
+        # Drop the STT biasing context too: priming a new conversation with the
+        # previous one's vocabulary is exactly the bleed the session boundary
+        # exists to prevent.
+        self._recent_turns.clear()
+        self._last_reply_was_question = False
+        logger.info("Voice session ended")
+
     # -- State transitions --
 
     def _enter_listening(self) -> None:
@@ -778,10 +983,14 @@ class VoicePipeline:
         self._vad.reset()
         self._followup_buffer = []
         self._followup_voiced_ms = 0
+        self._followup_silence_ms = 0
         self._drain_mic_buffer()  # discard any TTS tail before listening
         logger.info(
-            "Conversation mode — listening for follow-up (%ds timeout)",
-            self._conv_timeout,
+            "Conversation mode — listening for follow-up (%ds timeout, question=%s)",
+            self._conv_timeout_question
+            if self._last_reply_was_question
+            else self._conv_timeout,
+            self._last_reply_was_question,
         )
 
     # -- Earcons --
@@ -826,6 +1035,27 @@ class VoicePipeline:
         return (audio * 32767).astype(np.int16)
 
     # -- Helpers --
+
+    def _read_metered_chunk(self, timeout: float = 0.5) -> np.ndarray | None:
+        """Read a mic chunk and broadcast its level to any UI clients.
+
+        Wraps every capture read that can contain the user's voice, so the
+        waveform stays live across IDLE, LISTENING and CONVERSING without each
+        state handler having to remember to publish. Metering is skipped
+        entirely when nobody is subscribed.
+        """
+        chunk = self._capture.read_chunk(timeout=timeout)
+        if chunk is not None:
+            emit_level(self._events, chunk, LevelSource.INPUT)
+        return chunk
+
+    def _emit_output_level(self, block: np.ndarray) -> None:
+        """Broadcast the level of a TTS playback block as it reaches the speaker.
+
+        Lets the UI show Dax's own voice as a waveform, visually distinct from
+        the user's, rather than freezing while he speaks.
+        """
+        emit_level(self._events, block, LevelSource.OUTPUT)
 
     def _drain_mic_buffer(self) -> None:
         """Discard any buffered audio chunks from the mic queue."""

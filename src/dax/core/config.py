@@ -88,6 +88,16 @@ class VoiceConfig(BaseModel):
     earcon: bool = True
     # Seconds to keep listening for a follow-up after speaking (follow-up mode).
     conversation_timeout_s: int = 8
+    # Longer window used when Dax's reply ended in a question. He has explicitly
+    # invited an answer, so cutting the user off at the normal timeout — while
+    # they are still working out what to say — is the wrong call.
+    conversation_timeout_question_s: int = 20
+    # Minutes of inactivity before a voice session expires and the next wake
+    # word starts a fresh, history-free conversation. Until then consecutive
+    # activations share context, so "ponla de color rojo" still resolves "la"
+    # after the follow-up window has closed. Set to 0 to reset on every wake
+    # word (the old behaviour).
+    session_ttl_minutes: int = 10
     # Require sustained speech before opening a hands-free follow-up. A single
     # music transient or percussion hit must not create a new voice turn.
     followup_activation_ms: int = 320
@@ -204,6 +214,11 @@ class LLMConfig(BaseModel):
     # payloads dramatically increase prompt size and latency. The relevance
     # filter picks the best-scoring tools for the query within this budget.
     max_tools: int = 45
+    # How many LLM→tool round trips a single turn may take before the agent is
+    # forced to answer without tools. Multi-step requests (search an artist,
+    # resolve its id, then act) legitimately need several; too low a budget
+    # truncates them into a useless "no pude confirmar el resultado".
+    max_tool_iterations: int = 10
     ollama: OllamaProviderConfig = Field(default_factory=OllamaProviderConfig)
     anthropic: AnthropicProviderConfig = Field(default_factory=AnthropicProviderConfig)
     openai: OpenAIProviderConfig = Field(default_factory=OpenAIProviderConfig)

@@ -39,6 +39,7 @@ if TYPE_CHECKING:
     from starlette.applications import Starlette
 
     from dax.core.logbuffer import LogBuffer
+    from dax.core.voice_events import VoiceEventHub
 
 
 def _require(app: Starlette, key: str, label: str) -> object:
@@ -134,6 +135,10 @@ def approval_from_app(app: Starlette) -> ApprovalManager | None:
 
 def log_buffer_from_app(app: Starlette) -> LogBuffer | None:
     return getattr(app.state, "log_buffer", None)
+
+
+def voice_events_from_app(app: Starlette) -> VoiceEventHub | None:
+    return getattr(app.state, "voice_events", None)
 
 
 # --- Annotated aliases for ergonomic route signatures ---

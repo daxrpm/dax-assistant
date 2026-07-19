@@ -22,6 +22,7 @@ from dax.core.config import DaxConfig, load_config
 from dax.core.logbuffer import LogBuffer
 from dax.core.policy import ToolPolicy
 from dax.core.shell_allow import ShellAllowlist
+from dax.core.voice_events import VoiceEventHub
 from dax.llm.factory import build_router
 from dax.mcp.manager import MCPManager
 from dax.orchestrator.agent import Agent
@@ -115,9 +116,14 @@ class DaxApp:
         # Voice pipeline (initialized in start() if enabled)
         self._voice_pipeline: VoicePipeline | None = None
         self._voice_reload_lock = asyncio.Lock()
+        # The event hub outlives any individual pipeline: it is owned here so a
+        # UI client subscribed to /ws/voice keeps its connection across voice
+        # reloads, and can connect at all while voice is disabled.
+        self._voice_events = VoiceEventHub()
 
         # Web
         self._web_app = create_app(config=config, bus=self._bus)
+        self._web_app.state.voice_events = self._voice_events
         self._uvicorn_server: uvicorn.Server | None = None
 
         self._agent: Agent | None = None
@@ -235,6 +241,7 @@ class DaxApp:
             approval=self._approval,
             shell_allow=self._shell_allow,
             max_tools=self._config.llm.max_tools,
+            max_tool_iterations=self._config.llm.max_tool_iterations,
             memory_path=self._config.memory_path,
             system_prompt=self._config.system_prompt,
         )
@@ -278,6 +285,7 @@ class DaxApp:
                     loop=loop,
                     models_path=self._config.storage.models_path,
                     approval=self._approval,
+                    events=self._voice_events,
                 )
                 self._voice_pipeline.start()
                 if hasattr(self._web_app, "state"):
@@ -345,6 +353,7 @@ class DaxApp:
                 loop=asyncio.get_running_loop(),
                 models_path=self._config.storage.models_path,
                 approval=self._approval,
+                events=self._voice_events,
             )
             await asyncio.to_thread(self._voice_pipeline.start)
         except Exception:
