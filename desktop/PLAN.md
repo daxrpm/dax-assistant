@@ -897,7 +897,146 @@ disconnect (i.e. `hub.has_subscribers` is False afterwards).
 
 ## 5. Design system specification
 
-### 5.1 Grounding and honesty
+> **5.0 supersedes everything below it.** Sections 5.1–5.9 describe the
+> original macOS-token direction, which the user reviewed and rejected: it
+> shipped, and it read as a web page. They are kept only as the record of what
+> was tried and why it failed. **Build from 5.0.**
+
+### 5.0 THE FIXED DESIGN — "Órbita" (authoritative, 2026-07-19)
+
+Chosen by the user from four presented directions. The implementation is
+`desktop/src/design/tokens.css`; that file is the source of truth for values
+and this section is the source of truth for *why*.
+
+#### Why the first attempt failed
+
+Worth stating plainly, because the failure was encoded in tokens rather than
+in any one screen — which is why it reproduced across every view:
+
+```css
+/* the rejected elevation scale */
+--shadow-2: 0 2px 8px rgba(0,0,0,.07), 0 0 0 0.5px rgba(0,0,0,.07);
+```
+
+That second layer is a **border wearing a shadow's name**. Every panel in the
+app was outlined. Combine it with radii of 4–10px, 13px body text and 28px
+rows, and the result is a dense admin web UI. None of that was a taste
+judgment that could be argued about — it was arithmetic.
+
+#### The three rules
+
+Any new component must satisfy all three. They are not stylistic preferences;
+they are what separates this from the rejected build.
+
+**1. Depth comes from shadow and elevation, never from a border.**
+No elevation token carries an outline ring. Separation is expressed by, in
+order of preference: space, then a background step (`--bg-elevated` /
+`--bg-inset`), then elevation (`--shadow-1/2/3`). A `border` is a last resort
+reserved for a *true structural divide* that space cannot express — currently
+three in the entire app (markdown table head/body, `<hr>`, sidebar footer).
+Shadows are two layers: a diffused drop that sells the float, plus a 1px inset
+highlight on the top edge, which is how real glass catches light.
+
+**2. Radii are large.**
+Nothing interactive goes below `--radius-md` (10px). Panels and cards use
+`--radius-xl` (18px). Small radii are the single strongest tell of a web
+widget.
+
+**3. Space is generous.**
+Rows breathe (36px, not 28). Controls are a step larger than a web form would
+use (buttons 28/34px, inputs 34px). Panels never touch the window edge — the
+`--gutter` (12px) surrounds every floating pane. Body text is 14px/21px.
+
+Corollary: `font-weight: 600` is banned. At these sizes heavy weights read as
+web chrome; 500 is the maximum.
+
+#### Colour
+
+Dark is the default palette on `:root`; the opt-in class on `<html>` is
+`.light` (note: inverted from the usual `.dark` convention — see
+`lib/useTheme.ts`). Light is a genuine second design on a cool paper ground,
+not an inversion.
+
+The ground is a blue-biased near-black `#08090C`; panes sit at `#111319`.
+Neutrals carry a deliberate cool hue bias — a pure grey reads as unconsidered.
+
+**The accent is indigo `#6E8BFF`, and it is rationed.** It appears on:
+the voice orb, one primary action per view, the send button, and the "on"
+state of toggles and checkboxes. Nothing else. The rejected build used it for
+selected nav rows, selected tabs, selected list rows, active header buttons,
+and a solid accent tile on *every screen header* (`page.module.css`
+`.pageMark`) — at which point it had stopped carrying any meaning at all.
+Selection is now a raised surface (`--bg-elevated` + `--shadow-1`).
+
+Semantic colours (`--success`, `--warning`, `--danger`) are a separate axis and
+never stand in for the accent.
+
+#### Typography
+
+Two families, and the split between them *is* the personality:
+
+- **Sans** (`system-ui` → Cantarell on GNOME, which is the native integration
+  we want on the target platform) for anything a human said or reads.
+- **Mono** for anything the machine asserts: session ids, tool names, log
+  levels, metrics, latencies, counts, timestamps.
+
+Uppercase machine labels get `--tracking-label` (0.08em); body text never gets
+tracking. Numbers use `font-variant-numeric: tabular-nums` so columns align.
+
+#### The voice orb
+
+Direction D, "Órbita": a ring of 44 points circling a core, pushed outward and
+brightened by amplitude. Implemented in `components/VoiceOrb.tsx`.
+
+Canvas 2D, not WebGL — the workload is ~44 arcs per frame against Canvas's
+several-thousand-draw budget; WebGL costs more on cold start and its driver
+clocks the GPU harder, which is the wrong trade for a HUD that is idle most of
+the time.
+
+Two non-negotiable performance properties:
+- Level frames arrive at ~12.5 Hz from `/ws/voice` and are **rAF-coalesced**.
+  Pushing them into React state at socket rate re-renders the subtree 12×/s.
+- The render loop **cancels itself** once the pipeline is idle and the spring
+  has settled. A still orb must not hold a `requestAnimationFrame` loop open.
+  The effect is keyed on `state` (so leaving idle restarts it) and deliberately
+  *not* on `level`.
+
+#### Structure: the command deck, not a sidebar
+
+Approved 2026-07-19, replacing the classic sidebar + content-pane layout.
+
+The app opens on a **command deck**: the orb at the centre, flanked by
+at-a-glance panels, with a status bar above.
+
+- **Top bar** — brand, `⌘K` hint, and what expires: pipeline state, session
+  id, **session time remaining**, local time. That countdown was previously
+  invisible and it is exactly what determines whether Dax remembers context.
+- **Left column — your machine.** CPU, memory, disk, uptime; then voice status
+  (turns, follow-up window, speaker verification, active wake word).
+- **Centre — the orb.** Pipeline state, last transcript, and the command
+  input. The orb is not buried in a settings tab: this is a voice assistant,
+  so whether it is listening is the first thing you must be able to see.
+- **Right column — the assistant.** MCP servers with connection LEDs and tool
+  counts, the current turn's tool activity with latencies, and a live log tail.
+
+Two principles govern it:
+
+**The side panels are glanceable, not navigable.** Nothing there requires a
+click to learn. If you have to open something to find out whether Dax is
+operational, the structure has failed.
+
+**Navigation is keyboard-first.** Chat, MCP, Marketplace, Logs and Settings
+stop being permanent menu destinations and are summoned with `⌘K`. This is the
+"hacker" quality the user asked for, and it is structural rather than
+cosmetic — it is not terminal colours, it is that you do not navigate with the
+mouse. The old sidebar spent 218 permanent pixels on links used once a day.
+
+The live log is always present but quiet: an assistant that switches on lights
+and touches your files must be auditable without going looking for it.
+
+---
+
+### 5.1 Grounding and honesty — HISTORICAL, superseded by 5.0
 
 Apple does not publish a machine-readable macOS token set. The values below are
 grounded where research supports them and are **calibrated approximations**
@@ -1186,6 +1325,122 @@ fighting it to look like macOS costs more than writing 25 small components.
 ---
 
 ## 6. Screen-by-screen implementation plan
+
+### 6.0 SETTINGS INFORMATION ARCHITECTURE (authoritative, 2026-07-19)
+
+The complete, verified surface is **84 configuration fields across 10 pydantic
+sections**, plus two dynamic collections (MCP servers, memory files) and two
+list-valued policies (tool policy, shell allowlist). Verified by enumerating
+`DaxConfig.model_fields`, not estimated:
+
+| Section | Fields |
+|---|---|
+| `voice` | **42** |
+| `llm` | 10 (incl. 6 nested provider blocks) |
+| `security` | 6 |
+| `whatsapp` | 6 |
+| `web` | 5 |
+| `telegram` | 4 |
+| `tools` | 3 |
+| `storage` | 2 |
+| `mcp` | 1 (`servers`, a dynamic map) |
+| root scalars | 5 (`name`, `language_default`, `log_level`, `memory_path`, `system_prompt`) |
+
+#### What was wrong before
+
+The shipped tabs were `General · LLM · Voice · Tools · MCP · Memory ·
+Telegram · WhatsApp · Server` — a **one-to-one mirror of the backend's config
+schema**. That is the classic settings mistake: it organises by how the system
+is built rather than by what the person is trying to do. Nobody thinks "I want
+to change my web config"; they think "I want Dax to hear me better", which
+today is split across `voice.vad_threshold`, `voice.wake_word_threshold`,
+`voice.denoise` and `voice.silence_duration_ms` with no grouping that says so.
+
+It also put all 42 voice fields on one flat tab, which is unusable, and gave
+`storage` (2 fields, read-only in practice) the same visual weight as `voice`.
+
+#### The three governing principles
+
+Drawn from the research (sources in section 14):
+
+**Search-first.** With 84 fields, browsing is the fallback and search is the
+primary interaction — this is the VS Code lesson. A persistent search field
+filters every field across every section by label, description, and underlying
+config key, so `session_ttl_minutes` finds it even if the user only remembers
+the technical name. Searching must show which section a result lives in.
+
+**Progressive disclosure, capped at two levels.** Section → group → field.
+Never deeper; the research is explicit that more than about three levels
+inverts the benefit. Each group has an **Advanced** disclosure holding the
+fields that are correct by default and dangerous to fiddle with
+(`stt_compute_type`, `stt_device`, `stt_beam_size`, `vad_threshold`,
+`speaker_threshold`, `wake_word_threshold`, timeouts). Advanced is collapsed by
+default and its state is not remembered — reopening settings returns to the
+calm view.
+
+**Task-named, not schema-named.** Every section and group is named for the
+user's intent. The underlying config key is still shown, in mono, as secondary
+metadata — this is a single-user self-hosted tool and its owner is technical,
+so hiding the key would be condescending. But the key is never the label.
+
+#### The structure
+
+Seven sections, replacing nine:
+
+**1. Voz** — the largest surface, so it carries the most internal structure.
+- *Cómo te escucha* — wake word + model, mic sensitivity, denoise, endpointing
+- *Cómo conversa* — follow-up window, question window, session TTL, barge-in,
+  earcon, spoken confirmations, require-wake-each-turn
+- *Cómo habla* — TTS engine, per-language voice, speed, instructions
+- *Cómo transcribe* — STT backend/model/language, hosted-vs-local fallback
+- *Quién puede hablarle* — speaker verification, enrollment, threshold
+- Live status with the orb sits at the top of this section, not in a tab
+
+**2. Inteligencia** — `llm`. Active provider, model, fallback chain, and the
+tool budget (`max_tools`, `max_tool_iterations`). Each provider block is a
+disclosure, since only the active one usually matters.
+
+**3. Capacidades** — what Dax is allowed to do. Merges `mcp.servers`, the tool
+policy (allow/ask/deny), and the shell allowlist. These are one mental model —
+"what can it touch" — and splitting them across MCP and Tools tabs was wrong.
+
+**4. Memoria** — `memory_path`, the memory file CRUD, and `system_prompt`.
+The prompt belongs with memory: both are "what Dax knows about you".
+
+**5. Canales** — Telegram and WhatsApp. Two connectors, same shape, so they
+are two groups in one section rather than two tabs.
+
+**6. Acceso** — `security` + `web`. Password, session lifetime, cookie flags,
+bind host/port, LAN exposure, CORS. One question: who can reach this and how.
+
+**7. Sistema** — `storage` paths, `log_level`, `name`, `language_default`,
+plus desktop-only preferences (theme, backend URL, launch at login).
+
+#### Rules for field rendering
+
+- Every field shows a **description under the label**, not in a tooltip. The
+  `Tooltip` primitive exists but is unused, and should stay unused here: a
+  tooltip hides exactly the text that makes a setting comprehensible.
+- Destructive or restart-requiring fields are marked inline. `web.host`,
+  `web.port` and Telegram need a restart; LLM and tool policy apply live.
+  Saying so at the field prevents the "I changed it and nothing happened"
+  failure.
+- Secret fields (`password_hash`, `session_secret`, API keys, MCP headers and
+  env values) are masked, and a PATCH that echoes the mask back must be
+  understood by the server as "unchanged" — this is already the backend's
+  contract (see CLAUDE.md) and the UI must not defeat it.
+- Save is explicit per group, not per keystroke, and the group shows a dirty
+  state. Auto-save on a field like `bind host` is hostile.
+
+#### Coverage requirement
+
+The user's requirement is **absolutely every config**. A field that exists in
+`DaxConfig` and has no control anywhere in Settings is a bug. The verification
+gate for this section is a test that enumerates `DaxConfig.model_fields`
+recursively and asserts each leaf key appears in the UI's field registry, so
+coverage cannot silently regress when the backend gains a field.
+
+---
 
 ### 6.1 Inventory of the existing web UI (verified line counts)
 
@@ -2198,6 +2453,19 @@ Then begin M0.
 ---
 
 ## 14. Sources
+
+Settings information architecture (section 6.0), consulted 2026-07-19:
+
+- [Settings — Apple Human Interface Guidelines](https://developers.apple.com/design/human-interface-guidelines/patterns/settings/)
+  — prefer context-specific settings; reserve a settings area for what genuinely
+  applies app-wide.
+- [User and workspace settings — VS Code](https://code.visualstudio.com/docs/getstarted/settings)
+  — the search-first model: searching filters non-matching settings out rather
+  than merely highlighting matches.
+- [What is progressive disclosure in UX? — UXPin](https://www.uxpin.com/studio/blog/what-is-progressive-disclosure/)
+- [Progressive disclosure: types and use cases — LogRocket](https://blog.logrocket.com/ux-design/progressive-disclosure-ux-types-use-cases/)
+  — source of the "keep disclosure below three levels" constraint; past that,
+  layering increases cognitive load instead of reducing it.
 
 Research consulted for this document (2026-07-18):
 
