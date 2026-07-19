@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Declares Dax as a candidate for the system assistant role. Both the session
+     service and a recognition service are required for the OS to list an app in
+     Settings > Default apps > Digital assistant app. -->
+<voice-interaction-service
+    xmlns:android="http://schemas.android.com/apk/res/android"
+    android:sessionService="com.dax.assistant.trigger.DaxVoiceInteractionSessionService"
+    android:recognitionService="com.dax.assistant.trigger.DaxRecognitionService"
+    android:settingsActivity="com.dax.assistant.ui.MainActivity"
+    android:supportsAssist="true"
+    android:supportsLaunchVoiceAssistFromKeyguard="true" />

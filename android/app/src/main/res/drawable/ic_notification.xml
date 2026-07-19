@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Monochrome by requirement: the status bar tints small icons, so any colour
+     here is discarded and any fill detail becomes a blob. -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="24dp"
+    android:height="24dp"
+    android:viewportWidth="24"
+    android:viewportHeight="24"
+    android:tint="#FFFFFFFF">
+    <path
+        android:fillColor="#FFFFFFFF"
+        android:pathData="M12,3a3,3 0 0,1 3,3v6a3,3 0 0,1 -6,0V6a3,3 0 0,1 3,-3z" />
+    <path
+        android:fillColor="#FFFFFFFF"
+        android:pathData="M5,11h1.5a5.5,5.5 0 0,0 11,0H19a7,7 0 0,1 -6,6.92V21H11v-3.08A7,7 0 0,1 5,11z" />
+</vector>

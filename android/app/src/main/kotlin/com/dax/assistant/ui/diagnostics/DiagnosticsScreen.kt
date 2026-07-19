@@ -55,6 +55,10 @@ fun DiagnosticsScreen(
     state: DiagnosticsUiState,
     onRunProbe: () -> Unit,
     onRequestPermissions: () -> Unit,
+    onBack: () -> Unit,
+    onOpenAssistantSettings: () -> Unit,
+    onForgetEverything: () -> Unit,
+    onDeviceRecognition: Boolean,
     modifier: Modifier = Modifier,
 ) {
     Column(
@@ -66,7 +70,17 @@ fun DiagnosticsScreen(
             .padding(horizontal = Orbita.spacing.edge, vertical = Orbita.spacing.x6),
     ) {
         Text(
-            text = "Audio diagnostics",
+            text = "Back",
+            style = OrbitaType.callout,
+            color = Orbita.colors.accent,
+            modifier = Modifier
+                .clip(RoundedCornerShape(Orbita.radii.md))
+                .clickable(role = Role.Button, onClick = onBack)
+                .padding(vertical = Orbita.spacing.x2),
+        )
+        Spacer(Modifier.height(Orbita.spacing.x4))
+        Text(
+            text = "Settings & diagnostics",
             style = OrbitaType.largeTitle,
             color = Orbita.colors.fgPrimary,
         )
@@ -115,6 +129,123 @@ fun DiagnosticsScreen(
             color = Orbita.colors.fgQuaternary,
         )
         Spacer(Modifier.height(Orbita.spacing.x8))
+
+        SettingsSection(
+            onOpenAssistantSettings = onOpenAssistantSettings,
+            onDeviceRecognition = onDeviceRecognition,
+        )
+
+        Spacer(Modifier.height(Orbita.spacing.x6))
+
+        PrivacySection(onForgetEverything = onForgetEverything)
+
+        Spacer(Modifier.height(Orbita.spacing.x12))
+    }
+}
+
+@Composable
+private fun SettingsSection(
+    onOpenAssistantSettings: () -> Unit,
+    onDeviceRecognition: Boolean,
+) {
+    Column(Modifier.fillMaxWidth()) {
+        Text(
+            text = "Assistant".uppercase(),
+            style = OrbitaType.label,
+            color = Orbita.colors.fgTertiary,
+        )
+        Spacer(Modifier.height(Orbita.spacing.x3))
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .clip(RoundedCornerShape(Orbita.radii.xl))
+                .background(Orbita.colors.bgPanel)
+                .padding(Orbita.spacing.x5),
+        ) {
+            Text(
+                text = "Set Dax as the device assistant",
+                style = OrbitaType.body,
+                color = Orbita.colors.fgPrimary,
+            )
+            Spacer(Modifier.height(Orbita.spacing.x2))
+            // The exemption matters more than the gesture: without the role,
+            // a trigger arriving while the app is not visible cannot legally
+            // open the microphone on Android 14+.
+            Text(
+                text = "Lets the assist gesture reach Dax, and lets it start " +
+                    "listening when a trigger arrives while the app is closed. " +
+                    "Android only allows this to be chosen in Settings.",
+                style = OrbitaType.callout,
+                color = Orbita.colors.fgSecondary,
+            )
+            Spacer(Modifier.height(Orbita.spacing.x4))
+            PrimaryAction(
+                label = "Open assistant settings",
+                enabled = true,
+                onClick = onOpenAssistantSettings,
+            )
+
+            Spacer(Modifier.height(Orbita.spacing.x5))
+            Text(
+                text = if (onDeviceRecognition) {
+                    "On-device speech recognition is available — what you say " +
+                        "stays on the phone."
+                } else {
+                    "On-device speech recognition is unavailable on this ROM, so " +
+                        "recognition uses Google's networked recognizer."
+                },
+                style = OrbitaType.footnote,
+                color = if (onDeviceRecognition) {
+                    Orbita.colors.success
+                } else {
+                    Orbita.colors.warning
+                },
+            )
+        }
+    }
+}
+
+@Composable
+private fun PrivacySection(onForgetEverything: () -> Unit) {
+    Column(Modifier.fillMaxWidth()) {
+        Text(
+            text = "Privacy".uppercase(),
+            style = OrbitaType.label,
+            color = Orbita.colors.fgTertiary,
+        )
+        Spacer(Modifier.height(Orbita.spacing.x3))
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .clip(RoundedCornerShape(Orbita.radii.xl))
+                .background(Orbita.colors.bgPanel)
+                .padding(Orbita.spacing.x5),
+        ) {
+            Text(
+                text = "Dax keeps almost nothing on this phone. Conversations live " +
+                    "on your backend; the phone holds only its pairing credential " +
+                    "and the recent turns shown on screen. Nothing is backed up.",
+                style = OrbitaType.callout,
+                color = Orbita.colors.fgSecondary,
+            )
+            Spacer(Modifier.height(Orbita.spacing.x4))
+            Box(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .heightIn(min = Orbita.sizing.controlHeight)
+                    .clip(RoundedCornerShape(Orbita.radii.pill))
+                    .background(Orbita.colors.danger.copy(alpha = 0.16f))
+                    .clickable(role = Role.Button, onClick = onForgetEverything)
+                    .padding(Orbita.spacing.x4),
+                contentAlignment = Alignment.Center,
+            ) {
+                Text(
+                    text = "Unpair and delete local data",
+                    style = OrbitaType.title3,
+                    color = Orbita.colors.danger,
+                )
+            }
+        }
     }
 }
 

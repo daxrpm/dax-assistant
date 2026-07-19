@@ -1,4 +1,17 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
     <string name="app_name">Dax</string>
+
+    <string name="notification_channel_name">Assistant status</string>
+    <string name="notification_channel_description">Shows whether Dax is listening, thinking, or speaking.</string>
+
+    <string name="status_ready">Ready</string>
+    <string name="status_connecting_audio">Opening the microphone…</string>
+    <string name="status_listening">Listening</string>
+    <string name="status_transcribing">Transcribing…</string>
+    <string name="status_thinking">Thinking…</string>
+    <string name="status_needs_approval">Waiting for your approval</string>
+    <string name="status_speaking">Speaking</string>
+    <string name="status_disconnected">Not connected to Dax</string>
+    <string name="status_failed">Something went wrong</string>
 </resources>
