@@ -207,7 +207,10 @@ timeouts fail safe to deny and the modal exposes the server-provided countdown.
 ### 4.3 Voice state and expiry
 
 `/ws/voice` is implemented and authenticated. Server events are `state`, `level`,
-`transcript`, `speaker` and `error`. State data contains:
+`transcript`, `speech`, `speaker` and `error`. `transcript` is user speech;
+`speech` is emitted after synthesis and immediately before each Kokoro sentence
+plays, allowing both desktop surfaces to show the audible assistant phrase.
+State data contains:
 
 ```json
 {
@@ -268,10 +271,16 @@ explicit permission-granting user gesture and persisted opt-in. Backend
 disconnect notification fires once after three consecutive failed 15-second
 health checks and resets after recovery.
 
+Media ducking is also a persisted device preference. Its enabled state and
+speaking-volume slider are live: changing the 10–100% factor reapplies the
+current MPRIS state without losing the original volume. Listening and processing
+retain 60% and 75% floors, and idle restores the exact captured volume.
+
 ## 6. Voice HUD
 
 The `voice-hud` is a separate undecorated, always-on-top, skip-taskbar Tauri
-window. It shows state, transcript, speaker verification, PTT errors and a Canvas
+window. It shows state, the current Kokoro sentence (or latest user transcript),
+speaker verification, PTT errors and a Canvas
 2D pseudo-3D orb. A radial-gradient sphere, perspective ellipses, and z-sorted
 particles create depth. Separate input and output ring buffers drive distinct
 waves from each frame's RMS, peak, and spectrum data: the outer, sharper wave is

@@ -53,7 +53,11 @@ The desktop package does not silently install the Python backend. Missing servic
 
 Voice and logs use one demand-managed external store per webview window. Chat uses one isolated store per `session_id`. Stores survive route changes, close on logout/pagehide, keep bounded buffers, and reject frames belonging to another chat session.
 
-`/ws/voice` carries state, transcript, speaker verdict, errors, and level frames. Level data always preserves `source: input|output`:
+`/ws/voice` carries state, user transcripts, the current synthesized `speech`
+sentence, speaker verdict, errors, and level frames. Kokoro emits each `speech`
+sentence after synthesis and immediately before playback, so the command deck
+and HUD replace the user transcript with what Dax is audibly saying. Level data
+always preserves `source: input|output`:
 
 - `input` is microphone energy.
 - `output` is TTS playback energy, including Kokoro.
@@ -76,6 +80,19 @@ The renderer uses:
 
 This preserves the visual identity with a lightweight renderer. The indigo accent remains reserved for voice and primary actions.
 
+## Media integration
+
+The command deck reads MPRIS through fixed `playerctl` arguments in Rust. The
+media island exposes metadata and controls, extrapolates position between polls,
+and receives a compact 40-band PipeWire spectrum instead of PCM. Trusted Spotify
+CDN artwork and strictly validated Chromium cache images may render as a blurred,
+darkened background; arbitrary `file://` and remote artwork remain blocked.
+
+Media ducking is opt-in per device and restores the exact original MPRIS volume.
+The speaking volume is configurable from 10–100% and defaults to 40%. Listening
+and processing preserve floors of 60% and 75%, avoiding aggressive attenuation
+before speech while retaining clear feedback.
+
 ## Window chrome and surfaces
 
 The main window supports two persisted modes:
@@ -93,8 +110,8 @@ The dark palette uses a blue-black ground and stepped cool surface tokens rather
 
 ## Verification
 
-The current recorded automated gate is 312 backend tests, 49 frontend tests, and
-16 Rust tests. `npm audit --omit=dev` reports 0 vulnerabilities; the frontend
+The current recorded automated gate is 316 backend tests, 61 frontend tests, and
+26 Rust tests. `npm audit --omit=dev` reports 0 vulnerabilities; the frontend
 build and ruff, mypy, and clippy checks are clean.
 
 Run all gates listed in `AGENTS.md`. Automated tests do not replace these physical checks:

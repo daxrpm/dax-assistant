@@ -23,6 +23,10 @@ es la referencia principal de límites e invariantes.
 - Voz local mediante el micrófono del host del backend y voz remota PTT mediante
   PCM mono de 16 kHz por `/ws/voice`. El TTS remoto se reproduce en los altavoces
   del servidor, no vuelve como audio al cliente.
+- Texto Kokoro sincronizado por frase en el command deck y el HUD. El evento se
+  emite después de sintetizar y justo antes de reproducir audio.
+- Card MPRIS con espectro PipeWire de 40 bandas, artwork validado y ducking
+  configurable por dispositivo; restaura exactamente el volumen original.
 - Métricas nativas de CPU, memoria, uptime y discos; control allowlisted de
   `dax-assistant.service` con `systemctl --user`.
 - Autostart y notificaciones nativas configurables. La notificación de
@@ -98,7 +102,7 @@ cargo test --all-targets --all-features
 cargo clippy --all-targets --all-features -- -D warnings
 ```
 
-Última ejecución registrada, 2026-07-19: 312 tests backend, 49 frontend y 16
+Última ejecución registrada, 2026-07-19: 316 tests backend, 61 frontend y 26
 Rust; `npm audit --omit=dev` informó 0 vulnerabilidades, y build, ruff, mypy y
 clippy quedaron limpios.
 
@@ -117,9 +121,9 @@ Targets soportados: RPM y deb. No se configura AppImage ni Flatpak. La build del
 
 | Artefacto | Tamaño exacto |
 | --- | ---: |
-| `src-tauri/target/release/dax-desktop` | 7,214,672 bytes |
-| `bundle/rpm/Dax-0.1.0-1.x86_64.rpm` | 3,354,025 bytes |
-| `bundle/deb/Dax_0.1.0_amd64.deb` | 3,352,736 bytes |
+| `src-tauri/target/release/dax-desktop` | 7,363,440 bytes |
+| `bundle/rpm/Dax-0.1.0-1.x86_64.rpm` | 3,426,926 bytes |
+| `bundle/deb/Dax_0.1.0_amd64.deb` | 3,425,614 bytes |
 
 Estos artefactos se compilaron correctamente, pero no consta una instalación en
 un Fedora limpio.

@@ -1,9 +1,9 @@
 # Voice WebSocket protocol
 
 `/ws/voice` is an authenticated, bidirectional WebSocket. Authentication is the
-same as the other sockets: session cookie, `?token=`, or bearer header. Existing
-server-to-client `state`, `level`, `transcript`, `speaker`, and `error` JSON
-events are unchanged.
+same as the other sockets: session cookie, `?token=`, or bearer header.
+Server-to-client JSON events are `state`, `level`, `transcript`, `speech`,
+`speaker`, and `error`.
 
 Each `level` event preserves `source: input|output` and carries RMS, peak, and
 spectrum data. Desktop renderers keep those sources separate: input represents
@@ -18,6 +18,18 @@ consecutive turns reuse it until the configured inactivity TTL expires or an
 explicit farewell ends the session. `session_expires_at` is an absolute Unix
 timestamp, or `null` when there is no active session, so clients do not need to
 estimate expiry.
+
+`transcript` is recognized user speech. `speech` is the assistant sentence whose
+synthesized audio is about to play on the backend host:
+
+```json
+{"type":"speech","data":{"text":"Ahora mismo está sonando.","language":"es"}}
+```
+
+Kokoro responses are synthesized sentence by sentence. The backend emits each
+`speech` event after synthesis and immediately before playback, allowing the
+command deck and HUD to show the phrase aligned with audible output. Clients
+clear it when state leaves `speaking`.
 
 ## Remote input v1
 
