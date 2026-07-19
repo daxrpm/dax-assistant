@@ -12,6 +12,8 @@
 
 import { currentToken, getBaseUrl } from "./connection";
 import type {
+  PairCodeResponse,
+  PairedDevice,
   AuthStatus,
   ConversationDetail,
   ConversationSummary,
@@ -148,6 +150,24 @@ export const api = {
     }),
 
   logout: () => request<LoginResponse>("/auth/logout", { method: "POST" }),
+
+  /* ---------------- paired devices ---------------- */
+
+  /** Mints a one-time pairing code for a new device (the phone). */
+  pairDevice: () =>
+    request<PairCodeResponse>("/auth/devices/pair", { method: "POST" }),
+
+  devices: () => request<{ devices: PairedDevice[] }>("/auth/devices"),
+
+  revokeDevice: (id: string) =>
+    request<{ ok: boolean }>(`/auth/devices/${encodeURIComponent(id)}/revoke`, {
+      method: "POST",
+    }),
+
+  deleteDevice: (id: string) =>
+    request<{ ok: boolean }>(`/auth/devices/${encodeURIComponent(id)}`, {
+      method: "DELETE",
+    }),
 
   /* ---------------- status / dashboard ---------------- */
 

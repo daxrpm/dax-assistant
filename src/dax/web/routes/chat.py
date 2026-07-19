@@ -13,6 +13,7 @@ from typing import Any
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect
 
 from dax.core.models import ChannelType, Language, Message, MessageRole
+from dax.web.auth import AuthManager
 from dax.web.dependencies import approval_from_app, auth_from_app, bus_from_app
 
 router = APIRouter(tags=["chat"])
@@ -43,18 +44,34 @@ class WebSocketManager:
         # Which sessions each connection has spoken on. A connection with an
         # empty set has not claimed any session yet.
         self._interests: dict[int, set[str]] = {}
+        # Which enrolled device (if any) each connection authenticated as, so
+        # the desktop can show whether the phone is actually attached rather
+        # than only when it last asked for a token.
+        self._devices: dict[int, str] = {}
 
-    async def connect(self, websocket: WebSocket) -> None:
+    async def connect(self, websocket: WebSocket, device_id: str | None = None) -> None:
         await websocket.accept()
         self._connections.append(websocket)
         self._interests[id(websocket)] = set()
-        logger.info("WebSocket client connected (total: %d)", len(self._connections))
+        if device_id:
+            self._devices[id(websocket)] = device_id
+        logger.info(
+            "WebSocket client connected (total: %d%s)",
+            len(self._connections),
+            f", device {device_id}" if device_id else "",
+        )
 
     def disconnect(self, websocket: WebSocket) -> None:
         if websocket in self._connections:
             self._connections.remove(websocket)
         self._interests.pop(id(websocket), None)
+        self._devices.pop(id(websocket), None)
         logger.info("WebSocket client disconnected (total: %d)", len(self._connections))
+
+    @property
+    def connected_device_ids(self) -> set[str]:
+        """Devices with a live chat socket right now."""
+        return set(self._devices.values())
 
     def register_interest(self, websocket: WebSocket, session_id: str) -> None:
         """Record that *websocket* owns ``session_id``.
@@ -151,6 +168,29 @@ class WebSocketManager:
 ws_manager = WebSocketManager()
 
 
+def _device_for(auth: Any, websocket: WebSocket) -> str | None:
+    """The enrolled device behind this socket, if it authenticated as one.
+
+    A browser or the desktop app presents a session token and has no device
+    identity; only the phone does. Failures are swallowed because presence is
+    a display concern — it must never be able to reject a valid connection.
+    """
+    try:
+        candidates = [
+            websocket.query_params.get("token"),
+            AuthManager._bearer_token(websocket.headers.get("authorization")),
+        ]
+        for token in candidates:
+            if not token:
+                continue
+            device_id = auth.device_from_token(token)
+            if device_id:
+                return str(device_id)
+    except Exception:
+        logger.debug("Could not resolve a device for this socket", exc_info=True)
+    return None
+
+
 @router.websocket("/chat")
 async def websocket_chat(websocket: WebSocket) -> None:
     """WebSocket endpoint for real-time chat with Dax.
@@ -172,7 +212,7 @@ async def websocket_chat(websocket: WebSocket) -> None:
     if bus is None:
         await websocket.close(code=1011)  # internal error — not wired
         return
-    await ws_manager.connect(websocket)
+    await ws_manager.connect(websocket, device_id=_device_for(auth, websocket))
 
     try:
         while True:

@@ -201,7 +201,18 @@ async def list_devices(auth: AuthDep) -> DeviceListResponse:
     devices = auth.devices
     if devices is None:
         return DeviceListResponse(devices=[])
-    return DeviceListResponse(devices=[d.to_json() for d in await devices.list_devices()])
+
+    # Live presence, not just "when it last asked for a token". The desktop
+    # shows the phone as attached only while a socket is actually open.
+    from dax.web.routes.chat import ws_manager
+
+    connected = ws_manager.connected_device_ids
+    payload: list[dict[str, object]] = []
+    for device in await devices.list_devices():
+        entry = device.to_json()
+        entry["connected"] = device.id in connected
+        payload.append(entry)
+    return DeviceListResponse(devices=payload)
 
 
 @router.post(

@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { api } from "../api/client";
 import type { MCPServerStatus, StatusResponse, ToolAuditEntry } from "../api/types";
+import { AppIcon } from "./AppIcon";
 import {
   COMMAND_DECK_SESSION_ID,
   useChatSocket,
@@ -21,6 +22,7 @@ import { useConfig } from "../hooks/useConfig";
 import { SendIcon } from "./icons";
 import { VoiceOrb, type OrbState, type VoiceOrbHandle } from "./VoiceOrb";
 import { NowPlaying } from "./NowPlaying";
+import { PairedDevices } from "./PairedDevices";
 import s from "./CommandDeck.module.css";
 
 /**
@@ -316,6 +318,7 @@ export function CommandDeck({ onOpenPalette }: { onOpenPalette: () => void }) {
       {/* ---------------- top bar ---------------- */}
       <header className={s.topBar}>
         <div className={s.brandGroup}>
+          <AppIcon size={26} className={s.brandIcon} />
           <span className={s.brand}>Dax</span>
           <button type="button" className={s.paletteHint} onClick={onOpenPalette}>
             <kbd className={s.kbd}>⌘K</kbd>
@@ -379,6 +382,10 @@ export function CommandDeck({ onOpenPalette }: { onOpenPalette: () => void }) {
             <MetricsPane title={t("deck.server")} metrics={serverMetrics} />
           </>
         )}
+
+        <Pane title={t("deck.devices")}>
+          <PairedDevices />
+        </Pane>
 
         <Pane title={t("deck.voice")} meta={voice.connected ? t("deck.live") : t("common.disconnected")}>
           <Row

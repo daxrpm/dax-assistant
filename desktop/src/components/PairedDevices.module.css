@@ -1,0 +1,164 @@
+/*
+ * Órbita rules apply: separation from surface steps and space, never a border.
+ * The one exception is the pairing code card, which uses a dim accent fill to
+ * mark it as the single thing on the deck asking to be acted on.
+ */
+
+.wrap {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+}
+
+.pairButton {
+  appearance: none;
+  border: none;
+  border-radius: var(--radius-md);
+  background: var(--bg-elevated);
+  color: var(--fg-primary);
+  font: inherit;
+  font-size: var(--text-callout);
+  line-height: var(--text-callout-lh);
+  padding: var(--space-3) var(--space-4);
+  cursor: pointer;
+  transition: background var(--dur-fast) var(--ease-standard);
+}
+
+.pairButton:hover:not(:disabled) {
+  background: var(--bg-active);
+}
+
+.pairButton:disabled {
+  color: var(--fg-quaternary);
+  cursor: default;
+}
+
+.pairButton:focus-visible {
+  outline: var(--focus-ring-width) solid var(--focus-ring);
+  outline-offset: 2px;
+}
+
+.codeCard {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  align-items: center;
+  padding: var(--space-4);
+  border-radius: var(--radius-lg);
+  background: var(--accent-dim);
+}
+
+.codeLabel {
+  font-size: var(--text-caption);
+  line-height: var(--text-caption-lh);
+  letter-spacing: var(--tracking-label);
+  text-transform: uppercase;
+  color: var(--fg-tertiary);
+}
+
+.code {
+  font-family: var(--font-mono);
+  font-size: var(--text-title1);
+  line-height: var(--text-title1-lh);
+  color: var(--fg-primary);
+  /* Transcribed by hand, so it gets the extra tracking the label class would
+     otherwise reserve for machine labels. */
+  letter-spacing: 0.06em;
+  user-select: all;
+}
+
+.codeExpiry {
+  font-family: var(--font-mono);
+  font-size: var(--text-caption);
+  line-height: var(--text-caption-lh);
+  color: var(--fg-quaternary);
+}
+
+.list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+
+.item {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+}
+
+.led {
+  width: 7px;
+  height: 7px;
+  border-radius: var(--radius-pill);
+  flex: none;
+}
+
+.ledLive {
+  background: var(--success);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--success) 22%, transparent);
+}
+
+.ledOff {
+  background: var(--fg-quaternary);
+}
+
+.itemBody {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  flex: 1;
+}
+
+.itemName {
+  font-size: var(--text-callout);
+  line-height: var(--text-callout-lh);
+  color: var(--fg-primary);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.itemMeta {
+  font-family: var(--font-mono);
+  font-size: var(--text-caption);
+  line-height: var(--text-caption-lh);
+  color: var(--fg-quaternary);
+}
+
+.revoke {
+  appearance: none;
+  border: none;
+  background: transparent;
+  color: var(--fg-quaternary);
+  font: inherit;
+  font-size: var(--text-caption);
+  padding: var(--space-1) var(--space-2);
+  border-radius: var(--radius-xs);
+  cursor: pointer;
+  flex: none;
+}
+
+.revoke:hover:not(:disabled) {
+  color: var(--danger);
+  background: var(--bg-hover);
+}
+
+.revoke:focus-visible {
+  outline: var(--focus-ring-width) solid var(--focus-ring);
+  outline-offset: 2px;
+}
+
+.empty,
+.error {
+  font-size: var(--text-footnote);
+  line-height: var(--text-footnote-lh);
+  color: var(--fg-quaternary);
+  margin: 0;
+}
+
+.error {
+  color: var(--danger);
+}

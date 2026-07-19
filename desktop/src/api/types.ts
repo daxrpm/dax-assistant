@@ -335,3 +335,28 @@ export interface FullConfig {
     models_path: string;
   };
 }
+
+/** A one-time code the phone redeems to enrol. Never persisted server-side. */
+export interface PairCodeResponse {
+  code: string;
+  expires_in_seconds: number;
+}
+
+/**
+ * An enrolled client.
+ *
+ * `connected` is live socket presence, not a stored flag — it is true only
+ * while the device actually has a chat socket open, which is what makes the
+ * deck tile meaningful rather than decorative. `last_seen_at` is the weaker
+ * signal: when it last asked for a token.
+ */
+export interface PairedDevice {
+  id: string;
+  name: string;
+  platform: string;
+  created_at: string;
+  last_seen_at: string | null;
+  revoked_at: string | null;
+  revoked: boolean;
+  connected: boolean;
+}
