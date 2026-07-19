@@ -98,3 +98,139 @@ class TestAuthFlow:
         assert (await auth_client.get("/api/status")).status_code == 200
         await auth_client.post("/api/auth/logout")
         assert (await auth_client.get("/api/status")).status_code == 401
+
+
+class TestBearerToken:
+    """The desktop client can't rely on a SameSite=lax cookie from a webview
+    custom-protocol origin, so login hands back the token for bearer use."""
+
+    async def test_login_returns_token(self, auth_client: AsyncClient):
+        resp = await auth_client.post("/api/auth/login", json={"password": PASSWORD})
+        assert resp.status_code == 200
+        token = resp.json()["token"]
+        assert isinstance(token, str) and token
+
+    async def test_failed_login_returns_no_token(self, auth_client: AsyncClient):
+        resp = await auth_client.post("/api/auth/login", json={"password": "nope"})
+        assert resp.status_code == 401
+        assert resp.json()["token"] is None
+
+    async def test_bearer_token_authenticates_without_cookie(
+        self, auth_app: FastAPI
+    ) -> None:
+        transport = ASGITransport(app=auth_app)
+        async with AsyncClient(transport=transport, base_url="http://test") as ac:
+            login = await ac.post("/api/auth/login", json={"password": PASSWORD})
+            token = login.json()["token"]
+
+        # A brand-new client — no cookie jar at all, only the bearer header.
+        async with AsyncClient(transport=transport, base_url="http://test") as bare:
+            assert (await bare.get("/api/status")).status_code == 401
+            resp = await bare.get(
+                "/api/status", headers={"Authorization": f"Bearer {token}"}
+            )
+            assert resp.status_code == 200
+
+    async def test_bearer_reported_in_auth_status(self, auth_app: FastAPI) -> None:
+        transport = ASGITransport(app=auth_app)
+        async with AsyncClient(transport=transport, base_url="http://test") as ac:
+            token = (
+                await ac.post("/api/auth/login", json={"password": PASSWORD})
+            ).json()["token"]
+        async with AsyncClient(transport=transport, base_url="http://test") as bare:
+            data = (
+                await bare.get(
+                    "/api/auth/status", headers={"Authorization": f"Bearer {token}"}
+                )
+            ).json()
+            assert data["authenticated"] is True
+
+    async def test_garbage_bearer_rejected(self, auth_client: AsyncClient):
+        for header in ("Bearer garbage", "Bearer ", "Basic abc", "garbage"):
+            resp = await auth_client.get("/api/status", headers={"Authorization": header})
+            assert resp.status_code == 401, header
+
+    async def test_valid_bearer_survives_a_stale_cookie(self, auth_app: FastAPI) -> None:
+        """A cookie left over from a previous session must not shadow a good
+        bearer token — auth accepts if *any* offered credential validates."""
+        transport = ASGITransport(app=auth_app)
+        async with AsyncClient(transport=transport, base_url="http://test") as ac:
+            token = (
+                await ac.post("/api/auth/login", json={"password": PASSWORD})
+            ).json()["token"]
+
+        auth: AuthManager = auth_app.state.auth
+        async with AsyncClient(transport=transport, base_url="http://test") as bare:
+            bare.cookies.set(auth.cookie_name, "stale-and-invalid")
+            assert (await bare.get("/api/status")).status_code == 401
+            resp = await bare.get(
+                "/api/status", headers={"Authorization": f"Bearer {token}"}
+            )
+            assert resp.status_code == 200
+
+    async def test_cookie_still_works_when_bearer_is_junk(
+        self, auth_client: AsyncClient
+    ) -> None:
+        """Regression guard: the existing web UI must keep working."""
+        await auth_client.post("/api/auth/login", json={"password": PASSWORD})
+        resp = await auth_client.get(
+            "/api/status", headers={"Authorization": "Bearer nonsense"}
+        )
+        assert resp.status_code == 200
+
+
+class TestWebSocketAuthCredentials:
+    """`authenticate_websocket` accepts cookie, ?token=, or bearer header."""
+
+    @staticmethod
+    def _manager() -> AuthManager:
+        cfg = DaxConfig(
+            security={
+                "auth_enabled": True,
+                "password_hash": hash_password(PASSWORD),
+                "session_secret": "ws-secret-" + "z" * 32,
+            }
+        )
+        return AuthManager(cfg.security)
+
+    def _fake_ws(self, *, cookies=None, query=None, headers=None):
+        from types import SimpleNamespace
+
+        return SimpleNamespace(
+            cookies=cookies or {},
+            query_params=query or {},
+            headers=headers or {},
+        )
+
+    def test_query_param_token_accepted(self):
+        mgr = self._manager()
+        token = mgr.issue_token()
+        ws = self._fake_ws(query={"token": token})
+        assert mgr.authenticate_websocket(ws)  # type: ignore[arg-type]
+
+    def test_bearer_header_accepted(self):
+        mgr = self._manager()
+        token = mgr.issue_token()
+        ws = self._fake_ws(headers={"authorization": f"Bearer {token}"})
+        assert mgr.authenticate_websocket(ws)  # type: ignore[arg-type]
+
+    def test_cookie_accepted(self):
+        mgr = self._manager()
+        token = mgr.issue_token()
+        ws = self._fake_ws(cookies={mgr.cookie_name: token})
+        assert mgr.authenticate_websocket(ws)  # type: ignore[arg-type]
+
+    def test_stale_cookie_does_not_shadow_query_token(self):
+        mgr = self._manager()
+        token = mgr.issue_token()
+        ws = self._fake_ws(cookies={mgr.cookie_name: "stale"}, query={"token": token})
+        assert mgr.authenticate_websocket(ws)  # type: ignore[arg-type]
+
+    def test_no_credentials_rejected(self):
+        mgr = self._manager()
+        assert not mgr.authenticate_websocket(self._fake_ws())  # type: ignore[arg-type]
+
+    def test_auth_disabled_allows_everything(self):
+        cfg = DaxConfig(security={"auth_enabled": False})
+        mgr = AuthManager(cfg.security)
+        assert mgr.authenticate_websocket(self._fake_ws())  # type: ignore[arg-type]

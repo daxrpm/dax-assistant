@@ -127,28 +127,50 @@ class AuthManager:
 
     # -- request helpers --
 
+    @staticmethod
+    def _bearer_token(header: str | None) -> str | None:
+        """Extract the token from an ``Authorization: Bearer <token>`` header."""
+        if not header:
+            return None
+        scheme, _, value = header.partition(" ")
+        if scheme.lower() != "bearer":
+            return None
+        return value.strip() or None
+
+    def _token_candidates(self, request: Request) -> list[str]:
+        """Every credential the request offers, in preference order.
+
+        The browser SPA sends a cookie; the desktop client sends a bearer
+        token. Both are collected so a stale cookie can't shadow a valid
+        bearer token (or vice versa) — ``is_authenticated`` accepts if *any*
+        candidate validates.
+        """
+        candidates = [
+            request.cookies.get(self.cookie_name),
+            self._bearer_token(request.headers.get("authorization")),
+        ]
+        return [token for token in candidates if token]
+
     def _token_from_headers(self, request: Request) -> str | None:
-        cookie = request.cookies.get(self.cookie_name)
-        if cookie:
-            return cookie
-        auth = request.headers.get("authorization", "")
-        if auth.lower().startswith("bearer "):
-            return auth[7:].strip()
-        return None
+        """First offered credential, or ``None``. Kept for compatibility."""
+        candidates = self._token_candidates(request)
+        return candidates[0] if candidates else None
 
     def is_authenticated(self, request: Request) -> bool:
         if not self._enabled:
             return True
-        return self.validate_token(self._token_from_headers(request))
+        return any(self.validate_token(token) for token in self._token_candidates(request))
 
     def authenticate_websocket(self, websocket: WebSocket) -> bool:
-        """Validate a WebSocket connection via cookie or ?token= query param."""
+        """Validate a WebSocket via cookie, ``?token=``, or bearer header."""
         if not self._enabled:
             return True
-        token = websocket.cookies.get(self.cookie_name)
-        if not token:
-            token = websocket.query_params.get("token")
-        return self.validate_token(token)
+        candidates = [
+            websocket.cookies.get(self.cookie_name),
+            websocket.query_params.get("token"),
+            self._bearer_token(websocket.headers.get("authorization")),
+        ]
+        return any(self.validate_token(token) for token in candidates if token)
 
 
 def require_auth(request: Request) -> None:

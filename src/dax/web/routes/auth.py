@@ -29,7 +29,18 @@ class SetupRequest(BaseModel):
 
 
 class LoginResponse(BaseModel):
+    """Result of a login/setup/logout call.
+
+    ``token`` carries the signed session token on success. The browser SPA
+    ignores it and relies on the ``Set-Cookie`` header; native clients (the
+    desktop app) store it and send ``Authorization: Bearer <token>`` on HTTP
+    requests and ``?token=<token>`` on WebSocket handshakes, because a
+    ``SameSite=lax`` cookie is not reliably replayed from a webview's custom
+    protocol origin.
+    """
+
     ok: bool
+    token: str | None = None
 
 
 class AuthStatus(BaseModel):
@@ -95,7 +106,7 @@ async def setup(
     token = auth.issue_token()
     auth.set_cookie(response, token)
     logger.info("First-run account created and signed in")
-    return LoginResponse(ok=True)
+    return LoginResponse(ok=True, token=token)
 
 
 @router.post("/auth/login", response_model=LoginResponse)
@@ -115,7 +126,7 @@ async def login(
     token = auth.issue_token()
     auth.set_cookie(response, token)
     logger.info("Successful login")
-    return LoginResponse(ok=True)
+    return LoginResponse(ok=True, token=token)
 
 
 @router.post("/auth/logout", response_model=LoginResponse)
