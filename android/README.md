@@ -52,6 +52,59 @@ com.dax.assistant
   assistant         state machine and domain types
 ```
 
+## Verdict: the Redmi Watch 5 Lite cannot carry third-party audio
+
+Measured on the device (23129RA5FL, Android 15, HyperOS OS2.0, region EC) on
+2026-07-19. This is settled, not pending.
+
+**What works.** The watch is connected under HFP alongside Gadgetbridge, with
+no Mi Fitness involved. Its LMP feature bits declare SCO, eSCO (EV3/EV4/EV5),
+CVSD, and transparent synchronous data. `startVoiceRecognition()` returns true
+and brings up an eSCO link negotiating **mSBC wideband at 16 kHz**
+(`hasWbsEnabled=true`), and `setCommunicationDevice()` is accepted outside a
+call. The hardware is entirely capable.
+
+**What does not.** The link survives ~1.4–1.7s and cannot be recovered:
+
+```
+44.092  SCO OPEN_ST                    link up
+44.405  setCommunicationDevice(bt_sco) route claimed
+45.487  SCO OPEN_ST -> LISTEN_ST       dropped
+45.505  stopVoiceRecognition uid 1002  the stack, not us
+46.431  clearCommunicationDevice()     recovery attempt
+        (no SCO device left to select)
+```
+
+The deadlock:
+
+1. The watch advertises Class of Device `0x001F00` — uncategorized, **no Audio
+   service-class bit** — so Android's `ActiveDeviceManager` never promotes it
+   to the active headset, and it is absent from
+   `getAvailableCommunicationDevices()`.
+2. `startVoiceRecognition()` is therefore the only public way to promote it.
+3. The watch has no voice assistant, so its firmware ends the
+   voice-recognition session about a second later.
+4. Ending the session de-promotes the device *and* drops SCO.
+5. With no promotion there is nothing for `setCommunicationDevice()` to select,
+   so recovery returns to step 2.
+
+`BluetoothHeadset.setActiveDevice()` would break the loop but is `@SystemApi`
+behind `BLUETOOTH_PRIVILEGED`. A real phone call also breaks it, via Telecom —
+which is exactly why Bluetooth calling works on this watch and third-party
+voice does not. **There is no app-level fix.** Changing this would require
+watch firmware that advertises an audio Class of Device.
+
+### What this means for the architecture
+
+* **Watch = trigger and display.** Activation through Gadgetbridge's relay of
+  watch media keys to the Android `MediaSession`; state and replies shown as
+  notifications. No Gadgetbridge fork, no AGPL entanglement.
+* **Phone = audio.** Microphone and speaker carry the conversation.
+* **Bluetooth earbuds still get the full path.** They advertise a proper audio
+  Class of Device, so Android activates them normally and none of the above
+  applies. The same code handles both — which is the point of runtime
+  detection.
+
 ## Watch audio is a runtime feature, never an assumption
 
 Public sources confirm the Redmi Watch 5 Lite registers as a Bluetooth

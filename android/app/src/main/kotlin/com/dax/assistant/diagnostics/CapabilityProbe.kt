@@ -61,6 +61,15 @@ class CapabilityProbe(
     /** How much audio to capture when testing the microphone. */
     private val captureDurationMillis = 1_500L
 
+    /**
+     * How long the route must hold to count as usable.
+     *
+     * Six seconds covers a spoken request plus the pause before a reply. The
+     * observed failure tore down at roughly 1.4s, so this is comfortably past
+     * the boundary rather than tuned to just clear it.
+     */
+    private val requiredHoldMillis = 6_000L
+
     private val audioManager: AudioManager
         get() = context.getSystemService(AudioManager::class.java)
 
@@ -191,6 +200,20 @@ class CapabilityProbe(
             // Let the SCO link actually establish. Selecting the device is a
             // request, not a completed connection.
             awaitScoRouting(route.id)
+
+            // The VR session that promoted the device is about to end, because
+            // the watch has no recognizer to run. Whether the route survives
+            // that is the question everything else depends on, so measure it
+            // with a live capture stream anchoring the link — an idle route
+            // and a route carrying audio are not the same thing to the audio
+            // policy manager.
+            val stability = measureRouteStability()
+            report = report.with(
+                CheckId.ROUTE_STABILITY,
+                if (stability.usable) CheckStatus.PASS else CheckStatus.FAIL,
+                stability.detail,
+            )
+            onProgress(report)
 
             val capture = captureFromRoute()
             report = report
@@ -357,6 +380,119 @@ class CapabilityProbe(
             true
         }
         return settled == true
+    }
+
+    private data class StabilityOutcome(val usable: Boolean, val detail: String)
+
+    /**
+     * How long the Bluetooth route survives while audio is flowing.
+     *
+     * Two things are being tested at once. First, whether a live
+     * [AudioRecord] keeps the link alive after the voice-recognition session
+     * that opened it goes away — an active capture stream is what turns a
+     * speculative route request into one the policy manager has a reason to
+     * keep. Second, if it does drop, whether re-asserting
+     * setCommunicationDevice() brings it back now that the headset has been
+     * promoted to active, since promotion is the part that needed VR and it
+     * should persist.
+     *
+     * A route that has to be re-established every second is not a usable one,
+     * so the bar is holding continuously for [requiredHoldMillis].
+     */
+    @SuppressLint("MissingPermission") // guarded by hasPermission() before use
+    private suspend fun measureRouteStability(): StabilityOutcome {
+        val manager = audioManager
+        val sampleRate = 16_000
+        val minBuffer = AudioRecord.getMinBufferSize(
+            sampleRate,
+            AudioFormat.CHANNEL_IN_MONO,
+            AudioFormat.ENCODING_PCM_16BIT,
+        ).coerceAtLeast(3_200)
+
+        var recorder: AudioRecord? = null
+        return try {
+            recorder = AudioRecord(
+                MediaRecorder.AudioSource.VOICE_COMMUNICATION,
+                sampleRate,
+                AudioFormat.CHANNEL_IN_MONO,
+                AudioFormat.ENCODING_PCM_16BIT,
+                minBuffer * 2,
+            )
+            if (recorder.state != AudioRecord.STATE_INITIALIZED) {
+                return StabilityOutcome(false, "AudioRecord would not initialise")
+            }
+            recorder.startRecording()
+
+            val buffer = ShortArray(minBuffer)
+            val started = System.currentTimeMillis()
+            var heldUntil = started
+            var firstDropAt: Long? = null
+            var recovered = false
+
+            while (System.currentTimeMillis() - started < requiredHoldMillis) {
+                // Keep draining, or the stream stalls and stops anchoring.
+                recorder.read(buffer, 0, buffer.size)
+                val onSco =
+                    manager.communicationDevice?.type == AudioDeviceInfo.TYPE_BLUETOOTH_SCO &&
+                        recorder.routedDevice?.type == AudioDeviceInfo.TYPE_BLUETOOTH_SCO
+                val now = System.currentTimeMillis()
+                if (onSco) {
+                    heldUntil = now
+                } else if (firstDropAt == null) {
+                    firstDropAt = now
+                    // The headset should still be the active device even
+                    // though the VR session ended, so a fresh request ought to
+                    // bring SCO back on its own terms rather than VR's.
+                    recovered = reassertRoute()
+                }
+                delay(200)
+            }
+
+            val heldMillis = heldUntil - started
+            when {
+                firstDropAt == null -> StabilityOutcome(
+                    true,
+                    "Held the Bluetooth route continuously for ${heldMillis}ms " +
+                        "with capture running",
+                )
+                recovered -> StabilityOutcome(
+                    false,
+                    "Dropped after ${firstDropAt - started}ms and was recovered by " +
+                        "re-asserting the route — usable only with reconnection logic",
+                )
+                else -> StabilityOutcome(
+                    false,
+                    "Dropped after ${firstDropAt - started}ms and could not be " +
+                        "recovered; the watch ends the session it never had",
+                )
+            }
+        } catch (error: Exception) {
+            StabilityOutcome(false, "${error.javaClass.simpleName}: ${error.message.orEmpty()}")
+        } finally {
+            runCatching { recorder?.stop() }
+            runCatching { recorder?.release() }
+        }
+    }
+
+    /**
+     * Re-requests the Bluetooth route after a drop.
+     *
+     * Clearing first matters: the broker treats a repeated request for the
+     * device it already believes is selected as a no-op, so without the clear
+     * nothing is actually retried.
+     */
+    private suspend fun reassertRoute(): Boolean {
+        val manager = audioManager
+        return runCatching {
+            manager.clearCommunicationDevice()
+            delay(150)
+            val device = manager.availableCommunicationDevices
+                .firstOrNull { it.type == AudioDeviceInfo.TYPE_BLUETOOTH_SCO }
+                ?: return false
+            val ok = manager.setCommunicationDevice(device)
+            if (ok) delay(400)
+            ok && manager.communicationDevice?.type == AudioDeviceInfo.TYPE_BLUETOOTH_SCO
+        }.getOrDefault(false)
     }
 
     private data class CaptureOutcome(

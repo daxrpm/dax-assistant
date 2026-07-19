@@ -34,6 +34,18 @@ enum class CheckId(val title: String) {
     HFP_PROFILE("Registered under the HFP/headset profile"),
     SCO_DEVICE_PRESENT("Exposed to Android as a SCO communication device"),
     COMMUNICATION_DEVICE_SELECTABLE("Selectable outside a phone call"),
+
+    /**
+     * Opening the link turned out to be the easy part.
+     *
+     * startVoiceRecognition() promotes the watch and SCO comes up with mSBC,
+     * but the watch has no voice-recognition session to run, so its firmware
+     * ends the session and the stack tears the link down roughly a second
+     * later. A route that survives one second is useless for conversation, so
+     * this measures how long it is actually held with a live capture stream
+     * anchoring it.
+     */
+    ROUTE_STABILITY("Route stays open long enough to talk"),
     MICROPHONE_CAPTURE("Microphone captures audio"),
     SPEAKER_PLAYBACK("Speech plays through its speaker"),
     AUDIO_FORMAT("Negotiated sample rate and encoding"),
@@ -64,6 +76,7 @@ data class CapabilityReport(
      */
     val watchAudioUsable: Boolean
         get() = status(CheckId.COMMUNICATION_DEVICE_SELECTABLE) == CheckStatus.PASS &&
+            status(CheckId.ROUTE_STABILITY) == CheckStatus.PASS &&
             status(CheckId.MICROPHONE_CAPTURE) == CheckStatus.PASS &&
             status(CheckId.SPEAKER_PLAYBACK) == CheckStatus.PASS
 

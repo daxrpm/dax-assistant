@@ -16,6 +16,7 @@ class CapabilityReportTest {
         .with(CheckId.HFP_PROFILE, CheckStatus.PASS)
         .with(CheckId.SCO_DEVICE_PRESENT, CheckStatus.PASS)
         .with(CheckId.COMMUNICATION_DEVICE_SELECTABLE, CheckStatus.PASS)
+        .with(CheckId.ROUTE_STABILITY, CheckStatus.PASS)
         .with(CheckId.MICROPHONE_CAPTURE, CheckStatus.PASS)
         .with(CheckId.SPEAKER_PLAYBACK, CheckStatus.PASS)
 
@@ -102,10 +103,21 @@ class CapabilityReportTest {
     }
 
     @Test
+    fun `a route that cannot be held is not usable`() {
+        // The observed Redmi Watch 5 Lite behaviour: the link opens with mSBC
+        // and dies about 1.4s later, because the watch ends a
+        // voice-recognition session it has no recognizer for. Everything else
+        // can pass and the route is still no good for a conversation.
+        val report = passing().with(CheckId.ROUTE_STABILITY, CheckStatus.FAIL)
+
+        assertFalse(report.watchAudioUsable)
+    }
+
+    @Test
     fun `counts summarise the run`() {
         val report = passing().with(CheckId.MEDIA_BUTTON, CheckStatus.FAIL)
 
-        assertEquals(5, report.passCount)
+        assertEquals(6, report.passCount)
         assertEquals(1, report.failCount)
     }
 
