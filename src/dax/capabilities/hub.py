@@ -3,7 +3,10 @@
 from __future__ import annotations
 
 import asyncio
+import base64
+import binascii
 import contextlib
+import hashlib
 import json
 import logging
 import uuid
@@ -15,10 +18,16 @@ from pydantic import TypeAdapter, ValidationError
 from dax.capabilities.protocol import (
     MAX_ARGUMENT_BYTES,
     MAX_FRAME_BYTES,
+    MAX_TTS_AUDIO_BYTES,
+    MAX_TTS_CHUNK_BYTES,
+    MAX_TTS_CHUNKS,
+    FeaturesFrame,
     HeartbeatFrame,
     HelloFrame,
     InboundFrame,
     ResultFrame,
+    SynthesizeChunkFrame,
+    SynthesizeFinalFrame,
     canonical_prefix,
     trusted_endpoints,
     trusted_inventory,
@@ -31,6 +40,7 @@ if TYPE_CHECKING:
 
     from fastapi import WebSocket
 
+    from dax.core.config import VoiceConfig
     from dax.mcp.manager import MCPManager
     from dax.storage.devices import DeviceRegistry
 
@@ -44,6 +54,32 @@ _CLOSE_TIMEOUT = 5.0
 _MAX_CONCURRENT_CALLS = 4
 
 
+class CapabilityTTSTransportError(RuntimeError):
+    """A selected node failed to return a valid synthesis."""
+
+
+class LocalTTSRequiredError(RuntimeError):
+    """An explicit node-local voice policy could not be fulfilled."""
+
+
+@dataclass(frozen=True, slots=True)
+class CapabilitySynthesis:
+    pcm: bytes
+    sample_rate: int
+    engine: str
+    voice: str | None
+    language: str
+    executor_fingerprint: str
+
+
+@dataclass(slots=True)
+class _PendingSynthesis:
+    future: asyncio.Future[CapabilitySynthesis]
+    language: str
+    chunks: list[bytes] = field(default_factory=list)
+    size: int = 0
+
+
 @dataclass(slots=True)
 class _Connection:
     hub: CapabilityHub
@@ -51,6 +87,7 @@ class _Connection:
     websocket: WebSocket
     generation: int
     inventory: frozenset[str]
+    tts_engines: frozenset[str] = frozenset()
     # Validated by `trusted_endpoints`, never taken as advertised.
     endpoints: tuple[str, ...] = ()
     send_lock: asyncio.Lock = field(default_factory=asyncio.Lock)
@@ -58,6 +95,7 @@ class _Connection:
         default_factory=lambda: asyncio.Semaphore(_MAX_CONCURRENT_CALLS)
     )
     pending: dict[str, asyncio.Future[ToolResult]] = field(default_factory=dict)
+    tts_pending: dict[str, _PendingSynthesis] = field(default_factory=dict)
     closed: bool = False
 
     async def send(self, frame: dict[str, object]) -> None:
@@ -72,6 +110,9 @@ class _Connection:
             if not self.hub.is_current(self) or not self.hub.devices.is_active(self.node_id):
                 return _failure(call.id, "Capability node is disconnected or revoked")
             prefix = canonical_prefix(self.node_id)
+            local_name = call.tool_name.removeprefix(prefix)
+            if not self.hub.nodes.lends_tool(self.node_id, local_name):
+                return _failure(call.id, "Capability tool is disabled by node policy")
             if call.tool_name not in self.inventory:
                 return _failure(
                     call.id, "Capability tool is not in this connection inventory"
@@ -88,7 +129,7 @@ class _Connection:
                         "type": "execute",
                         "generation": self.generation,
                         "request_id": wire_id,
-                        "tool_name": call.tool_name.removeprefix(prefix),
+                        "tool_name": local_name,
                         "arguments": call.arguments,
                         "timeout_seconds": _CALL_TIMEOUT,
                     }
@@ -111,6 +152,46 @@ class _Connection:
         for future in self.pending.values():
             if not future.done():
                 future.set_result(_failure("", reason))
+        for pending in self.tts_pending.values():
+            if not pending.future.done():
+                pending.future.set_exception(CapabilityTTSTransportError(reason))
+
+    async def synthesize(
+        self,
+        text: str,
+        language: str,
+        engine: str,
+        config: dict[str, object],
+    ) -> CapabilitySynthesis:
+        if not self.hub.is_current(self) or not self.hub.devices.is_active(self.node_id):
+            raise CapabilityTTSTransportError("Capability node is disconnected or revoked")
+        wire_id = uuid.uuid4().hex
+        future: asyncio.Future[CapabilitySynthesis] = (
+            asyncio.get_running_loop().create_future()
+        )
+        self.tts_pending[wire_id] = _PendingSynthesis(future, language)
+        try:
+            await self.send(
+                {
+                    "type": "synthesize",
+                    "generation": self.generation,
+                    "request_id": wire_id,
+                    "text": text,
+                    "language": language,
+                    "engine": engine,
+                    "config": config,
+                }
+            )
+            return await asyncio.wait_for(future, timeout=_CALL_TIMEOUT)
+        except TimeoutError as exc:
+            raise CapabilityTTSTransportError("Capability synthesis timed out") from exc
+        except CapabilityTTSTransportError:
+            raise
+        except Exception as exc:
+            logger.exception("Capability TTS transport failed for %s", self.node_id)
+            raise CapabilityTTSTransportError("Capability node disconnected") from exc
+        finally:
+            self.tts_pending.pop(wire_id, None)
 
 
 def _failure(call_id: str, reason: str) -> ToolResult:
@@ -184,13 +265,29 @@ class CapabilityHub:
         return self._connections.get(connection.node_id) is connection and not connection.closed
 
     async def handle(self, websocket: WebSocket, node_id: str) -> None:
+        if not self.nodes.enabled:
+            await self._close_socket(websocket, code=1008)
+            return
         try:
             raw = await asyncio.wait_for(websocket.receive_text(), timeout=_HELLO_TIMEOUT)
             if len(raw.encode()) > MAX_FRAME_BYTES:
                 raise ValueError("Hello frame exceeds limit")
             hello = HelloFrame.model_validate_json(raw)
             tools = trusted_inventory(node_id, hello)
+            prefix = canonical_prefix(node_id)
+            tools = [
+                tool
+                for tool in tools
+                if self.nodes.lends_tool(
+                    node_id, str(tool["name"]).removeprefix(prefix)
+                )
+            ]
             endpoints = tuple(trusted_endpoints(hello))
+            tts_engines = frozenset(
+                hello.features.local_tts.engines
+                if hello.features.local_tts is not None
+                else []
+            )
         except (TimeoutError, ValueError, ValidationError):
             await self._close_socket(websocket, code=1008)
             return
@@ -209,6 +306,7 @@ class CapabilityHub:
                     websocket,
                     generation,
                     frozenset(str(tool["name"]) for tool in tools),
+                    tts_engines,
                     endpoints,
                 )
                 try:
@@ -238,6 +336,9 @@ class CapabilityHub:
                 "type": "ready",
                 "version": 1,
                 "generation": generation,
+                # Feature negotiation happens after the v1 hello so a new node
+                # can still connect to an older strict-v1 backend.
+                "features": {"local_tts": 1},
             }
             # The node needs this to verify session tickets on its own, without
             # asking the backend on every connection a phone makes.
@@ -287,6 +388,12 @@ class CapabilityHub:
                 continue
             if frame.generation != connection.generation:
                 continue
+            if isinstance(frame, FeaturesFrame):
+                if connection.tts_engines:
+                    await self._close_socket(connection.websocket, code=1008)
+                    return
+                connection.tts_engines = frozenset(frame.local_tts.engines)
+                continue
             if isinstance(frame, ResultFrame):
                 if len(frame.content.encode()) > 64 * 1024 or (
                     frame.error is not None and len(frame.error.encode()) > 64 * 1024
@@ -306,6 +413,159 @@ class CapabilityHub:
                             is_error=not frame.success,
                         )
                     )
+                continue
+            if isinstance(frame, SynthesizeChunkFrame):
+                if not self._accept_tts_chunk(connection, frame):
+                    await self._close_socket(connection.websocket, code=1008)
+                    return
+                continue
+            if isinstance(frame, SynthesizeFinalFrame) and not self._accept_tts_final(
+                connection, frame
+            ):
+                await self._close_socket(connection.websocket, code=1008)
+                return
+
+    def _accept_tts_chunk(
+        self, connection: _Connection, frame: SynthesizeChunkFrame
+    ) -> bool:
+        pending = connection.tts_pending.get(frame.request_id)
+        if pending is None:
+            return True
+        if frame.index != len(pending.chunks) or len(pending.chunks) >= MAX_TTS_CHUNKS:
+            return False
+        try:
+            chunk = base64.b64decode(frame.data, validate=True)
+        except (binascii.Error, ValueError):
+            return False
+        if not chunk or len(chunk) > MAX_TTS_CHUNK_BYTES:
+            return False
+        pending.size += len(chunk)
+        if pending.size > MAX_TTS_AUDIO_BYTES:
+            return False
+        pending.chunks.append(chunk)
+        return True
+
+    def _accept_tts_final(
+        self, connection: _Connection, frame: SynthesizeFinalFrame
+    ) -> bool:
+        pending = connection.tts_pending.get(frame.request_id)
+        if pending is None:
+            return True
+        if not frame.success:
+            if (
+                pending.chunks
+                or frame.chunks
+                or frame.size
+                or frame.sha256
+                or frame.sample_rate
+                or frame.channels != 1
+                or frame.sample_width != 2
+                or frame.engine is not None
+                or frame.voice is not None
+                or frame.language is not None
+                or frame.executor_fingerprint
+                or not frame.error
+            ):
+                return False
+            if not pending.future.done():
+                pending.future.set_exception(
+                    CapabilityTTSTransportError("Capability node could not synthesize speech")
+                )
+            return True
+        pcm = b"".join(pending.chunks)
+        valid = (
+            frame.chunks == len(pending.chunks)
+            and frame.size == len(pcm)
+            and frame.size > 0
+            and frame.size % 2 == 0
+            and frame.sha256 == hashlib.sha256(pcm).hexdigest()
+            and 8_000 <= frame.sample_rate <= 96_000
+            and frame.channels == 1
+            and frame.sample_width == 2
+            and frame.engine in connection.tts_engines
+            and frame.language == pending.language
+            and bool(frame.executor_fingerprint)
+            and frame.error is None
+        )
+        if not valid:
+            return False
+        assert frame.engine is not None
+        assert frame.language is not None
+        if not pending.future.done():
+            pending.future.set_result(
+                CapabilitySynthesis(
+                    pcm=pcm,
+                    sample_rate=frame.sample_rate,
+                    engine=frame.engine,
+                    voice=frame.voice,
+                    language=frame.language,
+                    executor_fingerprint=hashlib.sha256(
+                        (
+                            f"node:{connection.node_id}:{connection.generation}:"
+                            f"{frame.executor_fingerprint}"
+                        ).encode()
+                    ).hexdigest()[:32],
+                )
+            )
+        return True
+
+    async def synthesize_tts(
+        self, text: str, language: str, config: VoiceConfig
+    ) -> CapabilitySynthesis | None:
+        """Route mobile TTS to one policy-eligible node, if available."""
+        local_node_ids = sorted(
+            node_id
+            for node_id, policy in self.nodes.policies.items()
+            if policy.voice == "local" and self.devices.is_active(node_id)
+        )
+        if not self.nodes.enabled or not self.nodes.prefer_when_available:
+            if local_node_ids:
+                raise LocalTTSRequiredError("Node-local TTS is disabled or unavailable")
+            return None
+        selected: tuple[_Connection, str, str] | None = None
+        candidates = local_node_ids or sorted(self._connections)
+        for node_id in candidates:
+            policy = self.nodes.policy_for(node_id).voice
+            if policy == "server" or (local_node_ids and policy != "local"):
+                continue
+            connection = self._connections.get(node_id)
+            if connection is None:
+                continue
+            if (
+                not self.is_current(connection)
+                or not self.devices.is_active(node_id)
+            ):
+                continue
+            if not connection.tts_engines:
+                continue
+            if policy == "auto":
+                if (
+                    config.tts_engine in {"kokoro", "piper"}
+                    and config.tts_engine in connection.tts_engines
+                ):
+                    selected = (connection, config.tts_engine, policy)
+                    break
+                continue
+            engine = next(
+                (name for name in ("kokoro", "piper") if name in connection.tts_engines),
+                None,
+            )
+            if engine is None:
+                continue
+            selected = (connection, engine, policy)
+            break
+        if selected is None:
+            if local_node_ids:
+                raise LocalTTSRequiredError("Node-local TTS is unavailable")
+            return None
+        connection, engine, selected_policy = selected
+        wire_config = _tts_config(config, engine)
+        try:
+            return await connection.synthesize(text, language, engine, wire_config)
+        except CapabilityTTSTransportError as exc:
+            if selected_policy == "local":
+                raise LocalTTSRequiredError("Node-local TTS failed") from exc
+            raise
 
     async def disconnect_node(self, node_id: str) -> None:
         connection: _Connection | None = None
@@ -315,6 +575,11 @@ class CapabilityHub:
                 self._detach_locked(connection, "Capability node revoked")
         if connection is not None:
             await self._close_socket(connection.websocket, code=1008)
+
+    async def disconnect_all(self) -> None:
+        """Remove every live inventory when the fleet kill switch is disabled."""
+        for node_id in list(self._connections):
+            await self.disconnect_node(node_id)
 
     def _detach_locked(self, connection: _Connection, reason: str) -> None:
         connection.closed = True
@@ -342,3 +607,18 @@ class CapabilityHub:
                 for connection in connections
             )
         )
+
+
+def _tts_config(config: VoiceConfig, engine: str) -> dict[str, object]:
+    if engine == "kokoro":
+        return {
+            "kokoro_voice_es": config.tts_kokoro_voice_es,
+            "kokoro_voice_en": config.tts_kokoro_voice_en,
+            "piper_voice_es": config.tts_voice_es,
+            "piper_voice_en": config.tts_voice_en,
+            "speed": config.tts_kokoro_speed,
+        }
+    return {
+        "piper_voice_es": config.tts_voice_es,
+        "piper_voice_en": config.tts_voice_en,
+    }

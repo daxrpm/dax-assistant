@@ -69,10 +69,11 @@ The desktop UI talks directly to FastAPI over HTTP/WebSocket. HTTP uses `Authori
 
 ## Capability nodes and deployment
 
-- Enrollment codes are created from authenticated desktop/web device UI with kind `capability_node`; the laptop runs `dax edge enroll --server URL --code CODE --name NAME`.
+- Enrollment codes are created from authenticated desktop/web device UI with kind `capability_node`; native Desktop redeems the code through a fixed Rust command, while browser/headless installs use `dax edge enroll --server URL --code CODE --name NAME`.
 - Credentials default to `~/.local/state/dax-assistant/edge.json` (`0700` parent, `0600` file). `dax-assistant-node.service` is installed only on request and must not start before enrollment.
 - Remote nodes require HTTPS/WSS and connect outbound. Their server-trusted inventory is ephemeral, generation-fenced, policy/approval-gated, and removed immediately on disconnect or revocation.
-- Node paths resolve on the node under `DAX_SYSTEM_ROOTS`; shell calls remain server-allowlisted, argv-only, and reject shell metacharacters. Do not describe this as unrestricted shell access.
+- Typed node file paths resolve under `DAX_SYSTEM_ROOTS`. Node shell is disabled by default, one-time approval-only, locally capped by `DAX_SYSTEM_SHELL_ALLOW`, argv-only, and rejects metacharacters; generic shell arguments are not path-confined. Do not describe this as unrestricted shell access.
+- Mobile TTS may execute as bounded local Kokoro/Piper work on an eligible node through the backend-routed capability socket. OpenAI secrets never move to a node; direct phone-to-node voice and node STT remain unimplemented.
 - Current scope is one live socket per enrolled node and the bundled trusted inventory, not arbitrary remote MCP discovery, queued offline execution, or multi-authority orchestration.
 - Production is one `systemd --user` authoritative service. Back up a consistent database together with its matching `dax.key` or external `DAX_MASTER_KEY`; do not support active-active SQLite. See `docs/deployment.md` and `docs/capability-nodes.md`.
 

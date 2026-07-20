@@ -2,6 +2,11 @@ import { useCallback, useEffect, useState } from "react";
 import { api } from "../api/client";
 import type { CapabilityNode, NodePolicy } from "../api/types";
 import { useI18n } from "../i18n/I18n";
+import { isTauriRuntime } from "../native/environment";
+import {
+  getCapabilityNodeStatus,
+  type CapabilityNodeEnrollmentStatus,
+} from "../native/capabilityNode";
 import s from "./CapabilityNodes.module.css";
 
 /**
@@ -22,6 +27,7 @@ export function CapabilityNodes() {
   const [nodes, setNodes] = useState<CapabilityNode[] | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
+  const [localEnrollment, setLocalEnrollment] = useState<CapabilityNodeEnrollmentStatus | null>(null);
 
   const load = useCallback(async () => {
     try {
@@ -42,6 +48,12 @@ export function CapabilityNodes() {
     return () => clearInterval(timer);
   }, [load]);
 
+  useEffect(() => {
+    if (isTauriRuntime()) {
+      void getCapabilityNodeStatus().then(setLocalEnrollment).catch(() => setLocalEnrollment(null));
+    }
+  }, []);
+
   const update = async (id: string, patch: Partial<NodePolicy>) => {
     setBusy(id);
     // Optimistic: the switch has to feel like a switch. A failure reloads the
@@ -60,23 +72,31 @@ export function CapabilityNodes() {
     }
   };
 
-  if (nodes === null) return <p className={s.empty}>{t("common.loading")}</p>;
-
-  if (nodes.length === 0) {
-    return (
-      <p className={s.empty}>
-        {text(
-          "Ningún portátil inscrito todavía. Se inscriben desde Acceso → Dispositivos.",
-          "No laptop enrolled yet. Enrol one from Access → Devices.",
-        )}
-      </p>
-    );
-  }
-
   return (
     <>
+      {isTauriRuntime() && (
+        <div className={s.localStatus}>
+          <span className={`${s.led} ${localEnrollment?.enrolled ? s.ledLive : s.ledOff}`} />
+          <span>
+            {localEnrollment === null
+              ? text("Comprobando la inscripción local…", "Checking local enrollment…")
+              : localEnrollment.enrolled
+              ? text(`Este equipo está inscrito como ${localEnrollment.node_name}.`, `This machine is enrolled as ${localEnrollment.node_name}.`)
+              : text("Este equipo no está inscrito como nodo.", "This machine is not enrolled as a node.")}
+          </span>
+        </div>
+      )}
       {error && <p className={s.error}>{error}</p>}
-      <ul className={s.list}>
+      {nodes === null ? (
+        <p className={s.empty}>{t("common.loading")}</p>
+      ) : nodes.length === 0 ? (
+        <p className={s.empty}>
+          {text(
+            "Ningún portátil inscrito todavía. Se inscriben desde Acceso → Dispositivos.",
+            "No laptop enrolled yet. Enrol one from Access → Devices.",
+          )}
+        </p>
+      ) : <ul className={s.list}>
         {nodes.map((node) => (
           <li key={node.id} className={s.item}>
             <div className={s.head}>
@@ -99,6 +119,32 @@ export function CapabilityNodes() {
             </div>
 
             <div className={s.controls}>
+              <label className={s.control}>
+                <input
+                  type="checkbox"
+                  checked={node.policy.tools_enabled}
+                  disabled={busy === node.id || node.revoked}
+                  onChange={(e) => void update(node.id, { tools_enabled: e.target.checked })}
+                />
+                <span className={s.controlBody}>
+                  <span className={s.controlLabel}>{text("Prestar herramientas", "Lend tools")}</span>
+                  <span className={s.controlHelp}>{text("Permite archivos, portapapeles y acciones tipadas de esta PC.", "Allows files, clipboard, and typed actions from this PC.")}</span>
+                </span>
+              </label>
+
+              <label className={s.control}>
+                <input
+                  type="checkbox"
+                  checked={node.policy.shell_enabled}
+                  disabled={busy === node.id || node.revoked || !node.policy.tools_enabled}
+                  onChange={(e) => void update(node.id, { shell_enabled: e.target.checked })}
+                />
+                <span className={s.controlBody}>
+                  <span className={s.controlLabel}>{text("Permitir comandos", "Allow commands")}</span>
+                  <span className={s.controlHelp}>{text("Siempre pide aprobación y la PC aplica su allowlist local; no usa SSH ni una shell interactiva.", "Always asks for approval and the PC enforces its local allowlist; no SSH or interactive shell.")}</span>
+                </span>
+              </label>
+
               <label className={s.control}>
                 <input
                   type="checkbox"
@@ -148,8 +194,8 @@ export function CapabilityNodes() {
                   <span className={s.controlLabel}>{text("Voz", "Speech")}</span>
                   <span className={s.controlHelp}>
                     {text(
-                      "Transcripción y síntesis junto al micrófono. Es la ganancia real de latencia: el audio pesa.",
-                      "Transcription and synthesis next to the microphone. This is the real latency win: audio is bulky.",
+                      "La síntesis TTS móvil puede ejecutarse aquí. La transcripción directa en el nodo todavía no está implementada.",
+                      "Mobile TTS synthesis can run here. Direct node transcription is not implemented yet.",
                     )}
                   </span>
                 </span>
@@ -169,7 +215,7 @@ export function CapabilityNodes() {
             </div>
           </li>
         ))}
-      </ul>
+      </ul>}
     </>
   );
 }

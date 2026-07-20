@@ -42,9 +42,20 @@ def allowed_roots() -> list[Path]:
     return [Path.home().resolve()]
 
 
-def shell_allowlist() -> set[str]:
-    raw = os.environ.get("DAX_SYSTEM_SHELL_ALLOW", _DEFAULT_SHELL_ALLOW)
+def configured_shell_allowlist() -> set[str] | None:
+    """Return the hard subprocess cap, or None for the local backend mode."""
+    raw = os.environ.get("DAX_SYSTEM_SHELL_ALLOW")
+    if raw is None:
+        return None
     return {c.strip() for c in raw.split(",") if c.strip()}
+
+
+def shell_allowlist() -> set[str]:
+    """Return the effective edge allowlist, defaulting conservatively."""
+    configured = configured_shell_allowlist()
+    if configured is not None:
+        return configured
+    return {c.strip() for c in _DEFAULT_SHELL_ALLOW.split(",") if c.strip()}
 
 
 def safe_path(path: str, roots: list[Path] | None = None) -> Path:
@@ -67,12 +78,9 @@ def validate_command(command: str, allowlist: set[str] | None = None) -> list[st
     """Parse ``command`` into argv, rejecting shell metacharacters.
 
     The injection-safety guarantees (no shell, argv-only, no metacharacters) are
-    always enforced. The binary allowlist is only applied when ``allowlist`` is
-    given: in the running app the *host* (the agent) is the authority on which
-    binaries may run — it gates every ``shell_run`` against the user-managed
-    allowlist before the call reaches this subprocess — so the subprocess itself
-    stays permissive. Pass an explicit ``allowlist`` to restrict (e.g. tests or
-    standalone use).
+    always enforced. The binary allowlist is applied when ``allowlist`` is given.
+    Capability nodes set one explicitly, including an empty set; an unconfigured
+    local backend remains permissive after its separate approval gate.
 
     Raises ValueError on rejection. Returns the argv list for subprocess.run.
     """
@@ -185,7 +193,7 @@ def build_server() -> FastMCP:
     @mcp.tool()
     def shell_run(command: str) -> str:
         """Run an allowlisted shell command (no shell, no metacharacters)."""
-        argv = validate_command(command)
+        argv = validate_command(command, configured_shell_allowlist())
         try:
             proc = subprocess.run(
                 argv,

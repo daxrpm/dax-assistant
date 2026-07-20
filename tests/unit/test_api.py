@@ -12,6 +12,11 @@ import numpy as np
 import pytest
 from httpx import ASGITransport, AsyncClient
 
+from dax.capabilities.hub import (
+    CapabilitySynthesis,
+    CapabilityTTSTransportError,
+    LocalTTSRequiredError,
+)
 from dax.channels.web_channel import WebChannel
 from dax.core.config import DaxConfig
 from dax.core.models import ChannelType, Message, MessageRole
@@ -315,7 +320,7 @@ class TestVoiceSynthesis:
         assert response.headers["content-type"] == "audio/wav"
         assert response.headers["x-dax-tts-engine"] == "kokoro"
         assert response.headers["x-dax-tts-voice"] == "em_alex"
-        assert len(response.headers["x-dax-tts-fingerprint"]) == 16
+        assert len(response.headers["x-dax-tts-fingerprint"]) == 32
         assert engine.started == 1
         assert engine.languages == ["es"]
         with wave.open(io.BytesIO(response.content), "rb") as wav:
@@ -376,6 +381,83 @@ class TestVoiceSynthesis:
 
         assert limited.status_code == 429
         assert limited.headers["retry-after"] == "60"
+
+    async def test_routes_bcp47_android_language_to_node_and_returns_complete_wav(
+        self, client: AsyncClient, monkeypatch: pytest.MonkeyPatch
+    ):
+        engine = self._wire_service(client, monkeypatch)
+        app = client._transport.app  # type: ignore[union-attr]
+
+        class Hub:
+            def __init__(self) -> None:
+                self.calls: list[tuple[str, str]] = []
+
+            async def synthesize_tts(self, text: str, language: str, _config):
+                self.calls.append((text, language))
+                return CapabilitySynthesis(
+                    pcm=np.arange(12, dtype="<i2").tobytes(),
+                    sample_rate=22_050,
+                    engine="piper",
+                    voice="es_ES-davefx-medium",
+                    language=language,
+                    executor_fingerprint="n" * 32,
+                )
+
+        hub = Hub()
+        app.state.capability_hub = hub
+        response = await client.post(
+            "/api/voice/synthesize",
+            json={"text": "Hola", "language": "es-ES"},
+        )
+
+        assert response.status_code == 200
+        assert hub.calls == [("Hola", "es")]
+        assert engine.started == 0
+        assert response.headers["x-dax-tts-engine"] == "piper"
+        assert response.headers["x-dax-tts-fingerprint"] == "n" * 32
+        with wave.open(io.BytesIO(response.content), "rb") as wav:
+            assert wav.getframerate() == 22_050
+            assert wav.getnchannels() == 1
+            assert wav.getsampwidth() == 2
+            assert wav.getnframes() == 12
+
+    async def test_auto_node_transport_failure_falls_back_to_backend(
+        self, client: AsyncClient, monkeypatch: pytest.MonkeyPatch
+    ):
+        engine = self._wire_service(client, monkeypatch)
+        app = client._transport.app  # type: ignore[union-attr]
+
+        class Hub:
+            async def synthesize_tts(self, *_args):
+                raise CapabilityTTSTransportError("network detail")
+
+        app.state.capability_hub = Hub()
+        response = await client.post(
+            "/api/voice/synthesize", json={"text": "Hello", "language": "en-US"}
+        )
+
+        assert response.status_code == 200
+        assert response.headers["x-dax-tts-engine"] == "kokoro"
+        assert engine.languages == ["en"]
+
+    async def test_local_policy_failure_does_not_invoke_backend_engine(
+        self, client: AsyncClient, monkeypatch: pytest.MonkeyPatch
+    ):
+        engine = self._wire_service(client, monkeypatch)
+        app = client._transport.app  # type: ignore[union-attr]
+
+        class Hub:
+            async def synthesize_tts(self, *_args):
+                raise LocalTTSRequiredError("Node-local TTS failed")
+
+        app.state.capability_hub = Hub()
+        response = await client.post(
+            "/api/voice/synthesize", json={"text": "Hello", "language": "en"}
+        )
+
+        assert response.status_code == 503
+        assert response.json()["detail"] == "Node-local TTS failed"
+        assert engine.started == 0
 
 
 class TestConfigEndpoint:

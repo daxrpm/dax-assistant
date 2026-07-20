@@ -124,4 +124,7 @@ command = "python"
 args = ["-m", "dax.mcp_servers.system"]
 transport = "stdio"
 enabled = true
+# File tools are confined to ROOTS. Shell uses ROOTS as cwd but generic argv
+# paths are not path-confined; every node shell call still requires approval.
+# SHELL_ALLOW is a hard node-local binary cap independent of backend approval.
 # env = { DAX_SYSTEM_ROOTS = "/home/you", DAX_SYSTEM_SHELL_ALLOW = "ls,cat,git" }

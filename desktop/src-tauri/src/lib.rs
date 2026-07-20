@@ -6,6 +6,7 @@
 //! talks HTTP/WebSocket to the backend directly (3.1).
 
 mod backend;
+mod capability_node;
 mod hud;
 mod media;
 mod metrics;
@@ -214,6 +215,25 @@ async fn service_control(
 }
 
 #[tauri::command]
+async fn capability_node_enroll(
+    window: tauri::WebviewWindow,
+    state: tauri::State<'_, BackendState>,
+    code: String,
+    node_name: String,
+) -> Result<capability_node::EnrollmentStatus, String> {
+    authorize_caller(&window, &[MAIN_WINDOW])?;
+    capability_node::enroll(&state, code, node_name).await
+}
+
+#[tauri::command]
+fn capability_node_status(
+    window: tauri::WebviewWindow,
+) -> Result<capability_node::EnrollmentStatus, String> {
+    authorize_caller(&window, &[MAIN_WINDOW])?;
+    capability_node::status()
+}
+
+#[tauri::command]
 fn voice_hud_show(window: tauri::WebviewWindow, app: tauri::AppHandle) -> Result<(), String> {
     authorize_caller(&window, &[MAIN_WINDOW])?;
     hud::show(&app)
@@ -318,6 +338,8 @@ pub fn run() {
             media_spectrum_start,
             media_spectrum_stop,
             service_control,
+            capability_node_enroll,
+            capability_node_status,
             voice_hud_show,
             voice_hud_hide,
             voice_hud_toggle,

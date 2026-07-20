@@ -1,6 +1,6 @@
 import { invoke } from "@tauri-apps/api/core";
 
-export type ServiceAction = "status" | "start" | "stop" | "restart";
+export type ServiceAction = "status" | "start" | "stop" | "restart" | "enable" | "disable" | "enable_now";
 export type ServiceTarget = "backend" | "capability_node";
 
 export interface ServiceStatus {
@@ -8,6 +8,7 @@ export interface ServiceStatus {
   load_state: string;
   active_state: string;
   sub_state: string;
+  unit_file_state: string;
 }
 
 export function controlService(

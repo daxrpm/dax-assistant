@@ -44,9 +44,10 @@ to log into until this is settled, which is why it comes first. Re-openable from
 **Settings → Desktop → Open onboarding**.
 
 **After login — everything else.** Pick a model and enter its API key, enrol this
-laptop as a capability node, and pair your phone. All three call an authenticated
-backend, so none of them can run any earlier. Every step is skippable and the
-flow is re-openable from **Settings → Desktop → Run setup again**.
+laptop as a capability node, and pair your phone. Native Desktop redeems the
+node code and writes `edge.json` itself; it does not launch an arbitrary command.
+All three call an authenticated backend, so none can run earlier. Every step is
+skippable and the flow is re-openable from **Settings → Desktop → Run setup again**.
 
 Nothing in the desktop app stores an API key locally; keys go to the backend's
 encrypted secret store. Session credentials are kept per origin in the system
@@ -96,10 +97,10 @@ Full behaviour, safety model, and revocation are in
 [`capability-nodes.md`](capability-nodes.md). The short path:
 
 ```bash
-# Installs the unit but deliberately does not enable or start it.
-bash install.sh --version "$VERSION" --with-node
+# Installs only the node runtime and unit; no backend authority is installed.
+bash install.sh --version "$VERSION" --node-only
 
-# Enrol first: the unit refuses to start without a credential file.
+# Native Desktop enrols without a terminal. This is the browser/headless fallback:
 dax edge enroll --server https://dax.example --code CODE --name "$(hostname)"
 dax edge status
 

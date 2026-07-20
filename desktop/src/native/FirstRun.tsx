@@ -3,6 +3,13 @@ import { QRCodeSVG } from "qrcode.react";
 import { api } from "../api/client";
 import { Button, TextInput } from "../design/primitives";
 import { useI18n } from "../i18n/I18n";
+import { isTauriRuntime } from "./environment";
+import {
+  enrollCapabilityNode,
+  getCapabilityNodeStatus,
+  type CapabilityNodeEnrollmentStatus,
+} from "./capabilityNode";
+import { controlService, type ServiceStatus } from "./service";
 import s from "./FirstRun.module.css";
 
 const SETUP_KEY = "dax.setup.complete";
@@ -77,6 +84,10 @@ export function FirstRun({ onDone }: { onDone: () => void }) {
   const [modelSaved, setModelSaved] = useState(false);
 
   const [nodeCommand, setNodeCommand] = useState("");
+  const [nodeName, setNodeName] = useState("");
+  const [nodeEnrollment, setNodeEnrollment] = useState<CapabilityNodeEnrollmentStatus | null>(null);
+  const [nodeService, setNodeService] = useState<ServiceStatus | null>(null);
+  const [enableNodeService, setEnableNodeService] = useState(false);
   const [pairing, setPairing] = useState<{ uri: string; code: string } | null>(null);
   const [remaining, setRemaining] = useState(0);
 
@@ -91,6 +102,18 @@ export function FirstRun({ onDone }: { onDone: () => void }) {
   useEffect(() => {
     if (remaining === 0) setPairing(null);
   }, [remaining]);
+
+  useEffect(() => {
+    if (!isTauriRuntime()) return;
+    void Promise.all([
+      getCapabilityNodeStatus().catch(() => null),
+      controlService("capability_node", "status").catch(() => null),
+    ]).then(([enrollment, service]) => {
+      setNodeEnrollment(enrollment);
+      setNodeService(service);
+      if (enrollment?.node_name) setNodeName(enrollment.node_name);
+    });
+  }, []);
 
   const saveModel = useCallback(async () => {
     setBusy(true);
@@ -116,16 +139,31 @@ export function FirstRun({ onDone }: { onDone: () => void }) {
     setMessage("");
     try {
       const response = await api.pairDevice("capability_node");
-      setNodeCommand(
-        `dax edge enroll --server ${response.backend_url} --code ${response.code} --name "$(hostname)"`,
-      );
-      setRemaining(response.expires_in_seconds);
+      if (isTauriRuntime()) {
+        const enrollment = await enrollCapabilityNode(response.code, nodeName);
+        setNodeEnrollment(enrollment);
+        if (enableNodeService) {
+          setNodeService(await controlService("capability_node", "enable_now"));
+        } else {
+          setNodeService(await controlService("capability_node", "status").catch(() => null));
+        }
+        setMessage(
+          enableNodeService
+            ? text("Nodo inscrito y servicio habilitado.", "Node enrolled and service enabled.")
+            : text("Nodo inscrito. El servicio no se ha iniciado.", "Node enrolled. The service was not started."),
+        );
+      } else {
+        setNodeCommand(
+          `dax edge enroll --server ${response.backend_url} --code ${response.code} --name <name>`,
+        );
+        setRemaining(response.expires_in_seconds);
+      }
     } catch (error) {
       setMessage(error instanceof Error ? error.message : String(error));
     } finally {
       setBusy(false);
     }
-  }, []);
+  }, [enableNodeService, nodeName, text]);
 
   const pairPhone = useCallback(async () => {
     setBusy(true);
@@ -233,9 +271,50 @@ export function FirstRun({ onDone }: { onDone: () => void }) {
                 "A node lends its tools to the assistant and, if you allow it, runs the turn here. History still lives on the backend.",
               )}
             </p>
-            <Button loading={busy} onClick={() => void enrolNode()}>
-              {text("Generar comando de inscripción", "Generate enrolment command")}
+            {isTauriRuntime() && (
+              <>
+                <label className={s.field}>
+                  <span>{text("Nombre del nodo", "Node name")}</span>
+                  <TextInput
+                    value={nodeName}
+                    maxLength={64}
+                    autoComplete="off"
+                    placeholder={text("portátil de trabajo", "work laptop")}
+                    onChange={(event) => setNodeName(event.target.value)}
+                  />
+                </label>
+                <label className={s.consent}>
+                  <input
+                    type="checkbox"
+                    checked={enableNodeService}
+                    onChange={(event) => setEnableNodeService(event.target.checked)}
+                  />
+                  <span>
+                    {text(
+                      "Habilitar e iniciar dax-assistant-node.service después de inscribir este equipo.",
+                      "Enable and start dax-assistant-node.service after enrolling this machine.",
+                    )}
+                  </span>
+                </label>
+              </>
+            )}
+            <Button
+              loading={busy}
+              disabled={isTauriRuntime() && (!nodeName.trim() || nodeEnrollment?.enrolled === true)}
+              onClick={() => void enrolNode()}
+            >
+              {isTauriRuntime()
+                ? text("Inscribir este portátil", "Enroll this laptop")
+                : text("Generar comando de inscripción", "Generate enrolment command")}
             </Button>
+            {isTauriRuntime() && nodeEnrollment?.enrolled && (
+              <p className={s.hint}>
+                {text("Inscrito como", "Enrolled as")} <strong>{nodeEnrollment.node_name}</strong>
+                {nodeService
+                  ? ` · dax-assistant-node.service: ${nodeService.active_state}, ${nodeService.unit_file_state}`
+                  : ` · ${text("estado del servicio no disponible", "service status unavailable")}`}
+              </p>
+            )}
             {nodeCommand && (
               <>
                 <div className={s.commandRow}>
@@ -303,8 +382,10 @@ export function FirstRun({ onDone }: { onDone: () => void }) {
               <div>
                 <dt>{text("Nodo", "Node")}</dt>
                 <dd>
-                  {nodeCommand
-                    ? text("Comando generado", "Command generated")
+                  {nodeEnrollment?.enrolled
+                    ? text("Inscrito localmente", "Enrolled locally")
+                    : nodeCommand
+                      ? text("Comando generado", "Command generated")
                     : text("Omitido", "Skipped")}
                 </dd>
               </div>

@@ -550,9 +550,15 @@ async def update_nodes(
     request: Request, body: NodesConfigUpdate, config: ConfigDep
 ) -> dict[str, str]:
     """Update the fleet-wide capability-node switches."""
-    for key, value in body.model_dump(exclude_none=True).items():
+    updates = body.model_dump(exclude_none=True)
+    for key, value in updates.items():
         object.__setattr__(config.nodes, key, value)
     persist_config(request)
+    if updates.get("enabled") is False:
+        hub = getattr(request.app.state, "capability_hub", None)
+        disconnect_all = getattr(hub, "disconnect_all", None)
+        if disconnect_all is not None:
+            await disconnect_all()
     return {"status": "ok"}
 
 

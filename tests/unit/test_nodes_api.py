@@ -39,6 +39,14 @@ class TestNodesConfigModel:
             policies={"n1": NodePolicyConfig(process_locally=True)},
         )
         assert nodes.hosts_sessions("n1") is False
+        assert nodes.lends_tool("n1", "fs_read") is False
+
+    def test_shell_requires_an_explicit_per_node_opt_in(self) -> None:
+        nodes = NodesConfig()
+        assert nodes.lends_tool("n1", "fs_read") is True
+        assert nodes.lends_tool("n1", "shell_run") is False
+        nodes.policies["n1"] = NodePolicyConfig(shell_enabled=True)
+        assert nodes.lends_tool("n1", "shell_run") is True
 
     def test_a_node_may_be_demoted_without_touching_its_siblings(self) -> None:
         nodes = NodesConfig(policies={"n1": NodePolicyConfig(process_locally=False)})
@@ -125,6 +133,8 @@ class TestNodeListing:
         # fact that a row exists.
         assert row["connected"] is False
         assert row["policy"] == {
+            "tools_enabled": True,
+            "shell_enabled": False,
             "process_locally": True,
             "inference": "auto",
             "voice": "auto",
@@ -143,11 +153,14 @@ class TestNodePolicyUpdates:
         node_id = await _enroll_node(client)
 
         response = await client.patch(
-            f"/api/nodes/{node_id}", json={"process_locally": False, "voice": "server"}
+            f"/api/nodes/{node_id}",
+            json={"process_locally": False, "voice": "server", "shell_enabled": True},
         )
 
         assert response.status_code == 200
         assert response.json()["policy"] == {
+            "tools_enabled": True,
+            "shell_enabled": True,
             "process_locally": False,
             "inference": "auto",
             "voice": "server",

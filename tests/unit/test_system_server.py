@@ -9,6 +9,7 @@ import pytest
 from dax.mcp_servers.system.server import (
     _command_environment,
     build_server,
+    configured_shell_allowlist,
     safe_path,
     validate_command,
 )
@@ -63,6 +64,25 @@ class TestValidateCommand:
     def test_execution_does_not_inherit_user_controlled_path(self, monkeypatch):
         monkeypatch.setenv("PATH", "/tmp/attacker-bin")
         assert _command_environment()["PATH"] != "/tmp/attacker-bin"
+
+    def test_explicit_empty_node_allowlist_disables_shell(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setenv("DAX_SYSTEM_SHELL_ALLOW", "")
+        allowlist = configured_shell_allowlist()
+        assert allowlist == set()
+        with pytest.raises(ValueError, match="allowlist"):
+            validate_command("ls", allowlist)
+
+    def test_unconfigured_local_backend_keeps_separate_approval_semantics(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.delenv("DAX_SYSTEM_SHELL_ALLOW", raising=False)
+        assert configured_shell_allowlist() is None
+        assert validate_command("custom-approved-tool --version") == [
+            "custom-approved-tool",
+            "--version",
+        ]
 
 
 def test_build_server_registers_tools():

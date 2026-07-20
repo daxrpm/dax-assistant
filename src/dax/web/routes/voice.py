@@ -14,7 +14,12 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from dax.core.exceptions import TTSError, VoiceError
 from dax.voice.speaker import SpeakerVerifier
-from dax.voice.tts_service import TTSRateLimitError, TTSService, TTSServiceBusyError
+from dax.voice.tts_service import (
+    RemoteTTSCoordinator,
+    TTSRateLimitError,
+    TTSService,
+    TTSServiceBusyError,
+)
 from dax.web.dependencies import ConfigDep
 
 if TYPE_CHECKING:
@@ -72,7 +77,7 @@ class VoiceSynthesisRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     text: str = Field(min_length=1, max_length=2000)
-    language: Literal["es", "en", "auto"] = "auto"
+    language: str = Field(default="auto", min_length=2, max_length=5)
 
     @field_validator("text")
     @classmethod
@@ -81,6 +86,16 @@ class VoiceSynthesisRequest(BaseModel):
         if not value:
             raise ValueError("text must not be blank")
         return value
+
+    @field_validator("language")
+    @classmethod
+    def normalize_language(cls, value: str) -> str:
+        normalized = value.replace("_", "-").lower()
+        languages = {"auto": "auto", "es": "es", "es-es": "es", "en": "en", "en-us": "en"}
+        try:
+            return languages[normalized]
+        except KeyError as exc:
+            raise ValueError("language must be auto, es, es-ES, en, or en-US") from exc
 
 
 @router.post("/push-to-talk/press")
@@ -146,12 +161,11 @@ async def synthesize_voice(
 ) -> Response:
     """Return a complete WAV using the backend's active TTS configuration."""
     service = _tts_service(request, config)
+    coordinator = RemoteTTSCoordinator(
+        service, getattr(request.app.state, "capability_hub", None), config.voice
+    )
     try:
-        result = await asyncio.to_thread(
-            service.synthesize_mobile,
-            body.text.strip(),
-            body.language,
-        )
+        result = await coordinator.synthesize_mobile(body.text.strip(), body.language)
     except TTSRateLimitError as exc:
         raise HTTPException(
             status_code=429,
@@ -171,7 +185,7 @@ async def synthesize_voice(
 
     headers = {
         "X-Dax-TTS-Engine": result.engine,
-        "X-Dax-TTS-Fingerprint": service.fingerprint,
+        "X-Dax-TTS-Fingerprint": result.executor_fingerprint,
     }
     if result.voice:
         headers["X-Dax-TTS-Voice"] = result.voice

@@ -6,7 +6,7 @@ This document is the implementation map for Dax Desktop. `AGENTS.md` contains th
 
 Dax Desktop has three layers:
 
-1. One always-on Python backend is authoritative for SQLite, conversations, agent orchestration, LLM routing, MCP, policy, approvals, configuration, persistence, STT, TTS, and the voice state machine.
+1. One always-on Python backend is authoritative for SQLite, conversations, agent orchestration, LLM routing, MCP, policy, approvals, configuration, persistence, voice routing, and the voice state machine. It may delegate bounded local TTS execution to an enrolled node without delegating authority.
 2. The Tauri Rust core owns OS capabilities: windows, tray, global shortcuts, autostart, notifications, systemd control, host metrics, keyring access, and validated local preferences.
 3. The React webview owns presentation and backend protocols. It calls FastAPI directly; Rust is not an HTTP proxy.
 
@@ -62,6 +62,12 @@ The flow covers:
 5. Review and atomic persistence.
 
 The desktop package does not silently install the Python backend. Missing service state is reported honestly. The same strategy editor remains available in Desktop Settings and from the unreachable-backend screen. It can reconfigure local or remote mode, validate the selected URL, and request consent before starting `dax-assistant.service`; reconfiguration never copies a token between authorities.
+
+After login, native Desktop can enrol the same machine as a capability node. A
+main-window-only Rust command redeems a one-use code against the already
+validated authority and writes the daemon credential atomically. It accepts no
+URL, path, executable, or argv from React. Enabling and starting the fixed node
+unit remains separate explicit consent.
 
 ## Realtime stores
 

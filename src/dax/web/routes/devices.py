@@ -127,6 +127,7 @@ class EnrollResponse(BaseModel):
     ok: bool
     device_id: str | None = None
     device_secret: str | None = None
+    instance_id: str | None = None
 
 
 class TokenRequest(BaseModel):
@@ -227,7 +228,12 @@ async def enroll_device(
         platform=body.platform or "unknown",
         kind=kind,
     )
-    return EnrollResponse(ok=True, device_id=device.id, device_secret=secret)
+    return EnrollResponse(
+        ok=True,
+        device_id=device.id,
+        device_secret=secret,
+        instance_id=request.app.state.server_instance_id,
+    )
 
 
 @router.post("/auth/devices/token", response_model=TokenResponse)

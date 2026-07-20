@@ -3,6 +3,9 @@
 from __future__ import annotations
 
 import asyncio
+import base64
+import hashlib
+import importlib.util
 import ipaddress
 import json
 import logging
@@ -10,27 +13,39 @@ import os
 import random
 import socket
 import sys
+import threading
 from collections.abc import Awaitable, Callable
 from contextlib import suppress
+from pathlib import Path
 from typing import Any, Protocol
 
 import httpx
+import numpy as np
 import psutil
 from websockets.asyncio.client import ClientConnection, connect
 
+from dax.core.config import VoiceConfig
 from dax.core.models import ToolCall
 from dax.mcp.client import MCPClient
 from dax.mcp.manager import _session_passthrough_env
-from dax.mcp_servers.system.server import validate_command
+from dax.mcp_servers.system.server import shell_allowlist, validate_command
 
 from .credentials import NodeCredentials, websocket_url
 from .protocol import (
+    MAX_TTS_AUDIO_BYTES,
+    MAX_TTS_CHUNK_BYTES,
+    MAX_TTS_CHUNKS,
     ExecuteRequest,
+    SynthesizeRequest,
     hello_frame,
+    local_tts_features_frame,
     parse_execute,
     parse_frame,
     parse_ready,
+    parse_synthesize,
     result_frame,
+    synthesize_chunk_frame,
+    synthesize_final_frame,
 )
 
 logger = logging.getLogger(__name__)
@@ -38,6 +53,16 @@ logger = logging.getLogger(__name__)
 HEARTBEAT_SECONDS = 20.0
 MAX_IN_FLIGHT = 8
 MAX_ADVERTISED_ENDPOINTS = 4
+
+
+def available_local_tts_engines() -> list[str]:
+    """Advertise only local runtimes; model readiness is checked lazily."""
+    engines: list[str] = []
+    if importlib.util.find_spec("kokoro_onnx") is not None:
+        engines.append("kokoro")
+    if importlib.util.find_spec("piper") is not None:
+        engines.append("piper")
+    return engines
 
 
 class WebSocketConnection(Protocol):
@@ -107,6 +132,10 @@ class SystemExecutor:
         for key in ("DAX_SYSTEM_ROOTS",):
             if value := os.environ.get(key):
                 env[key] = value
+        self._shell_allow = shell_allowlist()
+        # Always mark an edge subprocess as node-confined. An explicitly empty
+        # setting is preserved and disables shell execution on this node.
+        env["DAX_SYSTEM_SHELL_ALLOW"] = ",".join(sorted(self._shell_allow))
         self._client = MCPClient(
             "dax-system",
             command=sys.executable,
@@ -131,7 +160,7 @@ class SystemExecutor:
             command = request.arguments.get("command")
             if not isinstance(command, str):
                 raise ValueError("shell_run requires a string command")
-            validate_command(command)
+            validate_command(command, self._shell_allow)
         result = await asyncio.wait_for(
             self._client.execute(
                 ToolCall(
@@ -148,18 +177,113 @@ class SystemExecutor:
         return result.content
 
 
+class LocalTTSExecutor:
+    """One lazy, resident local engine with strictly serialized synthesis."""
+
+    def __init__(self, models_path: str | None = None) -> None:
+        self.engines = available_local_tts_engines()
+        data_home = Path(os.environ.get("XDG_DATA_HOME", Path.home() / ".local/share"))
+        self._models_path = models_path or os.environ.get(
+            "DAX_MODELS_PATH", str(data_home / "dax-assistant/models")
+        )
+        self._lock = asyncio.Semaphore(1)
+        self._thread_lock = threading.Lock()
+        self._engine: Any = None
+        self._config_fingerprint = ""
+
+    async def stop(self) -> None:
+        async with self._lock:
+            await asyncio.to_thread(self._stop_blocking)
+
+    async def synthesize(
+        self, request: SynthesizeRequest
+    ) -> tuple[bytes, int, str, str | None, str]:
+        if request.engine not in self.engines:
+            raise RuntimeError("Requested local TTS engine is unavailable")
+        await self._lock.acquire()
+        loop = asyncio.get_running_loop()
+        worker = loop.run_in_executor(None, self._synthesize_threadsafe, request)
+        release_on_completion = False
+        try:
+            return await asyncio.wait_for(asyncio.shield(worker), timeout=60.0)
+        except (asyncio.CancelledError, TimeoutError):
+            # Python cannot kill a running inference thread. Keep admission
+            # occupied until it really exits so reconnects cannot accumulate
+            # overlapping model work.
+            release_on_completion = True
+            worker.add_done_callback(lambda _future: loop.call_soon_threadsafe(self._lock.release))
+            raise
+        finally:
+            if not release_on_completion:
+                self._lock.release()
+
+    def _stop_blocking(self) -> None:
+        with self._thread_lock:
+            engine, self._engine = self._engine, None
+            if engine is not None:
+                engine.stop()
+
+    def _synthesize_threadsafe(
+        self, request: SynthesizeRequest
+    ) -> tuple[bytes, int, str, str | None, str]:
+        with self._thread_lock:
+            return self._synthesize_blocking(request)
+
+    def _synthesize_blocking(
+        self, request: SynthesizeRequest
+    ) -> tuple[bytes, int, str, str | None, str]:
+        from dax.voice.tts import build_tts
+
+        config_payload: dict[str, object] = {
+            "tts_engine": request.engine,
+            "tts_voice_es": request.config["piper_voice_es"],
+            "tts_voice_en": request.config["piper_voice_en"],
+        }
+        if request.engine == "kokoro":
+            config_payload["tts_kokoro_voice_es"] = request.config["kokoro_voice_es"]
+            config_payload["tts_kokoro_voice_en"] = request.config["kokoro_voice_en"]
+            config_payload["tts_kokoro_speed"] = request.config["speed"]
+        config_key = hashlib.sha256(
+            json.dumps(config_payload, sort_keys=True, separators=(",", ":")).encode()
+        ).hexdigest()
+        if self._engine is None or self._config_fingerprint != config_key:
+            if self._engine is not None:
+                self._engine.stop()
+            self._engine = build_tts(VoiceConfig.model_validate(config_payload), self._models_path)
+            self._engine.start()
+            self._config_fingerprint = config_key
+        audio = np.asarray(
+            self._engine.synthesize(request.text, language=request.language), dtype="<i2"
+        )
+        pcm = audio.tobytes()
+        if not pcm:
+            raise RuntimeError("Local TTS returned no audio")
+        if len(pcm) > MAX_TTS_AUDIO_BYTES:
+            raise RuntimeError("Local TTS audio exceeds limit")
+        engine = str(self._engine.engine_name)
+        if engine not in {"kokoro", "piper"}:
+            raise RuntimeError("Invalid local TTS executor")
+        voice = self._engine.voice_name(request.language)
+        fingerprint = hashlib.sha256(
+            f"{config_key}:{engine}:{voice}:{self._engine.sample_rate}".encode()
+        ).hexdigest()[:32]
+        return pcm, int(self._engine.sample_rate), engine, voice, fingerprint
+
+
 class EdgeDaemon:
     def __init__(
         self,
         credentials: NodeCredentials,
         *,
         executor: SystemExecutor | None = None,
+        tts_executor: LocalTTSExecutor | None = None,
         connect_factory: ConnectFactory = _connect,
         sleep: Sleep = asyncio.sleep,
         session_port: int | None = None,
     ) -> None:
         self._credentials = credentials
         self._executor = executor or SystemExecutor()
+        self._tts_executor = tts_executor or LocalTTSExecutor()
         self._connect = connect_factory
         self._sleep = sleep
         self._stop = asyncio.Event()
@@ -242,6 +366,7 @@ class EdgeDaemon:
                     await self._sleep(delay)
         finally:
             await self._cancel_requests()
+            await self._tts_executor.stop()
             await self._executor.stop()
 
     async def _serve_until_stop(
@@ -286,25 +411,43 @@ class EdgeDaemon:
                             "Backend did not supply a session-signing key; "
                             "direct client sessions stay disabled"
                         )
+                    tts_features = local_tts_features_frame(
+                        frame, self._tts_executor.engines
+                    )
+                    if tts_features is not None:
+                        await connection.send(json.dumps(tts_features))
                     continue
-                if frame["type"] != "execute":
+                if frame["type"] not in {"execute", "synthesize"}:
                     continue
                 try:
-                    request = parse_execute(frame)
+                    request = (
+                        parse_execute(frame)
+                        if frame["type"] == "execute"
+                        else parse_synthesize(frame)
+                    )
                 except ValueError as exc:
-                    logger.warning("Rejected malformed execute frame: %s", exc)
+                    logger.warning("Rejected malformed capability frame: %s", exc)
                     continue
                 if len(self._tasks) >= MAX_IN_FLIGHT:
-                    await connection.send(
-                        json.dumps(
-                            result_frame(request, success=False, error="Node is busy")
+                    if isinstance(request, SynthesizeRequest):
+                        busy_frame = synthesize_final_frame(
+                            request, success=False, error="Node is busy"
                         )
+                    else:
+                        busy_frame = result_frame(
+                            request, success=False, error="Node is busy"
+                        )
+                    await connection.send(
+                        json.dumps(busy_frame)
                     )
                     continue
-                task = asyncio.create_task(
-                    self._execute_and_send(connection, request),
-                    name=f"edge-execute-{request.request_id}",
-                )
+                if isinstance(request, ExecuteRequest):
+                    coroutine = self._execute_and_send(connection, request)
+                    task_name = f"edge-execute-{request.request_id}"
+                else:
+                    coroutine = self._synthesize_and_send(connection, request)
+                    task_name = f"edge-synthesize-{request.request_id}"
+                task = asyncio.create_task(coroutine, name=task_name)
                 self._tasks.add(task)
                 task.add_done_callback(self._tasks.discard)
         finally:
@@ -324,6 +467,51 @@ class EdgeDaemon:
             frame = result_frame(request, success=False, error="Execution timed out")
         except Exception as exc:
             frame = result_frame(request, success=False, error=str(exc))
+        await connection.send(json.dumps(frame))
+
+    async def _synthesize_and_send(
+        self, connection: WebSocketConnection, request: SynthesizeRequest
+    ) -> None:
+        try:
+            pcm, sample_rate, engine, voice, fingerprint = (
+                await self._tts_executor.synthesize(request)
+            )
+            digest = hashlib.sha256(pcm).hexdigest()
+            chunks = [
+                pcm[offset : offset + MAX_TTS_CHUNK_BYTES]
+                for offset in range(0, len(pcm), MAX_TTS_CHUNK_BYTES)
+            ]
+            if len(chunks) > MAX_TTS_CHUNKS:
+                raise RuntimeError("Local TTS audio exceeds chunk limit")
+            for index, chunk in enumerate(chunks):
+                await connection.send(
+                    json.dumps(
+                        synthesize_chunk_frame(
+                            request, index, base64.b64encode(chunk).decode("ascii")
+                        )
+                    )
+                )
+            frame = synthesize_final_frame(
+                request,
+                success=True,
+                chunks=len(chunks),
+                size=len(pcm),
+                sha256=digest,
+                sample_rate=sample_rate,
+                channels=1,
+                sample_width=2,
+                engine=engine,
+                voice=voice,
+                language=request.language,
+                executor_fingerprint=fingerprint,
+            )
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            logger.warning("Local TTS synthesis failed", exc_info=True)
+            frame = synthesize_final_frame(
+                request, success=False, error="Local TTS synthesis failed"
+            )
         await connection.send(json.dumps(frame))
 
     async def _heartbeat(self, connection: WebSocketConnection) -> None:

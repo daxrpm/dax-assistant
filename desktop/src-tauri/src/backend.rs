@@ -192,6 +192,21 @@ impl BackendState {
             .map_err(|_| "backend settings lock is poisoned".into())
     }
 
+    pub fn active_validated_authority(&self) -> Result<(String, String), String> {
+        let settings = self.settings()?;
+        let instance_id = settings
+            .active_server_id
+            .clone()
+            .ok_or_else(|| "the active backend has not been validated".to_string())?;
+        match settings.strategy {
+            BackendStrategy::Local if settings.active_url == settings.local_url => {}
+            BackendStrategy::Remote
+                if settings.remote_url.as_ref() == Some(&settings.active_url) => {}
+            _ => return Err("the active backend is not the selected authority".into()),
+        }
+        Ok((settings.active_url, instance_id))
+    }
+
     pub fn set(
         &self,
         strategy: BackendStrategy,
@@ -861,6 +876,25 @@ mod tests {
             "http://127.0.0.1:8420"
         );
         assert!(state.token_origin("https://attacker.example").is_err());
+        let _ = fs::remove_dir_all(directory);
+    }
+
+    #[test]
+    fn active_url_requires_a_validated_selected_authority() {
+        let directory =
+            std::env::temp_dir().join(format!("dax-active-backend-test-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&directory);
+        let state = BackendState::load(&directory).unwrap();
+        assert!(state.active_validated_authority().is_err());
+
+        let (_, generation) = state.snapshot().unwrap();
+        state
+            .set_active_if_current(generation, DEFAULT_URL.into(), "authority-1".into())
+            .unwrap();
+        assert_eq!(
+            state.active_validated_authority().unwrap(),
+            (DEFAULT_URL.to_string(), "authority-1".to_string())
+        );
         let _ = fs::remove_dir_all(directory);
     }
 

@@ -7,8 +7,8 @@ ConditionPathExists=%h/.local/state/dax-assistant/edge.json
 
 [Service]
 Type=simple
-WorkingDirectory=%h/.local/share/dax-assistant/current
-ExecStart=%h/.local/share/dax-assistant/current/.venv/bin/dax edge run --state-file %h/.local/state/dax-assistant/edge.json
+WorkingDirectory=%h/.local/share/dax-assistant/node-current
+ExecStart=%h/.local/share/dax-assistant/node-current/.venv/bin/dax edge run --state-file %h/.local/state/dax-assistant/edge.json
 Restart=on-failure
 RestartSec=5s
 TimeoutStopSec=30s

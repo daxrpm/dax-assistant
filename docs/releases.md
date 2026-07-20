@@ -27,11 +27,12 @@ is unavailable or invalid. `--insecure-skip-attestation` is an explicit emergenc
 bypass, not a verified installation path. `--dry-run` performs selection,
 download, and verification without installation.
 
-Use `--backend-only`, `--desktop-only`, or `--both`. The host receives the
+Use `--backend-only`, `--desktop-only`, `--node-only`, or `--both`. The host receives the
 release's RPM or deb; those packages do not install the backend unless it was
-selected, and no Linux option installs Android. `--with-node` adds the canonical
-`dax-assistant-node.service` file but leaves it disabled and stopped until the
-laptop is enrolled. See [`capability-nodes.md`](capability-nodes.md).
+selected, and no Linux option installs Android. `--node-only` installs a separate
+verified capability runtime and canonical node unit without installing or
+starting an authority. It remains disabled until enrollment. See
+[`capability-nodes.md`](capability-nodes.md).
 
 The Android APK is a separate signed asset. Release construction requires the
 Android keystore variables and expected `DAX_ANDROID_CERT_SHA256`; the pipeline

@@ -82,11 +82,11 @@ gh attestation verify install.sh --repo daxrpm/dax-assistant
 bash install.sh --version "$VERSION" --both
 ```
 
-Use `--backend-only`, `--desktop-only`, or `--both` (the default). `--with-node` additionally
-installs `dax-assistant-node.service`, but deliberately does not enable or start it. Create a
-capability-node enrollment code on the authoritative backend and run
-`dax edge enroll --server URL --code CODE --name NAME`; enable the unit explicitly only after
-`~/.local/state/dax-assistant/edge.json` exists.
+Use `--backend-only`, `--desktop-only`, `--node-only`, or `--both` (the default).
+`--node-only` installs a separate capability runtime and `dax-assistant-node.service` without
+installing or starting an authoritative backend. It deliberately leaves the node disabled.
+Native Desktop can enrol the machine without a terminal; `dax edge enroll` remains the
+browser/headless fallback. Enable the unit only after `edge.json` exists.
 The authoritative backend is always enabled and started when selected. The Linux installer
 selects the release's RPM or deb for the current host. It never downloads or installs the
 Android APK, which is a separate signed release asset.
@@ -272,10 +272,11 @@ changes required.
 The bundled `dax-system` MCP server, managed from Settings, gives
 the assistant typed tools to operate the machine. Safety is layered:
 
-- **Path confinement.** File tools resolve paths and reject anything outside the allowed
-  roots (default: your home directory; override with `DAX_SYSTEM_ROOTS`).
-- **Shell allowlist.** `shell_run` only accepts allowlisted binaries (`DAX_SYSTEM_SHELL_ALLOW`)
-  and rejects shell metacharacters (`|`, `;`, `&`, redirects, …).
+- **Path confinement.** Typed file tools reject paths outside `DAX_SYSTEM_ROOTS`. Generic
+  command arguments are not claimed to be path-confined.
+- **Shell isolation.** Node `shell_run` is disabled by default, always requires one-time
+  approval, accepts only binaries in that PC's `DAX_SYSTEM_SHELL_ALLOW`, executes argv
+  directly, and rejects shell metacharacters (`|`, `;`, `&`, redirects, …). It is not SSH.
 - **Confirmation gate.** The `[tools.policy]` rules classify each tool as `allow` / `ask` /
   `deny`. Destructive tools (write/delete/shell/exec/launch …) default to `ask`, which
   blocks execution until you approve — the modal in the web UI, or a **spoken yes/no** when

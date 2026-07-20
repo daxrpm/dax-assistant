@@ -132,6 +132,19 @@
   color: var(--fg-secondary);
 }
 
+.consent {
+  display: flex;
+  gap: var(--space-3);
+  align-items: flex-start;
+  color: var(--fg-secondary);
+  font-size: var(--text-callout);
+  line-height: 1.5;
+}
+
+.consent input {
+  margin-top: 3px;
+}
+
 .commandRow {
   display: flex;
   gap: var(--space-2);

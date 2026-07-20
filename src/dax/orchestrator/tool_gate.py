@@ -125,9 +125,11 @@ class ToolGate:
                 content=f"Error: tool '{call.tool_name}' is not permitted.",
                 is_error=True,
             )
-        # The shell tool is gated by the user-managed binary allowlist, not the
-        # name-pattern policy: known binaries run freely, unknown ones prompt.
-        if self._is_trusted_shell(call) and self._shell_allow is not None:
+        # Local shell calls use the user-managed allowlist; canonical node shell
+        # calls always enter the one-time approval path.
+        if self._is_trusted_shell(call) and (
+            is_canonical_shell(call.tool_name) or self._shell_allow is not None
+        ):
             return await self._gate_shell(call, channel=channel, session_id=session_id)
         if decision is Decision.ALLOW:
             return None
@@ -176,15 +178,20 @@ class ToolGate:
     ) -> ToolResult | None:
         """Gate a shell_run call against the user-managed command allowlist.
 
-        Allowlisted, bounded read-only commands run with no prompt. Other forms
-        require explicit per-call approval. Eligible read-only commands can also
-        be saved; denials block the call.
+        Local allowlisted, bounded read-only commands run with no prompt. A
+        capability-node shell always requires explicit one-time approval because
+        its generic argv is not confined to the node's configured file roots.
+        Eligible local commands can also be saved; denials block the call.
         """
-        assert self._shell_allow is not None
         command = str(call.arguments.get("command", ""))
         binary = shell_binary(command)
+        node_shell = is_canonical_shell(call.tool_name)
 
-        if self._shell_allow.allows_command(command):
+        if (
+            not node_shell
+            and self._shell_allow is not None
+            and self._shell_allow.allows_command(command)
+        ):
             await self._audit(call, "executed")
             return None
 
@@ -199,23 +206,29 @@ class ToolGate:
                 is_error=True,
             )
 
-        can_save = is_auto_allowable(command)
+        can_save = not node_shell and is_auto_allowable(command)
+        options = ["once", "save"] if can_save else ["once"]
         decision = await self._approval.request(
             tool_name=call.tool_name,
             server_name=call.server_name,
             arguments=dict(call.arguments),
-            options=["once", "save"] if can_save else ["once"],
+            options=options,
             channel=channel,
             session_id=session_id,
         )
-        if decision == "deny":
+        if decision not in options:
             await self._audit(call, "declined")
             return ToolResult(
                 call_id=call.id,
                 content=f"Error: the user declined to run '{binary or command}'.",
                 is_error=True,
             )
-        if decision == "save" and binary and can_save:
+        if (
+            decision == "save"
+            and binary
+            and can_save
+            and self._shell_allow is not None
+        ):
             self._shell_allow.add(binary)
             logger.info("Added '%s' to the shell allowlist", binary)
         await self._audit(call, "approved")

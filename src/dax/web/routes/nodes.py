@@ -39,6 +39,8 @@ logger = logging.getLogger(__name__)
 class NodePolicyUpdate(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
+    tools_enabled: bool | None = None
+    shell_enabled: bool | None = None
     process_locally: bool | None = None
     inference: str | None = None
     voice: str | None = None
@@ -46,6 +48,8 @@ class NodePolicyUpdate(BaseModel):
 
 def _policy_json(policy: NodePolicyConfig) -> dict[str, Any]:
     return {
+        "tools_enabled": policy.tools_enabled,
+        "shell_enabled": policy.shell_enabled,
         "process_locally": policy.process_locally,
         "inference": policy.inference,
         "voice": policy.voice,
@@ -163,7 +167,13 @@ async def update_node_policy(
     # backend enforces the policy on its own side regardless.
     hub = getattr(request.app.state, "capability_hub", None)
     if hub is not None:
-        await hub.send_policy(node_id)
+        if (
+            current.tools_enabled != policy.tools_enabled
+            or current.shell_enabled != policy.shell_enabled
+        ):
+            await hub.disconnect_node(node_id)
+        else:
+            await hub.send_policy(node_id)
 
     logger.info("Updated capability-node policy for %s", node_id)
     return {"status": "ok", "policy": _policy_json(policy)}

@@ -376,6 +376,10 @@ class NodePolicyConfig(BaseModel):
     the phone has the same effect as doing it on the laptop itself.
     """
 
+    # Tool lending is independent from hosting a client session. Shell starts
+    # disabled because it is the broadest capability and must be opted into.
+    tools_enabled: bool = True
+    shell_enabled: bool = False
     # False turns the laptop back into a plain tool lender: it still executes
     # the dax-system calls the backend routes to it, but never hosts a session.
     process_locally: bool = True
@@ -406,6 +410,13 @@ class NodesConfig(BaseModel):
     def hosts_sessions(self, node_id: str) -> bool:
         """Whether *node_id* may terminate a client session and run the turn."""
         return self.enabled and self.policy_for(node_id).process_locally
+
+    def lends_tool(self, node_id: str, tool_name: str) -> bool:
+        """Whether the authoritative backend may route this node tool."""
+        if not self.enabled:
+            return False
+        policy = self.policy_for(node_id)
+        return policy.tools_enabled and (tool_name != "shell_run" or policy.shell_enabled)
 
 
 class DaxConfig(BaseSettings):

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import hashlib
 import json
 import re
@@ -9,14 +10,14 @@ import threading
 import time
 from collections import deque
 from dataclasses import dataclass
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
+
+import numpy as np
 
 from dax.core.exceptions import TTSError
 from dax.voice.tts import build_tts
 
 if TYPE_CHECKING:
-    import numpy as np
-
     from dax.core.config import VoiceConfig
 
 
@@ -55,6 +56,7 @@ class SynthesisResult:
     engine: str
     voice: str | None
     language: str
+    executor_fingerprint: str
 
 
 class TTSService:
@@ -76,6 +78,7 @@ class TTSService:
         self._config = config
         self._engine = build_tts(config, models_path)
         self._lock = threading.Lock()
+        self._mobile_lock = threading.Lock()
         self._started = False
         self._mobile_requests: deque[float] = deque()
         self._mobile_requests_per_minute = mobile_requests_per_minute
@@ -109,8 +112,13 @@ class TTSService:
 
     def synthesize_mobile(self, text: str, language: str) -> SynthesisResult:
         """Synthesize one bounded/rate-limited HTTP request."""
+        self.admit_mobile()
+        return self.synthesize_mobile_admitted(text, language)
+
+    def admit_mobile(self) -> None:
+        """Apply the shared HTTP rate limit before local or node execution."""
         now = time.monotonic()
-        with self._lock:
+        with self._mobile_lock:
             cutoff = now - 60.0
             while self._mobile_requests and self._mobile_requests[0] <= cutoff:
                 self._mobile_requests.popleft()
@@ -118,6 +126,8 @@ class TTSService:
                 raise TTSRateLimitError("Voice synthesis rate limit exceeded")
             self._mobile_requests.append(now)
 
+    def synthesize_mobile_admitted(self, text: str, language: str) -> SynthesisResult:
+        """Run an already rate-admitted request with bounded lock waiting."""
         if not self._lock.acquire(timeout=self._mobile_wait_seconds):
             raise TTSServiceBusyError("Voice synthesizer is busy")
         try:
@@ -142,7 +152,18 @@ class TTSService:
             engine=self._engine.engine_name,
             voice=self._engine.voice_name(resolved_language),
             language=resolved_language,
+            executor_fingerprint=self._executor_fingerprint(resolved_language),
         )
+
+    def resolve_language(self, text: str, language: str) -> str:
+        return self._resolve_language(text, language)
+
+    def _executor_fingerprint(self, language: str) -> str:
+        payload = (
+            f"backend:{self._fingerprint}:{self._engine.engine_name}:"
+            f"{self._engine.voice_name(language)}:{self._engine.sample_rate}"
+        )
+        return hashlib.sha256(payload.encode()).hexdigest()[:32]
 
     def _resolve_language(self, text: str, language: str) -> str:
         if language in {"es", "en"}:
@@ -150,3 +171,46 @@ class TTSService:
         if self._config.stt_language in {"es", "en"}:
             return self._config.stt_language
         return "es" if _SPANISH_MARKERS.search(text) else "en"
+
+
+class RemoteTTSCoordinator:
+    """Keep API authority on the backend while optionally executing on a node."""
+
+    def __init__(self, service: TTSService, hub: Any, config: VoiceConfig) -> None:
+        self._service = service
+        self._hub = hub
+        self._config = config
+
+    async def synthesize_mobile(self, text: str, language: str) -> SynthesisResult:
+        from dax.capabilities.hub import (
+            CapabilityTTSTransportError,
+            LocalTTSRequiredError,
+        )
+
+        await asyncio.to_thread(self._service.admit_mobile)
+        resolved_language = self._service.resolve_language(text, language)
+        if self._hub is not None:
+            try:
+                remote = await self._hub.synthesize_tts(
+                    text, resolved_language, self._config
+                )
+            except LocalTTSRequiredError as exc:
+                raise TTSError(str(exc)) from exc
+            except CapabilityTTSTransportError:
+                remote = None
+            if remote is not None:
+                return SynthesisResult(
+                    audio=np.frombuffer(remote.pcm, dtype="<i2").copy(),
+                    sample_rate=remote.sample_rate,
+                    engine=remote.engine,
+                    voice=remote.voice,
+                    language=remote.language,
+                    executor_fingerprint=remote.executor_fingerprint,
+                )
+        return await _to_thread_mobile(self._service, text, resolved_language)
+
+
+async def _to_thread_mobile(
+    service: TTSService, text: str, language: str
+) -> SynthesisResult:
+    return await asyncio.to_thread(service.synthesize_mobile_admitted, text, language)

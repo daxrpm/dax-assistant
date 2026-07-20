@@ -6,12 +6,15 @@ const STATUS_TIMEOUT: Duration = Duration::from_secs(3);
 const ACTION_TIMEOUT: Duration = Duration::from_secs(10);
 
 #[derive(Clone, Copy, Debug, Deserialize, PartialEq, Eq)]
-#[serde(rename_all = "lowercase")]
+#[serde(rename_all = "snake_case")]
 pub enum ServiceAction {
     Status,
     Start,
     Stop,
     Restart,
+    Enable,
+    Disable,
+    EnableNow,
 }
 
 #[derive(Clone, Copy, Debug, Deserialize, PartialEq, Eq)]
@@ -27,6 +30,7 @@ pub struct ServiceStatus {
     pub load_state: String,
     pub active_state: String,
     pub sub_state: String,
+    pub unit_file_state: String,
 }
 
 impl ServiceAction {
@@ -36,6 +40,9 @@ impl ServiceAction {
             Self::Start => Some("start"),
             Self::Stop => Some("stop"),
             Self::Restart => Some("restart"),
+            Self::Enable => Some("enable"),
+            Self::Disable => Some("disable"),
+            Self::EnableNow => Some("enable"),
         }
     }
 }
@@ -61,7 +68,12 @@ pub async fn control_target(
 ) -> Result<ServiceStatus, String> {
     let unit = target.unit();
     if let Some(verb) = action.systemctl_verb() {
-        run_systemctl(&["--user", verb, unit], ACTION_TIMEOUT).await?;
+        let mut args = vec!["--user", verb];
+        if action == ServiceAction::EnableNow {
+            args.push("--now");
+        }
+        args.push(unit);
+        run_systemctl(&args, ACTION_TIMEOUT).await?;
     }
     let output = run_systemctl(
         &[
@@ -72,6 +84,7 @@ pub async fn control_target(
             "--property=LoadState",
             "--property=ActiveState",
             "--property=SubState",
+            "--property=UnitFileState",
         ],
         STATUS_TIMEOUT,
     )
@@ -133,11 +146,24 @@ fn parse_status(unit: &'static str, output: &str) -> Result<ServiceStatus, Strin
             .map(|value| (*value).to_string())
             .ok_or_else(|| format!("systemctl response is missing {key}"))
     };
+    let load_state = value("LoadState")?;
+    let unit_file_state = values
+        .get("UnitFileState")
+        .filter(|value| !value.is_empty())
+        .map(|value| (*value).to_string())
+        .unwrap_or_else(|| {
+            if load_state == "not-found" {
+                "not-found".into()
+            } else {
+                "unknown".into()
+            }
+        });
     Ok(ServiceStatus {
         unit,
-        load_state: value("LoadState")?,
+        load_state,
         active_state: value("ActiveState")?,
         sub_state: value("SubState")?,
+        unit_file_state,
     })
 }
 
@@ -151,6 +177,9 @@ mod tests {
         assert_eq!(ServiceAction::Start.systemctl_verb(), Some("start"));
         assert_eq!(ServiceAction::Stop.systemctl_verb(), Some("stop"));
         assert_eq!(ServiceAction::Restart.systemctl_verb(), Some("restart"));
+        assert_eq!(ServiceAction::Enable.systemctl_verb(), Some("enable"));
+        assert_eq!(ServiceAction::Disable.systemctl_verb(), Some("disable"));
+        assert_eq!(ServiceAction::EnableNow.systemctl_verb(), Some("enable"));
     }
 
     #[test]
@@ -166,13 +195,14 @@ mod tests {
     fn parses_systemctl_properties_independent_of_order() {
         let parsed = parse_status(
             ServiceTarget::Backend.unit(),
-            "SubState=running\nLoadState=loaded\nActiveState=active\n",
+            "SubState=running\nUnitFileState=enabled\nLoadState=loaded\nActiveState=active\n",
         )
         .unwrap();
         assert_eq!(parsed.unit, ServiceTarget::Backend.unit());
         assert_eq!(parsed.load_state, "loaded");
         assert_eq!(parsed.active_state, "active");
         assert_eq!(parsed.sub_state, "running");
+        assert_eq!(parsed.unit_file_state, "enabled");
     }
 
     #[test]
@@ -182,6 +212,17 @@ mod tests {
             "LoadState=loaded\nActiveState=active\n"
         )
         .is_err());
+    }
+
+    #[test]
+    fn reports_a_missing_unit_without_requiring_unit_file_state() {
+        let parsed = parse_status(
+            ServiceTarget::CapabilityNode.unit(),
+            "LoadState=not-found\nActiveState=inactive\nSubState=dead\nUnitFileState=\n",
+        )
+        .unwrap();
+        assert_eq!(parsed.load_state, "not-found");
+        assert_eq!(parsed.unit_file_state, "not-found");
     }
 
     #[test]

@@ -15,9 +15,10 @@ socket and inventory generation.
 
 Direct client-to-node sessions are **partially built**. The trust layer exists
 and is described under [Session trust](#session-trust); the listening socket
-does not. A node therefore still only lends tools, and `process_locally` is
-stored, pushed, and enforced at ticket issue without yet gating anything that
-runs.
+does not. A node therefore still lends tools through the backend. Local TTS is
+the exception: the backend may route an authenticated mobile synthesis request
+over the capability socket and returns the validated WAV to the phone. The
+phone never connects directly to the node for that flow.
 
 ## Node Policy
 
@@ -28,9 +29,11 @@ whichever client is in reach.
 
 | Setting | Values | Meaning |
 | --- | --- | --- |
+| `tools_enabled` | on/off | Whether the node lends its typed PC tools. |
+| `shell_enabled` | on/off | Whether `shell_run` is advertised; off by default. |
 | `process_locally` | on/off | May host a client session and run the turn. Off leaves it lending tools only. |
 | `inference` | `auto`/`local`/`server` | Where the model runs. |
-| `voice` | `auto`/`local`/`server` | Where transcription and synthesis run. |
+| `voice` | `auto`/`local`/`server` | Where mobile TTS synthesis runs; direct node STT is not implemented yet. |
 
 Two fleet-wide switches sit above these: `enabled` refuses every node outright,
 and `prefer_when_available` decides whether clients reach for a node at all.
@@ -84,18 +87,23 @@ able to name a routable one.
 
 ## Enroll A Laptop
 
-1. In an authenticated desktop or web UI, open the paired-devices area and
-   choose **Add laptop capability**. This creates a short-lived, one-use code
-   specifically for a `capability_node`, not a normal client credential.
-2. On the laptop, use the exact command shown by the UI:
+1. Install only the node runtime and unit. This never installs or starts an
+   authoritative backend and leaves the node disabled:
+
+   ```bash
+   bash install.sh --version "$VERSION" --node-only
+   ```
+
+2. In native Dax Desktop, run post-login setup. Desktop asks the authenticated
+   backend for a one-use capability code, redeems it natively, and writes the
+   credential with owner-only permissions. It never invokes a general shell.
+   Browser-only and headless clients retain the manual fallback:
 
    ```bash
    dax edge enroll --server https://dax.example --code CODE --name NAME
    ```
 
-3. Check the local enrollment with `dax edge status`.
-4. Run interactively with `dax edge run`, or install and explicitly enable the
-   user service:
+3. Explicitly consent in Desktop to enable/start the service, or do it manually:
 
    ```bash
    systemctl --user enable --now dax-assistant-node.service
@@ -103,13 +111,12 @@ able to name a routable one.
    journalctl --user -u dax-assistant-node.service -f
    ```
 
-`scripts/install.sh --with-node` installs the node unit but intentionally does
-not enable or start it. Enrollment must happen first. The default credential is
-`$XDG_STATE_HOME/dax-assistant/edge.json`, or
-`~/.local/state/dax-assistant/edge.json` when `XDG_STATE_HOME` is unset. Its
-directory is mode `0700` and the file is atomically written mode `0600`. The
-service has `ConditionPathExists` for that file. `--state-file PATH` overrides
-the location for `enroll`, `run`, and `status`.
+`scripts/install.sh --node-only` installs a separate `node-current` runtime and
+the node unit but intentionally does not enable or start it. It cannot move or
+start `dax-assistant.service`. Enrollment must happen first. The managed service
+uses `~/.local/state/dax-assistant/edge.json`; its directory is mode `0700` and
+the file is atomically written mode `0600`. `--state-file PATH` remains available
+for manually managed `enroll`, `run`, and `status` processes.
 
 Remote server URLs must be HTTPS and the derived `/ws/capabilities` connection
 uses WSS. Plain HTTP/WS is accepted only for loopback. URLs containing
@@ -126,18 +133,33 @@ ephemerally as `node_<stable-id-hash>__<tool>`, for example
 not a friendly node name.
 
 Node tools use the authoritative backend's normal `allow`/`ask`/`deny` policy.
-Canonical node `shell_run` tools receive the same shell-policy classification,
-and ask-classified calls require approval in the session-owning client. Timeout,
-no eligible UI, disconnect, or revocation fails closed. The backend records the
-tool result in its normal audit path.
+`shell_run` is absent until explicitly enabled for that node. Every node shell
+call then requires one-time approval in the session-owning client. Timeout, no
+eligible UI, disconnect, or revocation fails closed. The node independently
+applies `DAX_SYSTEM_SHELL_ALLOW` as a hard binary cap, so backend approval cannot
+permit a binary the PC owner excluded.
 
-File paths are resolved on the laptop and must remain under
+Typed file-tool paths are resolved on the laptop and must remain under
 `DAX_SYSTEM_ROOTS`, an OS-path-separator-delimited list; the default is the
-laptop user's home. The node service inherits its environment, so configure
-roots in a user-systemd override and restart it. `shell_run` is also gated by
-the authoritative backend's managed shell allowlist and per-call approval gate.
-On the laptop it is parsed into argv, rejects shell metacharacters, and executes
-directly without a shell. It is not a general shell or pipeline.
+laptop user's home. Generic argv paths cannot be interpreted safely for every
+binary, so roots set the shell working directory but do not claim to confine
+every command argument. Commands are parsed into argv, reject metacharacters,
+use a system PATH, and execute directly. This is not SSH, an interactive shell,
+or a pipeline.
+
+## Local TTS
+
+Android still calls the authoritative backend's `POST /api/voice/synthesize`.
+When fleet preference and the node's `voice` policy allow it, the backend sends
+a bounded synthesis request to a connected node. The node uses local Kokoro or
+Piper only, returns chunked PCM16 with a byte count and SHA-256, and the backend
+validates it before returning WAV audio. OpenAI keys are never sent to a node.
+
+`voice=auto` offloads configured Kokoro/Piper and keeps OpenAI on the backend.
+`voice=local` requires node-local Kokoro/Piper and fails rather than silently
+using OpenAI. Missing nodes or transport failures under `auto` fall back to the
+backend. Models live under `~/.local/share/dax-assistant/models`, or the path set
+by `DAX_MODELS_PATH` in a service override.
 
 ## Offline, Reconnect, And Revocation
 

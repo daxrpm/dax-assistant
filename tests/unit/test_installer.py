@@ -229,6 +229,66 @@ def test_node_unit_is_never_auto_started(tmp_path: Path) -> None:
     assert "ConditionPathExists=" in node_unit
 
 
+def test_node_only_selects_runtime_without_backend_service(tmp_path: Path) -> None:
+    manifest, checksums = _release_fixture(tmp_path)
+    result = _run_installer(tmp_path, manifest, checksums, "fedora", "--node-only")
+    calls = (tmp_path / "gh.log").read_text(encoding="utf-8")
+    assert "capability-node runtime wheel" in result.stdout
+    assert "without enabling or starting it" in result.stdout
+    assert "dax-assistant-node.service" in calls
+    assert "dax-assistant.service" not in calls
+    assert ".rpm" not in result.stdout
+
+
+def test_node_unit_uses_separate_runtime_from_authority() -> None:
+    node_unit = (ROOT / "systemd/dax-assistant-node.service").read_text(encoding="utf-8")
+    assert "/node-current/.venv/bin/dax edge run" in node_unit
+    assert "/current/.venv/bin/dax edge run" not in node_unit
+
+
+def test_node_only_install_never_installs_or_starts_an_authority(tmp_path: Path) -> None:
+    manifest, checksums = _release_fixture(tmp_path)
+    mock_bin = tmp_path / "bin"
+    mock_bin.mkdir()
+    for name, content in {
+        "sudo": "exit 0\n",
+        "systemctl": (
+            'printf \'%s\\n\' "$*" >> "$DAX_MOCK_SYSTEMCTL_LOG"\n'
+            'if [[ "$*" == *"is-active"* || "$*" == *"is-enabled"* ]]; then exit 1; fi\n'
+            "exit 0\n"
+        ),
+        "uv": (
+            'if [[ "$1 $2" == "python find" ]]; then printf \'%s\\n\' /usr/bin/python3; fi\n'
+            'if [[ "$1" == venv ]]; then mkdir -p "${@: -1}/bin"; fi\n'
+            "exit 0\n"
+        ),
+    }.items():
+        path = mock_bin / name
+        path.write_text(f"#!/usr/bin/env bash\n{content}", encoding="utf-8")
+        path.chmod(0o755)
+
+    systemctl_log = tmp_path / "systemctl.log"
+    result = _run_installer(
+        tmp_path,
+        manifest,
+        checksums,
+        "fedora",
+        "--node-only",
+        dry_run=False,
+        check=False,
+        extra_env={"DAX_MOCK_SYSTEMCTL_LOG": str(systemctl_log)},
+    )
+
+    home = tmp_path / "home"
+    assert result.returncode == 0, result.stderr
+    assert not (home / ".config/systemd/user/dax-assistant.service").exists()
+    assert (home / ".config/systemd/user/dax-assistant-node.service").exists()
+    assert (home / ".local/share/dax-assistant/node-current").is_symlink()
+    calls = systemctl_log.read_text(encoding="utf-8")
+    assert "dax-assistant.service" not in calls
+    assert "enable --now dax-assistant-node.service" not in calls
+
+
 def test_manifest_version_is_bound_to_selected_tag(tmp_path: Path) -> None:
     manifest, checksums = _release_fixture(tmp_path)
     result = _run_installer(

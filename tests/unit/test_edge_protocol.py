@@ -4,9 +4,12 @@ import pytest
 
 from dax.edge.protocol import (
     MAX_RESULT_BYTES,
+    MAX_TTS_CONFIG_BYTES,
     hello_frame,
+    local_tts_features_frame,
     parse_execute,
     parse_ready,
+    parse_synthesize,
     result_frame,
 )
 
@@ -26,6 +29,22 @@ def test_hello_proposes_endpoints_when_a_session_server_is_listening() -> None:
     frame = hello_frame("work-laptop", [], ["192.168.1.30:8765"])
 
     assert frame["endpoints"] == ["192.168.1.30:8765"]
+
+
+def test_local_tts_is_negotiated_only_after_backend_ready() -> None:
+    hello = hello_frame("laptop", [])
+    assert "features" not in hello
+    assert local_tts_features_frame(
+        {"type": "ready", "generation": 2, "features": {"local_tts": 1}},
+        ["kokoro", "piper"],
+    ) == {
+        "type": "features",
+        "generation": 2,
+        "local_tts": {"engines": ["kokoro", "piper"]},
+    }
+    assert local_tts_features_frame(
+        {"type": "ready", "generation": 2}, ["kokoro"]
+    ) is None
 
 
 def test_ready_yields_the_session_signing_key() -> None:
@@ -63,6 +82,60 @@ def test_execute_and_result_preserve_correlation() -> None:
         "content": "ok",
         "error": None,
     }
+
+
+def test_synthesize_request_is_strict_and_bounded() -> None:
+    request = parse_synthesize(
+        {
+            "type": "synthesize",
+            "request_id": "tts-1",
+            "generation": 2,
+            "text": " Hola ",
+            "language": "es",
+            "engine": "kokoro",
+            "config": {
+                "kokoro_voice_es": "em_alex",
+                "kokoro_voice_en": "af_heart",
+                "piper_voice_es": "es_ES",
+                "piper_voice_en": "en_US",
+                "speed": 1.0,
+            },
+        }
+    )
+
+    assert request.text == "Hola"
+    assert request.engine == "kokoro"
+    with pytest.raises(ValueError, match="fields"):
+        parse_synthesize(
+            {
+                "type": "synthesize",
+                "request_id": "tts-2",
+                "generation": 2,
+                "text": "Hola",
+                "language": "es",
+                "engine": "piper",
+                "config": {
+                    "piper_voice_es": "es_ES",
+                    "piper_voice_en": "en_US",
+                    "api_key": "must-not-cross",
+                },
+            }
+        )
+    with pytest.raises(ValueError, match="exceeds"):
+        parse_synthesize(
+            {
+                "type": "synthesize",
+                "request_id": "tts-3",
+                "generation": 2,
+                "text": "Hola",
+                "language": "es",
+                "engine": "piper",
+                "config": {
+                    "piper_voice_es": "x" * MAX_TTS_CONFIG_BYTES,
+                    "piper_voice_en": "en",
+                },
+            }
+        )
 
 
 def test_timeout_is_capped() -> None:

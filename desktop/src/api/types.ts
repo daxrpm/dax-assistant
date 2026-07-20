@@ -326,6 +326,8 @@ export interface ToolsConfig {
 
 /** What one laptop is asked to do when it is up. */
 export interface NodePolicy {
+  tools_enabled: boolean;
+  shell_enabled: boolean;
   /** False leaves it lending tools without ever hosting a session. */
   process_locally: boolean;
   /**

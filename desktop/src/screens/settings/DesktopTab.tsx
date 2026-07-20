@@ -309,7 +309,7 @@ export function DesktopTab({
               <>
                 <div className={p.spread}>
                   <span className={p.dim}>dax-assistant-node.service</span>
-                  <span className={p.mono}>{nodeService.active_state} ({nodeService.sub_state})</span>
+                  <span className={p.mono}>{nodeService.active_state} ({nodeService.sub_state}) · {nodeService.unit_file_state}</span>
                 </div>
                 <p className={p.hint}>
                   {text(
@@ -325,6 +325,15 @@ export function DesktopTab({
                   ) : (
                     <Button size="sm" variant="primary" loading={nodeServiceBusy} onClick={() => void runNodeServiceAction("start")}>
                       {text("Iniciar", "Start")}
+                    </Button>
+                  )}
+                  {nodeService.unit_file_state === "enabled" ? (
+                    <Button size="sm" variant="secondary" disabled={nodeServiceBusy} onClick={() => void runNodeServiceAction("disable") }>
+                      {text("Deshabilitar inicio automático", "Disable automatic start")}
+                    </Button>
+                  ) : (
+                    <Button size="sm" variant="secondary" disabled={nodeServiceBusy} onClick={() => void runNodeServiceAction("enable") }>
+                      {text("Habilitar inicio automático", "Enable automatic start")}
                     </Button>
                   )}
                   <Button size="sm" variant="secondary" disabled={nodeServiceBusy} onClick={() => void runNodeServiceAction("restart")}>

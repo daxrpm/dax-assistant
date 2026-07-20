@@ -8,7 +8,7 @@ import json
 import re
 from typing import Annotated, Literal
 
-from pydantic import AliasChoices, BaseModel, ConfigDict, Field
+from pydantic import AliasChoices, BaseModel, ConfigDict, Field, field_validator
 
 PROTOCOL_VERSION = 1
 MAX_FRAME_BYTES = 256 * 1024
@@ -17,6 +17,9 @@ MAX_ENDPOINTS = 4
 MAX_SCHEMA_BYTES = 32_000
 MAX_ARGUMENT_BYTES = 64_000
 MAX_RESULT_CHARS = 64 * 1024
+MAX_TTS_CHUNK_BYTES = 48 * 1024
+MAX_TTS_CHUNKS = 128
+MAX_TTS_AUDIO_BYTES = 6 * 1024 * 1024
 
 _STRING: dict[str, object] = {"type": "string"}
 _INTEGER: dict[str, object] = {"type": "integer"}
@@ -85,6 +88,21 @@ class InventoryTool(StrictModel):
     server_name: str = Field(default="dax-system", max_length=64)
 
 
+class LocalTTSFeature(StrictModel):
+    engines: list[Literal["kokoro", "piper"]] = Field(min_length=1, max_length=2)
+
+    @field_validator("engines")
+    @classmethod
+    def engines_must_be_unique(cls, value: list[str]) -> list[str]:
+        if len(value) != len(set(value)):
+            raise ValueError("local TTS engines must be unique")
+        return value
+
+
+class CapabilityFeatures(StrictModel):
+    local_tts: LocalTTSFeature | None = None
+
+
 class HelloFrame(StrictModel):
     type: Literal["hello"]
     version: Literal[1]
@@ -93,6 +111,7 @@ class HelloFrame(StrictModel):
     # Where a client on the same network could reach this node directly. The
     # node proposes; `trusted_endpoints` decides. See below for why.
     endpoints: list[str] = Field(default_factory=list, max_length=MAX_ENDPOINTS)
+    features: CapabilityFeatures = Field(default_factory=CapabilityFeatures)
 
 
 class ResultFrame(StrictModel):
@@ -108,7 +127,42 @@ class HeartbeatFrame(StrictModel):
     type: Literal["heartbeat"]
 
 
-InboundFrame = Annotated[ResultFrame | HeartbeatFrame, Field(discriminator="type")]
+class FeaturesFrame(StrictModel):
+    type: Literal["features"]
+    generation: int = Field(ge=1)
+    local_tts: LocalTTSFeature
+
+
+class SynthesizeChunkFrame(StrictModel):
+    type: Literal["synthesize_chunk"]
+    generation: int = Field(ge=1)
+    request_id: str = Field(min_length=1, max_length=128)
+    index: int = Field(ge=0, lt=MAX_TTS_CHUNKS)
+    data: str = Field(min_length=1, max_length=MAX_TTS_CHUNK_BYTES * 2)
+
+
+class SynthesizeFinalFrame(StrictModel):
+    type: Literal["synthesize_final"]
+    generation: int = Field(ge=1)
+    request_id: str = Field(min_length=1, max_length=128)
+    success: bool
+    chunks: int = Field(default=0, ge=0, le=MAX_TTS_CHUNKS)
+    size: int = Field(default=0, ge=0, le=MAX_TTS_AUDIO_BYTES)
+    sha256: str = Field(default="", max_length=64, pattern=r"^(?:[0-9a-f]{64})?$")
+    sample_rate: int = Field(default=0, ge=0, le=96_000)
+    channels: int = Field(default=1, ge=1, le=2)
+    sample_width: int = Field(default=2, ge=1, le=4)
+    engine: Literal["kokoro", "piper"] | None = None
+    voice: str | None = Field(default=None, max_length=256)
+    language: Literal["es", "en"] | None = None
+    executor_fingerprint: str = Field(default="", max_length=64)
+    error: str | None = Field(default=None, max_length=512)
+
+
+InboundFrame = Annotated[
+    ResultFrame | HeartbeatFrame | FeaturesFrame | SynthesizeChunkFrame | SynthesizeFinalFrame,
+    Field(discriminator="type"),
+]
 
 
 def canonical_prefix(node_id: str) -> str:

@@ -26,4 +26,13 @@ describe("native service bridge", () => {
       action: "restart",
     });
   });
+
+  it("exposes the fixed enable-now operation", async () => {
+    invoke.mockResolvedValue({ unit: "dax-assistant-node.service" });
+    await controlService("capability_node", "enable_now");
+    expect(invoke).toHaveBeenCalledWith("service_control", {
+      target: "capability_node",
+      action: "enable_now",
+    });
+  });
 });

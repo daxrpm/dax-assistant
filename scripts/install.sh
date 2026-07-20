@@ -28,6 +28,8 @@ STATE_DIR="$XDG_STATE_HOME/dax-assistant"
 CACHE_DIR="$XDG_CACHE_HOME/dax-assistant"
 RELEASES_DIR="$DATA_DIR/releases"
 CURRENT_LINK="$DATA_DIR/current"
+NODE_RELEASES_DIR="$DATA_DIR/node-releases"
+NODE_CURRENT_LINK="$DATA_DIR/node-current"
 UNIT_DIR="$XDG_CONFIG_HOME/systemd/user"
 BACKEND_UNIT="$UNIT_DIR/dax-assistant.service"
 NODE_UNIT="$UNIT_DIR/dax-assistant-node.service"
@@ -46,7 +48,7 @@ usage() {
 Dax verified Linux release installer
 
 Usage:
-  bash install.sh [install] [--backend-only|--desktop-only|--both] [options]
+  bash install.sh [install] [--backend-only|--desktop-only|--node-only|--both] [options]
 
 Release options:
   --version VERSION       Pin an immutable release (for example 0.1.0)
@@ -54,6 +56,7 @@ Release options:
   --checksums PATH|URL    SHA256SUMS authenticating the explicit manifest
   --backend-only          Install and start the authoritative backend only
   --desktop-only          Install the RPM/deb desktop client only
+  --node-only             Install only the capability-node runtime and unit
   --both                  Install backend and desktop (default)
   --with-node             Also install the laptop capability-node unit; never enable/start it
   --dry-run               Download and verify assets, then print installation actions
@@ -77,6 +80,7 @@ while [[ $# -gt 0 ]]; do
         --checksums) CHECKSUMS_SOURCE="${2:-}"; shift ;;
         --backend-only) COMPONENTS="backend" ;;
         --desktop-only) COMPONENTS="desktop" ;;
+        --node-only) COMPONENTS="node"; WITH_NODE=1 ;;
         --both) COMPONENTS="both" ;;
         --with-node) WITH_NODE=1 ;;
         --source) SOURCE_MODE="${2:-}"; shift ;;
@@ -92,7 +96,7 @@ done
 [[ "$(uname -s)" == "Linux" ]] || die "Linux is required"
 [[ "$EUID" -ne 0 ]] || die "run as the desktop user, not root"
 [[ "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ || -z "$VERSION" ]] || die "--version must be MAJOR.MINOR.PATCH"
-[[ "$WITH_NODE" -eq 0 || "$COMPONENTS" != "desktop" ]] || die "--with-node requires the backend runtime"
+[[ "$WITH_NODE" -eq 0 || "$COMPONENTS" != "desktop" ]] || die "--with-node cannot be combined with --desktop-only; use --node-only"
 [[ -z "$SOURCE_MODE" || "$COMPONENTS" == "backend" ]] || die "--source supports --backend-only only"
 if [[ "$COMPONENTS" != "desktop" ]]; then
     [[ "$XDG_DATA_HOME" == "$HOME/.local/share" && "$XDG_STATE_HOME" == "$HOME/.local/state" && "$XDG_CACHE_HOME" == "$HOME/.cache" && "$XDG_CONFIG_HOME" == "$HOME/.config" ]] || die "backend installation uses the canonical user-systemd assets and requires the default XDG directories"
@@ -184,10 +188,12 @@ if not all(isinstance(compat.get(key), str) and compat[key] for key in ("backend
     raise SystemExit("incomplete API compatibility metadata")
 
 wanted = []
-if components in {"backend", "both"}:
+if components in {"backend", "both", "node"}:
     wanted.extend(("backend-wheel", "backend-dependency-lock", "backend-service"))
-    if with_node == "1":
-        wanted.append("node-service")
+    if components == "node":
+        wanted.remove("backend-service")
+if with_node == "1":
+    wanted.append("node-service")
 if components in {"desktop", "both"}:
     wanted.append("desktop-rpm" if distro == "rpm" else "desktop-deb")
 found = {}
@@ -265,6 +271,32 @@ write_units() {
     systemctl --user daemon-reload
 }
 
+install_node() {
+    local wheel="$1" dependency_lock="$2" node_asset="$3"
+    local release_dir="$NODE_RELEASES_DIR/$RESOLVED_VERSION" managed_python
+    command -v uv >/dev/null 2>&1 || die "uv is required to install the managed Python 3.11 runtime (https://docs.astral.sh/uv/)"
+    systemctl --user is-active --quiet dax-assistant-node.service && die "dax-assistant-node.service is active; stop it explicitly before upgrading the node runtime"
+    systemctl --user is-enabled --quiet dax-assistant-node.service && die "dax-assistant-node.service is enabled; disable it explicitly before upgrading the node runtime"
+    install_system_dependencies
+    uv python install 3.11
+    managed_python="$(uv python find 3.11)"
+    install -d -m 700 "$NODE_RELEASES_DIR" "$STATE_DIR" "$CACHE_DIR" "$DATA_DIR/models"
+    rm -rf "$release_dir.new"
+    install -d -m 700 "$release_dir.new"
+    uv venv --python "$managed_python" "$release_dir.new/.venv"
+    uv pip install --python "$release_dir.new/.venv/bin/python" --require-hashes -r "$dependency_lock"
+    uv pip install --python "$release_dir.new/.venv/bin/python" --no-deps "$wheel"
+    rm -rf "$release_dir"
+    mv "$release_dir.new" "$release_dir"
+    install -d -m 700 "$UNIT_DIR"
+    install -m 600 "$node_asset" "$NODE_UNIT"
+    systemctl --user disable dax-assistant-node.service >/dev/null 2>&1 || true
+    systemctl --user daemon-reload
+    ln -sfn "$release_dir" "$NODE_CURRENT_LINK.new"
+    mv -Tf "$NODE_CURRENT_LINK.new" "$NODE_CURRENT_LINK"
+    info "Capability-node runtime installed without a backend. Enrol it from Dax Desktop, then explicitly enable and start dax-assistant-node.service."
+}
+
 rollback_backend() {
     local previous_target="$1" was_active="$2" was_enabled="$3"
     if [[ -n "$previous_target" ]]; then
@@ -287,11 +319,11 @@ install_backend() {
     local release_dir="$RELEASES_DIR/$RESOLVED_VERSION" managed_python previous_target="" deadline ready=0
     local backend_was_active=0 backend_was_enabled=0
     command -v uv >/dev/null 2>&1 || die "uv is required to install the managed Python 3.11 runtime (https://docs.astral.sh/uv/)"
-    if systemctl --user is-active --quiet dax-assistant-node.service; then
-        die "dax-assistant-node.service is active; stop it explicitly before changing the shared backend version"
+    if [[ "$WITH_NODE" -eq 1 ]] && systemctl --user is-active --quiet dax-assistant-node.service; then
+        die "dax-assistant-node.service is active; stop it explicitly before replacing its selected runtime"
     fi
-    if systemctl --user is-enabled --quiet dax-assistant-node.service; then
-        die "dax-assistant-node.service is enabled; disable it explicitly before changing the shared backend version"
+    if [[ "$WITH_NODE" -eq 1 ]] && systemctl --user is-enabled --quiet dax-assistant-node.service; then
+        die "dax-assistant-node.service is enabled; disable it explicitly before replacing its selected runtime"
     fi
     install_system_dependencies
     uv python install 3.11
@@ -334,6 +366,8 @@ install_backend() {
         die "backend did not become authoritatively ready before the deadline; restored the previous current target and service"
     fi
     if [[ "$WITH_NODE" -eq 1 ]]; then
+        ln -sfn "$release_dir" "$NODE_CURRENT_LINK.new"
+        mv -Tf "$NODE_CURRENT_LINK.new" "$NODE_CURRENT_LINK"
         info "Node unit installed, disabled, and not started. Create a capability-node enrollment code on the authoritative backend, then run: $CURRENT_LINK/.venv/bin/dax edge enroll --server URL --code CODE --name NAME. After $NODE_CREDENTIALS exists, explicitly enable and start dax-assistant-node.service."
     fi
 }
@@ -409,8 +443,12 @@ fi
 info "Verified release $RESOLVED_VERSION before installation"
 print_layout
 if [[ "$DRY_RUN" -eq 1 ]]; then
-    [[ "$COMPONENTS" == "desktop" ]] || printf 'Would install backend wheel: %s\n' "${ARTIFACT_PATHS[backend-wheel]}"
-    if [[ "$COMPONENTS" != "backend" ]]; then
+    if [[ "$COMPONENTS" == "node" ]]; then
+        printf 'Would install capability-node runtime wheel: %s\n' "${ARTIFACT_PATHS[backend-wheel]}"
+    elif [[ "$COMPONENTS" != "desktop" ]]; then
+        printf 'Would install backend wheel: %s\n' "${ARTIFACT_PATHS[backend-wheel]}"
+    fi
+    if [[ "$COMPONENTS" != "backend" && "$COMPONENTS" != "node" ]]; then
         printf 'Would run: sudo %s install desktop %s\n' "$([[ "$DISTRO" == "rpm" ]] && printf dnf || printf apt-get)" "${ARTIFACT_PATHS[desktop-$DISTRO]}"
     fi
     [[ "$WITH_NODE" -eq 0 ]] || printf 'Would install node unit without enabling or starting it; credentials: %s\n' "$NODE_CREDENTIALS"
@@ -421,10 +459,17 @@ if [[ "$ASSUME_YES" -eq 0 && -t 0 ]]; then
     read -r -p "Install verified Dax $RESOLVED_VERSION ($COMPONENTS)? [Y/n] " answer
     [[ -z "$answer" || "$answer" =~ ^[Yy]$ ]] || die "installation cancelled"
 fi
-[[ "$COMPONENTS" == "desktop" ]] || install_backend \
-    "${ARTIFACT_PATHS[backend-wheel]}" \
-    "${ARTIFACT_PATHS[backend-dependency-lock]}" \
-    "${ARTIFACT_PATHS[backend-service]}" \
-    "${ARTIFACT_PATHS[node-service]:-}"
-[[ "$COMPONENTS" == "backend" ]] || install_desktop "${ARTIFACT_PATHS[desktop-$DISTRO]}"
+if [[ "$COMPONENTS" == "node" ]]; then
+    install_node \
+        "${ARTIFACT_PATHS[backend-wheel]}" \
+        "${ARTIFACT_PATHS[backend-dependency-lock]}" \
+        "${ARTIFACT_PATHS[node-service]}"
+elif [[ "$COMPONENTS" != "desktop" ]]; then
+    install_backend \
+        "${ARTIFACT_PATHS[backend-wheel]}" \
+        "${ARTIFACT_PATHS[backend-dependency-lock]}" \
+        "${ARTIFACT_PATHS[backend-service]}" \
+        "${ARTIFACT_PATHS[node-service]:-}"
+fi
+[[ "$COMPONENTS" == "backend" || "$COMPONENTS" == "node" ]] || install_desktop "${ARTIFACT_PATHS[desktop-$DISTRO]}"
 info "Dax $RESOLVED_VERSION installation complete. Android is distributed separately and was not installed."
