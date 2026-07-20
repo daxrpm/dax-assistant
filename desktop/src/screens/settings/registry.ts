@@ -48,6 +48,7 @@ export type ApplyMode = "live" | "reload" | "restart";
 export type CustomGroup =
   | "voice-status"
   | "voice-enrollment"
+  | "voice-gallery"
   | "mcp-servers"
   | "shell-allow"
   | "system-prompt"

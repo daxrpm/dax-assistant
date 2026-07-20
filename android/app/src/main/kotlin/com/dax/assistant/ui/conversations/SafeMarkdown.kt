@@ -2,6 +2,7 @@ package com.dax.assistant.ui.conversations
 
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.remember
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.SpanStyle
@@ -80,8 +81,9 @@ private fun AnnotatedString.Builder.appendInlineMarkdown(text: String, codeColor
 
 @Composable
 fun SafeMarkdown(text: String, color: Color) {
+    val parsed = remember(text, color) { parseSafeMarkdown(text, codeColor = color) }
     Text(
-        text = parseSafeMarkdown(text, codeColor = color),
+        text = parsed,
         style = OrbitaType.conversation,
         color = color,
     )

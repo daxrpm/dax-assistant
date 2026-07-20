@@ -38,6 +38,24 @@
   outline-offset: 2px;
 }
 
+.pairActions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+}
+
+.pairActions .pairButton {
+  flex: 1 1 180px;
+  min-width: 0;
+}
+
+.model {
+  margin: 0;
+  color: var(--fg-secondary);
+  font-size: var(--text-footnote);
+  line-height: var(--text-footnote-lh);
+}
+
 .codeCard {
   display: flex;
   flex-direction: column;
@@ -93,6 +111,27 @@
   color: var(--fg-quaternary);
 }
 
+.commandRow {
+  display: flex;
+  align-items: flex-start;
+  width: 100%;
+  min-width: 0;
+  gap: var(--space-2);
+  padding: var(--space-3);
+  border-radius: var(--radius-md);
+  background: var(--bg-inset);
+}
+
+.command {
+  min-width: 0;
+  flex: 1;
+  overflow-wrap: anywhere;
+  color: var(--fg-primary);
+  font-family: var(--font-mono);
+  font-size: var(--text-caption);
+  user-select: all;
+}
+
 .list {
   list-style: none;
   margin: 0;
@@ -145,6 +184,28 @@
   font-size: var(--text-caption);
   line-height: var(--text-caption-lh);
   color: var(--fg-quaternary);
+}
+
+.itemActions {
+  display: flex;
+  flex: none;
+  gap: var(--space-1);
+}
+
+@media (max-width: 420px) {
+  .item {
+    align-items: flex-start;
+    flex-wrap: wrap;
+  }
+
+  .itemActions {
+    width: 100%;
+    justify-content: flex-end;
+  }
+
+  .commandRow {
+    flex-direction: column;
+  }
 }
 
 .revoke {

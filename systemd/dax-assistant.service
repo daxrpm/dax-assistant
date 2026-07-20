@@ -1,13 +1,13 @@
 [Unit]
-Description=Dax Personal AI Assistant
+Description=Dax Personal AI Assistant (authoritative backend)
 Documentation=https://github.com/daxrpm/dax-assistant
 Wants=network-online.target
 After=network-online.target graphical-session.target
 
 [Service]
 Type=simple
-WorkingDirectory=%h/.local/share/dax-assistant/app
-ExecStart=%h/.local/share/dax-assistant/app/.venv/bin/dax
+WorkingDirectory=%h/.local/share/dax-assistant/current
+ExecStart=%h/.local/share/dax-assistant/current/.venv/bin/dax
 Restart=on-failure
 RestartSec=5s
 TimeoutStopSec=30s

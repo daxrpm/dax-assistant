@@ -9,8 +9,10 @@ import pytest
 from fastapi.testclient import TestClient
 from httpx import ASGITransport, AsyncClient
 
+from dax.app import _load_server_instance_id
 from dax.core.config import DaxConfig
 from dax.orchestrator.bus import MessageBus
+from dax.storage.secrets import SecretStore
 from dax.web.auth import AttemptLimiter, AuthManager, hash_password, verify_password
 from dax.web.server import create_app
 
@@ -71,6 +73,7 @@ def auth_app() -> FastAPI:
     app.state.config = config
     app.state.bus = bus
     app.state.voice_listening = config.voice.enabled
+    app.state.ready = True
     return app
 
 
@@ -82,10 +85,31 @@ async def auth_client(auth_app: FastAPI) -> AsyncClient:
 
 
 class TestAuthFlow:
-    async def test_health_endpoint_is_public(self, auth_client: AsyncClient):
+    async def test_health_endpoint_is_public(
+        self, auth_client: AsyncClient, auth_app: FastAPI
+    ):
         response = await auth_client.get("/api/health")
         assert response.status_code == 200
-        assert response.json() == {"status": "ok"}
+        data = response.json()
+        assert data == {
+            "status": "ok",
+            "instance_id": auth_app.state.server_instance_id,
+            "role": "authoritative",
+            "api_protocol": "dax",
+            "api_version": 1,
+            "liveness": True,
+            "readiness": True,
+        }
+
+    async def test_health_reports_not_ready_during_startup(
+        self, auth_client: AsyncClient, auth_app: FastAPI
+    ):
+        auth_app.state.ready = False
+        response = await auth_client.get("/api/health")
+        assert response.status_code == 200
+        assert response.json()["liveness"] is True
+        assert response.json()["readiness"] is False
+        assert response.json()["status"] == "starting"
 
     async def test_protected_route_requires_auth(self, auth_client: AsyncClient):
         resp = await auth_client.get("/api/status")
@@ -221,6 +245,14 @@ class TestInitialSetup:
         assert app.state.auth.configured is True
         assert hashing_thread is not None
         assert hashing_thread != event_loop_thread
+
+
+def test_server_instance_identity_persists_in_encrypted_store(tmp_path: Path):
+    store = SecretStore(str(tmp_path / "identity.db"))
+    first = _load_server_instance_id(store)
+
+    assert _load_server_instance_id(SecretStore(str(tmp_path / "identity.db"))) == first
+    assert first in store.all_items().values()
 
 class TestBearerToken:
     """The desktop client can't rely on a SameSite=lax cookie from a webview

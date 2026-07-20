@@ -14,7 +14,6 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.layout.systemBarsPadding
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -65,7 +64,6 @@ fun DiagnosticsScreen(
         modifier = modifier
             .fillMaxSize()
             .background(Orbita.colors.bgWindow)
-            .systemBarsPadding()
             .verticalScroll(rememberScrollState())
             .padding(horizontal = Orbita.spacing.edge, vertical = Orbita.spacing.x6),
     ) {

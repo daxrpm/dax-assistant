@@ -16,6 +16,9 @@ import {
   Package,
   Search,
   Sparkles,
+  ExternalLink,
+  LogOut,
+  Power,
 } from "lucide-react";
 import { api, type MCPServerStatus, type MCPPreset, type RegistryServer } from "../../api/client";
 import type { FullConfig, MCPServerConfig } from "../../types/config";
@@ -91,6 +94,7 @@ export function McpTab({
   const [registryLoading, setRegistryLoading] = useState(false);
   const [installing, setInstalling] = useState<string | null>(null);
   const [installView, setInstallView] = useState<"presets" | "registry">("presets");
+  const [authStatus, setAuthStatus] = useState<Record<string, { authenticated: boolean; expired?: boolean }>>({});
 
   const toggleExpanded = (name: string) =>
     setExpanded((prev) => {
@@ -102,8 +106,26 @@ export function McpTab({
   const refreshStatus = () =>
     api.getMCPStatus().then(setStatus).catch(() => setStatus([]));
 
+  const refreshAuth = async (
+    names = Object.entries(config.mcp.servers)
+      .filter(([, server]) => server.transport !== "stdio")
+      .map(([name]) => name),
+  ) => {
+    const entries = await Promise.all(names.map(async (name) => {
+      try {
+        return [name, await api.getMCPAuthStatus(name)] as const;
+      } catch {
+        return [name, { authenticated: false }] as const;
+      }
+    }));
+    setAuthStatus((current) => ({ ...current, ...Object.fromEntries(entries) }));
+  };
+
   useEffect(() => {
     refreshStatus();
+    void refreshAuth();
+    // Server names are sourced from the refreshed config.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [config]);
 
   useEffect(() => {
@@ -150,6 +172,46 @@ export function McpTab({
       onSaved();
     } catch (e) {
       toast.show(e instanceof Error ? e.message : "Export update failed", "danger");
+    } finally {
+      setBusy(null);
+    }
+  };
+
+  const setEnabled = async (name: string, srv: MCPServerConfig, enabled: boolean) => {
+    setBusy(`${name}:enabled`);
+    try {
+      await api.updateMCPServer(name, { ...srv, enabled });
+      toast.show(`${name} ${enabled ? "enabled" : "disabled"}`, "success");
+      onSaved();
+      await refreshStatus();
+    } catch (e) {
+      toast.show(e instanceof Error ? e.message : "Server update failed", "danger");
+    } finally {
+      setBusy(null);
+    }
+  };
+
+  const authenticate = async (name: string) => {
+    setBusy(`${name}:oauth`);
+    try {
+      const response = await api.startMCPAuth(name);
+      window.open(response.authorization_url, "_blank", "noopener,noreferrer");
+      toast.show(`Complete ${name} authorization in the new tab`, "success");
+    } catch (e) {
+      toast.show(e instanceof Error ? e.message : "OAuth start failed", "danger");
+    } finally {
+      setBusy(null);
+    }
+  };
+
+  const logoutOAuth = async (name: string) => {
+    setBusy(`${name}:oauth`);
+    try {
+      await api.logoutMCP(name);
+      await refreshAuth([name]);
+      toast.show(`${name} OAuth session cleared`, "success");
+    } catch (e) {
+      toast.show(e instanceof Error ? e.message : "OAuth logout failed", "danger");
     } finally {
       setBusy(null);
     }
@@ -288,6 +350,16 @@ export function McpTab({
                 </div>
                 <div className="flex shrink-0 items-center gap-1">
                   <Button
+                    variant={srv.enabled ? "primary" : "tertiary"}
+                    size="sm"
+                    isIconOnly
+                    isDisabled={busy !== null}
+                    onPress={() => setEnabled(name, srv, !srv.enabled)}
+                    aria-label={`${srv.enabled ? "Disable" : "Enable"} ${name}`}
+                  >
+                    <Power size={15} />
+                  </Button>
+                  <Button
                     variant="tertiary"
                     size="sm"
                     isIconOnly
@@ -346,6 +418,41 @@ export function McpTab({
                   {srv.export_claude ? <Check size={13} /> : <Plus size={13} />}
                   Claude
                 </Button>
+                {srv.transport !== "stdio" && (
+                  <>
+                    <span className="ml-2 text-xs font-medium text-muted">OAuth</span>
+                    {authStatus[name]?.authenticated ? (
+                      <Button
+                        size="sm"
+                        variant="tertiary"
+                        isDisabled={busy === `${name}:oauth`}
+                        onPress={() => logoutOAuth(name)}
+                      >
+                        <LogOut size={13} />
+                        Sign out
+                      </Button>
+                    ) : (
+                      <Button
+                        size="sm"
+                        variant="tertiary"
+                        isDisabled={busy === `${name}:oauth`}
+                        onPress={() => authenticate(name)}
+                      >
+                        <ExternalLink size={13} />
+                        {authStatus[name]?.expired ? "Reauthorize" : "Authorize"}
+                      </Button>
+                    )}
+                    <Button
+                      size="sm"
+                      variant="tertiary"
+                      isIconOnly
+                      onPress={() => refreshAuth([name])}
+                      aria-label={`Refresh OAuth status for ${name}`}
+                    >
+                      <RefreshCw size={13} />
+                    </Button>
+                  </>
+                )}
               </div>
               {isExpanded && tools.length > 0 && (
                 <div className="mt-2 pl-6">

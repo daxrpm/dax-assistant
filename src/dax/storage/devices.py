@@ -43,6 +43,9 @@ _SECRET_BYTES = 32
 # with no look-alike characters. Short TTL compensates for the smaller space.
 _PAIRING_ALPHABET = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789"
 _PAIRING_LENGTH = 8
+CLIENT_KIND = "client"
+CAPABILITY_NODE_KIND = "capability_node"
+DEVICE_KINDS = frozenset({CLIENT_KIND, CAPABILITY_NODE_KIND})
 
 
 def _now() -> str:
@@ -67,6 +70,7 @@ class Device:
     created_at: str
     last_seen_at: str
     revoked_at: str
+    kind: str = CLIENT_KIND
 
     @property
     def revoked(self) -> bool:
@@ -81,6 +85,7 @@ class Device:
             "last_seen_at": self.last_seen_at or None,
             "revoked_at": self.revoked_at or None,
             "revoked": self.revoked,
+            "kind": self.kind,
         }
 
 
@@ -89,16 +94,21 @@ class DeviceRegistry:
 
     def __init__(self, database: Database) -> None:
         self._db = database
-        # id -> (secret_hash, revoked). Mirrors the table so token validation
+        # id -> (secret_hash, revoked, kind). Mirrors the table so token validation
         # never has to await inside a handshake.
-        self._active: dict[str, tuple[str, bool]] = {}
+        self._active: dict[str, tuple[str, bool, str]] = {}
 
     async def load(self) -> None:
         """Populate the in-memory mirror. Call once after the database starts."""
         async with self._db.read() as conn:
-            cursor = await conn.execute("SELECT id, secret_hash, revoked_at FROM devices")
+            cursor = await conn.execute(
+                "SELECT id, secret_hash, revoked_at, kind FROM devices"
+            )
             rows = await cursor.fetchall()
-        self._active = {row["id"]: (row["secret_hash"], bool(row["revoked_at"])) for row in rows}
+        self._active = {
+            row["id"]: (row["secret_hash"], bool(row["revoked_at"]), row["kind"])
+            for row in rows
+        }
         logger.info("Loaded %d enrolled device(s)", len(self._active))
 
     # -- Synchronous checks (used during auth) --
@@ -107,6 +117,14 @@ class DeviceRegistry:
         """True when the device exists and has not been revoked."""
         entry = self._active.get(device_id)
         return entry is not None and not entry[1]
+
+    def kind_of(self, device_id: str) -> str | None:
+        entry = self._active.get(device_id)
+        return entry[2] if entry is not None else None
+
+    def is_active_kind(self, device_id: str, kind: str) -> bool:
+        entry = self._active.get(device_id)
+        return entry is not None and not entry[1] and entry[2] == kind
 
     def verify_secret(self, device_id: str, secret: str) -> bool:
         """Constant-time-ish check of a presented device secret."""
@@ -124,19 +142,23 @@ class DeviceRegistry:
 
     # -- Mutations --
 
-    async def enroll(self, *, name: str, platform: str) -> tuple[Device, str]:
+    async def enroll(
+        self, *, name: str, platform: str, kind: str = CLIENT_KIND
+    ) -> tuple[Device, str]:
         """Create a device and return it with its one-time plaintext secret."""
+        if kind not in DEVICE_KINDS:
+            raise ValueError(f"Unsupported device kind: {kind}")
         device_id = secrets.token_urlsafe(16)
         secret = generate_device_secret()
         secret_hash = _hasher.hash(secret)
         created = _now()
         async with self._db.transaction() as conn:
             await conn.execute(
-                "INSERT INTO devices (id, name, platform, secret_hash, created_at) "
-                "VALUES (?, ?, ?, ?, ?)",
-                (device_id, name, platform, secret_hash, created),
+                "INSERT INTO devices (id, name, platform, secret_hash, created_at, kind) "
+                "VALUES (?, ?, ?, ?, ?, ?)",
+                (device_id, name, platform, secret_hash, created, kind),
             )
-        self._active[device_id] = (secret_hash, False)
+        self._active[device_id] = (secret_hash, False, kind)
         logger.info("Enrolled device %s (%s / %s)", device_id, name, platform)
         return (
             Device(
@@ -146,6 +168,7 @@ class DeviceRegistry:
                 created_at=created,
                 last_seen_at="",
                 revoked_at="",
+                kind=kind,
             ),
             secret,
         )
@@ -166,8 +189,8 @@ class DeviceRegistry:
                 "UPDATE devices SET revoked_at = ? WHERE id = ? AND revoked_at = ''",
                 (_now(), device_id),
             )
-        secret_hash, _ = self._active[device_id]
-        self._active[device_id] = (secret_hash, True)
+        secret_hash, _, kind = self._active[device_id]
+        self._active[device_id] = (secret_hash, True, kind)
         logger.info("Revoked device %s", device_id)
         return True
 
@@ -183,7 +206,7 @@ class DeviceRegistry:
     async def list_devices(self) -> list[Device]:
         async with self._db.read() as conn:
             cursor = await conn.execute(
-                "SELECT id, name, platform, created_at, last_seen_at, revoked_at "
+                "SELECT id, name, platform, created_at, last_seen_at, revoked_at, kind "
                 "FROM devices ORDER BY created_at DESC LIMIT 1000"
             )
             rows = await cursor.fetchall()
@@ -195,6 +218,7 @@ class DeviceRegistry:
                 created_at=row["created_at"],
                 last_seen_at=row["last_seen_at"],
                 revoked_at=row["revoked_at"],
+                kind=row["kind"],
             )
             for row in rows
         ]

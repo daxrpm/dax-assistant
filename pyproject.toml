@@ -24,6 +24,7 @@ dependencies = [
     "fastapi>=0.115",
     "python-multipart>=0.0.20",
     "uvicorn[standard]>=0.34",
+    "websockets>=15.0",
     # LLM provider SDKs (official) + universal fallback
     "anthropic>=0.40",
     "openai>=1.60",
@@ -78,8 +79,14 @@ build-backend = "hatchling.build"
 [tool.hatch.build.targets.wheel]
 packages = ["src/dax"]
 
-[tool.hatch.build.targets.wheel.force-include]
-"src/dax/web/static" = "dax/web/static"
+[tool.hatch.build.targets.sdist]
+include = [
+    "/src/dax",
+    "/pyproject.toml",
+    "/README.md",
+    "/LICENSE",
+    "/config/dax.toml.example",
+]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

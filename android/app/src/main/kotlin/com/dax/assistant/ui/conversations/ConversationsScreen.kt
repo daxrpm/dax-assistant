@@ -6,6 +6,8 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.ExperimentalLayoutApi
+import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -14,6 +16,7 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
@@ -22,11 +25,15 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.text.selection.SelectionContainer
 import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.foundation.text.KeyboardActions
+import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Add
+import androidx.compose.material.icons.filled.ArrowDownward
 import androidx.compose.material.icons.filled.ChatBubbleOutline
 import androidx.compose.material.icons.filled.DeleteOutline
 import androidx.compose.material.icons.filled.ExpandMore
@@ -43,10 +50,13 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -56,8 +66,13 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.heading
+import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.semantics.stateDescription
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.text.input.ImeAction
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.activity.compose.BackHandler
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
@@ -71,13 +86,21 @@ import com.dax.assistant.data.transport.ConnectionState
 import com.dax.assistant.ui.design.Orbita
 import com.dax.assistant.ui.design.OrbitaType
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.map
+import androidx.compose.runtime.snapshotFlow
 
 @Composable
 fun ConversationsScreen(
     modifier: Modifier = Modifier,
     viewModel: ConversationsViewModel = hiltViewModel(),
+    onDetailChanged: (Boolean) -> Unit = {},
 ) {
     val state by viewModel.state.collectAsStateWithLifecycle()
+    val detailVisible = state.chat != null || state.loadingChat
+    LaunchedEffect(detailVisible) { onDetailChanged(detailVisible) }
+    DisposableEffect(Unit) { onDispose { onDetailChanged(false) } }
     BackHandler(enabled = state.chat != null || state.loadingChat) { viewModel.closeDetail() }
     BoxWithConstraints(modifier.fillMaxSize().background(Orbita.colors.bgContent)) {
         val tablet = maxWidth >= 700.dp
@@ -94,6 +117,7 @@ fun ConversationsScreen(
                 )
                 ChatDetail(
                     state.chat,
+                    state.selectedConversationTitle(),
                     state.connection,
                     state.loadingChat,
                     false,
@@ -107,6 +131,7 @@ fun ConversationsScreen(
         } else if (state.chat != null || state.loadingChat) {
             ChatDetail(
                 state.chat,
+                state.selectedConversationTitle(),
                 state.connection,
                 state.loadingChat,
                 true,
@@ -151,6 +176,7 @@ private fun ConversationList(
                     stringResource(R.string.conversations_title),
                     style = OrbitaType.largeTitle,
                     color = Orbita.colors.fgPrimary,
+                    modifier = Modifier.semantics { heading() },
                 )
                 Text(
                     stringResource(R.string.chat_recent),
@@ -167,14 +193,14 @@ private fun ConversationList(
             }
         }
         Spacer(Modifier.height(Orbita.spacing.x4))
-        Row(horizontalArrangement = Arrangement.spacedBy(Orbita.spacing.x2)) {
+        Column(verticalArrangement = Arrangement.spacedBy(Orbita.spacing.x2)) {
             OrbitaAction(
                 label = stringResource(R.string.chat_new),
                 icon = { Icon(Icons.Default.Add, null, tint = Orbita.colors.fgOnAccent) },
                 onClick = onNew,
-                modifier = Modifier.weight(1f),
+                modifier = Modifier.fillMaxWidth(),
             )
-            SearchField(state.search, onSearch, Modifier.weight(1.35f))
+            SearchField(state.search, onSearch, Modifier.fillMaxWidth())
         }
         if (state.loadingList) LinearProgressIndicator(Modifier.fillMaxWidth())
         state.error?.let {
@@ -251,6 +277,7 @@ private fun ConversationList(
 @Composable
 private fun ChatDetail(
     chat: ConversationChatState?,
+    title: String,
     connection: ConnectionState,
     loading: Boolean,
     showBack: Boolean,
@@ -260,11 +287,27 @@ private fun ChatDetail(
     onApprovalExpired: (String) -> Unit,
     modifier: Modifier,
 ) {
-    var input by remember(chat?.sessionId) { mutableStateOf("") }
+    var input by rememberSaveable(chat?.sessionId) { mutableStateOf("") }
     val threadState = rememberLazyListState()
+    val scope = rememberCoroutineScope()
     val threadItems = (chat?.messages?.size ?: 0) + if (chat?.thinking == true) 1 else 0
-    LaunchedEffect(chat?.sessionId, threadItems) {
-        if (threadItems > 0) threadState.animateScrollToItem(threadItems - 1)
+    var followsNewMessages by remember(chat?.sessionId) { mutableStateOf(true) }
+    LaunchedEffect(threadState, chat?.sessionId) {
+        snapshotFlow { threadState.layoutInfo }
+            .map { info -> isNearConversationEnd(info.totalItemsCount, info.visibleItemsInfo.lastOrNull()?.index) }
+            .distinctUntilChanged()
+            .collect { followsNewMessages = it }
+    }
+    val newestIdentity = chat?.messages?.lastOrNull()?.let { it.id to it.content.length }
+    val activityIdentity = chat?.liveActivity?.lastOrNull()
+    LaunchedEffect(
+        chat?.sessionId,
+        newestIdentity,
+        chat?.thinking,
+        chat?.liveActivity?.size,
+        activityIdentity,
+    ) {
+        if (followsNewMessages && threadItems > 0) threadState.animateScrollToItem(threadItems - 1)
     }
     Column(modifier.fillMaxSize().background(Orbita.colors.bgContent)) {
         Row(
@@ -286,10 +329,12 @@ private fun ChatDetail(
                 }
             }
             Text(
-                stringResource(R.string.nav_conversations),
+                title.ifBlank { stringResource(R.string.chat_new_conversation) },
                 style = OrbitaType.title3,
                 color = Orbita.colors.fgPrimary,
-                modifier = Modifier.weight(1f),
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+                modifier = Modifier.weight(1f).semantics { heading() },
             )
         }
         if (loading) {
@@ -301,12 +346,13 @@ private fun ChatDetail(
                 Text(stringResource(R.string.chat_choose), color = Orbita.colors.fgTertiary)
             }
         } else {
-            LazyColumn(
-                state = threadState,
-                modifier = Modifier.weight(1f).fillMaxWidth(),
-                contentPadding = PaddingValues(Orbita.spacing.edge),
-                verticalArrangement = Arrangement.spacedBy(Orbita.spacing.x4),
-            ) {
+            Box(Modifier.weight(1f).fillMaxWidth()) {
+                LazyColumn(
+                    state = threadState,
+                    modifier = Modifier.fillMaxSize(),
+                    contentPadding = PaddingValues(Orbita.spacing.edge),
+                    verticalArrangement = Arrangement.spacedBy(Orbita.spacing.x4),
+                ) {
                 if (chat.messages.isEmpty() && !chat.thinking) {
                     item {
                         Column(
@@ -326,8 +372,24 @@ private fun ChatDetail(
                         }
                     }
                 }
-                items(chat.messages, key = { it.id }) { MessageBubble(it) }
-                if (chat.thinking) item { ActivityTrail(chat.liveActivity) }
+                    items(chat.messages, key = { it.id }) { MessageBubble(it) }
+                    if (chat.thinking) item(key = "activity") { ActivityTrail(chat.liveActivity) }
+                }
+                if (!followsNewMessages && threadItems > 0) {
+                    IconButton(
+                        onClick = {
+                            followsNewMessages = true
+                            scope.launch {
+                                threadState.animateScrollToItem(threadItems - 1)
+                            }
+                        },
+                        modifier = Modifier.align(Alignment.BottomCenter).size(48.dp)
+                            .clip(RoundedCornerShape(Orbita.radii.pill))
+                            .background(Orbita.colors.accent),
+                    ) {
+                        Icon(Icons.Default.ArrowDownward, stringResource(R.string.chat_new_messages), tint = Orbita.colors.fgOnAccent)
+                    }
+                }
             }
             chat.error?.let {
                 Text(
@@ -346,7 +408,7 @@ private fun ChatDetail(
                 )
             }
             Row(
-                Modifier.padding(horizontal = Orbita.spacing.x3, vertical = Orbita.spacing.x2)
+                Modifier.imePadding().padding(horizontal = Orbita.spacing.x3, vertical = Orbita.spacing.x2)
                     .fillMaxWidth()
                     .widthIn(max = 760.dp)
                     .align(Alignment.CenterHorizontally)
@@ -361,7 +423,10 @@ private fun ChatDetail(
                     onValueChange = { input = it },
                     textStyle = OrbitaType.body.copy(color = Orbita.colors.fgPrimary),
                     cursorBrush = SolidColor(Orbita.colors.accent),
-                    keyboardActions = KeyboardActions(),
+                    keyboardOptions = KeyboardOptions(imeAction = ImeAction.Send),
+                    keyboardActions = KeyboardActions(onSend = {
+                        if (input.isNotBlank() && connection is ConnectionState.Connected && onSend(input)) input = ""
+                    }),
                     maxLines = 6,
                     modifier = Modifier.weight(1f).heightIn(min = 52.dp, max = 132.dp),
                     decorationBox = { innerTextField ->
@@ -382,7 +447,7 @@ private fun ChatDetail(
                     onClick = {
                         if (onSend(input)) input = ""
                     },
-                    modifier = Modifier.padding(vertical = Orbita.spacing.x1).size(44.dp)
+                    modifier = Modifier.padding(vertical = Orbita.spacing.x1).size(48.dp)
                         .clip(RoundedCornerShape(Orbita.radii.pill))
                         .background(
                             if (input.isNotBlank() && connection is ConnectionState.Connected) {
@@ -412,8 +477,9 @@ private fun ChatDetail(
 @Composable
 private fun MessageBubble(message: ChatMessage) {
     val user = message.role == "user"
+    val roleLabel = stringResource(if (user) R.string.chat_role_you else R.string.chat_role_assistant)
     Row(
-        Modifier.fillMaxWidth(),
+        Modifier.fillMaxWidth().semantics(mergeDescendants = true) {},
         horizontalArrangement = if (user) Arrangement.End else Arrangement.Start,
     ) {
         Column(
@@ -428,7 +494,8 @@ private fun MessageBubble(message: ChatMessage) {
                 )
                 .padding(horizontal = Orbita.spacing.x4, vertical = Orbita.spacing.x3),
         ) {
-            SafeMarkdown(message.content, Orbita.colors.fgPrimary)
+            Text(roleLabel, style = OrbitaType.caption, color = Orbita.colors.fgQuaternary)
+            SelectionContainer { SafeMarkdown(message.content, Orbita.colors.fgPrimary) }
             if (message.pending || message.failed) {
                 Text(
                     stringResource(if (message.failed) R.string.chat_not_sent else R.string.chat_sending),
@@ -461,8 +528,17 @@ private fun ActivityTrail(events: List<ChatActivity>) {
 @Composable
 private fun ActivityDisclosure(events: List<ChatActivity>, initiallyExpanded: Boolean = false) {
     var expanded by remember { mutableStateOf(initiallyExpanded) }
+    val activityLabel = stringResource(R.string.chat_activity)
+    val expansionState = stringResource(
+        if (expanded) R.string.settings_expanded else R.string.settings_collapsed,
+    )
     Row(
-        Modifier.fillMaxWidth().clickable { expanded = !expanded }.padding(top = Orbita.spacing.x2),
+        Modifier.fillMaxWidth().clickable(role = Role.Button) { expanded = !expanded }
+            .semantics {
+                contentDescription = activityLabel
+                stateDescription = expansionState
+            }
+            .heightIn(min = 48.dp).padding(top = Orbita.spacing.x2),
         verticalAlignment = Alignment.CenterVertically,
     ) {
         Icon(Icons.Default.ExpandMore, null, tint = Orbita.colors.fgTertiary, modifier = Modifier.size(18.dp))
@@ -487,6 +563,7 @@ private fun ActivityDisclosure(events: List<ChatActivity>, initiallyExpanded: Bo
     }
 }
 
+@OptIn(ExperimentalLayoutApi::class)
 @Composable
 private fun ApprovalDialog(
     approval: ChatApproval,
@@ -524,6 +601,7 @@ private fun ApprovalDialog(
                 Column(
                     Modifier.fillMaxWidth().heightIn(max = 220.dp)
                         .background(Orbita.colors.bgInset, RoundedCornerShape(Orbita.radii.md))
+                        .verticalScroll(androidx.compose.foundation.rememberScrollState())
                         .padding(Orbita.spacing.x3),
                 ) {
                     approval.arguments.forEach { (key, value) ->
@@ -543,22 +621,34 @@ private fun ApprovalDialog(
             }
         },
         confirmButton = {
-            Row(horizontalArrangement = Arrangement.spacedBy(Orbita.spacing.x1)) {
+            FlowRow(horizontalArrangement = Arrangement.spacedBy(Orbita.spacing.x1)) {
                 approval.options.filterNot { it == "deny" }.forEach { option ->
-                    TextButton(onClick = { onDecision(approval.approvalId, option) }) {
+                    TextButton(
+                        onClick = { onDecision(approval.approvalId, option) },
+                        modifier = Modifier.heightIn(min = Orbita.sizing.minTouchTarget),
+                    ) {
                         Text(decisionLabel(option), color = Orbita.colors.accent)
                     }
                 }
             }
         },
         dismissButton = {
-            TextButton(onClick = { onDecision(approval.approvalId, "deny") }) {
+            TextButton(
+                onClick = { onDecision(approval.approvalId, "deny") },
+                modifier = Modifier.heightIn(min = Orbita.sizing.minTouchTarget),
+            ) {
                 Text(stringResource(R.string.chat_deny), color = Orbita.colors.danger)
             }
         },
         containerColor = Orbita.colors.bgElevated,
     )
 }
+
+internal fun isNearConversationEnd(totalItems: Int, lastVisibleIndex: Int?): Boolean =
+    totalItems == 0 || (lastVisibleIndex ?: -1) >= totalItems - 3
+
+private fun ConversationsUiState.selectedConversationTitle(): String =
+    conversations.firstOrNull { it.id == selectedConversationId }?.title.orEmpty()
 
 @Composable
 private fun OrbitaAction(

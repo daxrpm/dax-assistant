@@ -20,7 +20,13 @@ import {
   Check,
   Search,
 } from "lucide-react";
-import { useChatSocket, type ChatMessage, type AgentEvent } from "../hooks/useChatSocket";
+import {
+  useChatSocket,
+  boundChatMessages,
+  type AgentEvent,
+  type ChatMessage,
+  type ConfirmationRequest,
+} from "../hooks/useChatSocket";
 import { api, type ConversationSummary } from "../api/client";
 import { Markdown } from "../components/Markdown";
 import { Modal, Badge } from "../components/ui";
@@ -256,6 +262,55 @@ function ActivityPanel({
   );
 }
 
+function ConfirmationCountdown({
+  request,
+  onExpire,
+}: {
+  request: ConfirmationRequest;
+  onExpire: () => void;
+}) {
+  const total = request.timeout_seconds || 60;
+  const [remaining, setRemaining] = useState(total);
+
+  useEffect(() => {
+    setRemaining(total);
+    const timer = window.setInterval(() => {
+      setRemaining((current) => {
+        if (current <= 1) {
+          window.clearInterval(timer);
+          onExpire();
+          return 0;
+        }
+        return current - 1;
+      });
+    }, 1000);
+    return () => window.clearInterval(timer);
+  }, [request.approval_id, total, onExpire]);
+
+  const urgent = remaining <= 10;
+  return (
+    <div
+      className={cn("flex flex-col gap-1.5 text-xs", urgent ? "text-danger" : "text-muted")}
+      role="timer"
+      aria-live={urgent ? "assertive" : "off"}
+    >
+      <span>Auto-deny in {remaining}s if not answered.</span>
+      <span
+        className="h-1 overflow-hidden rounded-full bg-surface-secondary"
+        role="progressbar"
+        aria-valuemin={0}
+        aria-valuemax={total}
+        aria-valuenow={remaining}
+      >
+        <span
+          className={cn("block h-full transition-[width] duration-1000", urgent ? "bg-danger" : "bg-warning")}
+          style={{ width: `${(remaining / total) * 100}%` }}
+        />
+      </span>
+    </div>
+  );
+}
+
 /* ── Model selector ───────────────────────────────────────────────────────── */
 
 const PROVIDERS = ["openai", "anthropic", "gemini", "deepseek", "ollama", "codex"] as const;
@@ -374,8 +429,17 @@ export function ChatPage() {
   const [provider, setProvider] = useState("openai");
   const [model, setModel] = useState("gpt-4o");
 
-  const { messages, status, thinking, liveEvents, confirmation, send, respondConfirmation } =
-    useChatSocket(sessionId, initialMessages);
+  const {
+    messages,
+    status,
+    authFailed,
+    thinking,
+    liveEvents,
+    confirmation,
+    send,
+    respondConfirmation,
+    expireConfirmation,
+  } = useChatSocket(sessionId, initialMessages);
 
   const [input, setInput] = useState("");
   const scrollRef = useRef<HTMLDivElement>(null);
@@ -410,7 +474,9 @@ export function ChatPage() {
                 ? cfg.llm.gemini_model
                 : p === "deepseek"
                   ? cfg.llm.deepseek_model
-                  : cfg.llm.ollama_model;
+                  : p === "codex"
+                    ? cfg.llm.codex_model
+                    : cfg.llm.ollama_model;
         if (m) setModel(m);
       })
       .catch(() => {});
@@ -462,14 +528,14 @@ export function ChatPage() {
       if (conv.id === activeConvId && sk === sessionId) return;
       try {
         const detail = await api.getConversation(conv.id);
-        setInitialMessages(
+        setInitialMessages(boundChatMessages(
           detail.messages.map((m) => ({
             id: m.id,
             role: m.role as "user" | "assistant",
             content: m.content,
             timestamp: m.timestamp,
           })),
-        );
+        ));
         setSessionId(conv.session_key);
         setActiveConvId(conv.id);
       } catch {
@@ -530,7 +596,9 @@ export function ChatPage() {
               ? "gemini_model"
               : newProvider === "deepseek"
                 ? "deepseek_model"
-                : "ollama_model";
+                : newProvider === "codex"
+                  ? "codex_model"
+                  : "ollama_model";
       await api.updateLLM({ default_provider: newProvider, [modelKey]: newModel });
     } catch {
       /* ignore */
@@ -716,7 +784,9 @@ export function ChatPage() {
             </form>
             {status !== "open" && (
               <p className="mx-auto mt-1.5 max-w-3xl text-center text-xs text-warning">
-                Reconnecting to Dax…
+                {authFailed
+                  ? "Chat authorization was rejected. Sign in again before reconnecting."
+                  : "Reconnecting to Dax…"}
               </p>
             )}
           </div>
@@ -784,9 +854,7 @@ export function ChatPage() {
                 it just this time. Manage the list under <em>Commands</em>.
               </p>
             )}
-            <p className="text-xs text-muted">
-              Auto-deny in {confirmation.timeout_seconds}s if not answered.
-            </p>
+            <ConfirmationCountdown request={confirmation} onExpire={expireConfirmation} />
           </div>
         </Modal>
       )}

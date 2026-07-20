@@ -2,7 +2,8 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { QRCodeSVG } from "qrcode.react";
 
 import { api } from "../api/client";
-import type { PairedDevice } from "../api/types";
+import type { DeviceKind, PairedDevice } from "../api/types";
+import { Button, Modal } from "../design/primitives";
 import { useI18n } from "../i18n/I18n";
 import s from "./PairedDevices.module.css";
 
@@ -20,14 +21,20 @@ import s from "./PairedDevices.module.css";
  * either holds or it does not.
  */
 export function PairedDevices() {
-  const { t } = useI18n();
+  const { t, text } = useI18n();
   const [devices, setDevices] = useState<PairedDevice[] | null>(null);
   const [code, setCode] = useState<string | null>(null);
   const [pairingUri, setPairingUri] = useState<string | null>(null);
+  const [backendUrl, setBackendUrl] = useState<string | null>(null);
+  const [pairingKind, setPairingKind] = useState<DeviceKind>("client");
   const [expiresAt, setExpiresAt] = useState<number | null>(null);
   const [remaining, setRemaining] = useState(0);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [confirming, setConfirming] = useState<{
+    device: PairedDevice;
+    action: "revoke" | "delete";
+  } | null>(null);
   const mounted = useRef(true);
 
   const refresh = useCallback(async () => {
@@ -62,6 +69,7 @@ export function PairedDevices() {
       if (left === 0) {
         setCode(null);
         setPairingUri(null);
+        setBackendUrl(null);
         setExpiresAt(null);
       }
     };
@@ -70,13 +78,15 @@ export function PairedDevices() {
     return () => window.clearInterval(timer);
   }, [expiresAt]);
 
-  async function pair() {
+  async function pair(kind: DeviceKind) {
     setBusy(true);
     setError(null);
     try {
-      const response = await api.pairDevice();
+      const response = await api.pairDevice(kind);
       setCode(response.code);
       setPairingUri(response.pairing_uri);
+      setBackendUrl(response.backend_url);
+      setPairingKind(kind);
       setExpiresAt(Date.now() + response.expires_in_seconds * 1000);
     } catch {
       setError(t("devices.pairFailed"));
@@ -85,26 +95,55 @@ export function PairedDevices() {
     }
   }
 
-  async function revoke(device: PairedDevice) {
+  async function mutate(device: PairedDevice, action: "revoke" | "delete") {
     setBusy(true);
+    setError(null);
     try {
-      await api.revokeDevice(device.id);
+      if (action === "revoke") await api.revokeDevice(device.id);
+      else await api.deleteDevice(device.id);
       await refresh();
     } catch {
-      setError(t("devices.revokeFailed"));
+      setError(
+        action === "revoke"
+          ? t("devices.revokeFailed")
+          : text("No se pudo eliminar el dispositivo", "Could not delete the device"),
+      );
     } finally {
       setBusy(false);
+      setConfirming(null);
     }
   }
 
-  const active = (devices ?? []).filter((device) => !device.revoked);
+  const enrollmentCommand = code && backendUrl
+    ? `dax edge enroll --server ${backendUrl} --code ${code} --name <name>`
+    : null;
+
+  async function copyCommand() {
+    if (!enrollmentCommand) return;
+    try {
+      await navigator.clipboard.writeText(enrollmentCommand);
+    } catch {
+      setError(text("No se pudo copiar el comando", "Could not copy the command"));
+    }
+  }
 
   return (
     <div className={s.wrap}>
+      <p className={s.model}>
+        {text(
+          "El servidor sigue siendo la autoridad. Este portátil solo aporta comandos y archivos locales mientras está conectado; desactivarlo no mueve chats, configuración ni almacenamiento.",
+          "The server remains authoritative. This laptop contributes local commands and files only while online; turning it off does not move chats, configuration, or storage.",
+        )}
+      </p>
+
       {code ? (
         <div className={s.codeCard}>
-          <span className={s.codeLabel}>{t("devices.enterOnPhone")}</span>
-          {pairingUri && (
+          <span className={s.codeLabel}>
+            {pairingKind === "client"
+              ? t("devices.enterOnPhone")
+              : text("Inscribir este portátil como nodo", "Enroll this laptop as a node")}
+          </span>
+          {pairingKind === "client" && pairingUri && (
             <div className={s.qr} aria-label={t("devices.scanQr")}>
               <QRCodeSVG
                 value={pairingUri}
@@ -116,39 +155,58 @@ export function PairedDevices() {
               />
             </div>
           )}
-          <span className={s.or}>{t("devices.orCode")}</span>
-          {/* Spaced and oversized because it is transcribed by hand from one
-              screen to another; the pairing alphabet already excludes O/0 and
-              I/1. */}
-          <span className={s.code}>{code.split("").join(" ")}</span>
+          {pairingKind === "client" ? (
+            <>
+              <span className={s.or}>{t("devices.orCode")}</span>
+              <span className={s.code}>{code.split("").join(" ")}</span>
+            </>
+          ) : (
+            <div className={s.commandRow}>
+              <code className={s.command}>{enrollmentCommand}</code>
+              <button type="button" className={s.revoke} onClick={() => void copyCommand()}>
+                {text("Copiar", "Copy")}
+              </button>
+            </div>
+          )}
           <span className={s.codeExpiry}>
             {t("devices.expiresIn").replace("{s}", String(remaining))}
           </span>
         </div>
       ) : (
-        <button type="button" className={s.pairButton} onClick={pair} disabled={busy}>
-          {busy ? t("devices.pairing") : t("devices.pair")}
-        </button>
+        <div className={s.pairActions}>
+          <button type="button" className={s.pairButton} onClick={() => void pair("client")} disabled={busy}>
+            {busy ? t("devices.pairing") : t("devices.pair")}
+          </button>
+          <button type="button" className={s.pairButton} onClick={() => void pair("capability_node")} disabled={busy}>
+            {text("Añadir capacidad de este portátil", "Add this laptop's capability")}
+          </button>
+        </div>
       )}
 
       {error && <p className={s.error}>{error}</p>}
 
       {devices === null ? (
         <p className={s.empty}>{t("common.loading")}</p>
-      ) : active.length === 0 ? (
+      ) : devices.length === 0 ? (
         <p className={s.empty}>{t("devices.none")}</p>
       ) : (
         <ul className={s.list}>
-          {active.map((device) => (
+          {devices.map((device) => (
             <li key={device.id} className={s.item}>
               <span
-                className={`${s.led} ${device.connected ? s.ledLive : s.ledOff}`}
+                className={`${s.led} ${device.connected && !device.revoked ? s.ledLive : s.ledOff}`}
                 aria-hidden="true"
               />
               <span className={s.itemBody}>
                 <span className={s.itemName}>{device.name}</span>
                 <span className={s.itemMeta}>
-                  {device.connected
+                  {device.kind === "capability_node"
+                    ? text("Nodo de capacidad", "Capability node")
+                    : text("Cliente", "Client")}
+                  {" · "}
+                  {device.revoked
+                    ? text("revocado", "revoked")
+                    : device.connected
                     ? t("devices.connected")
                     : device.last_seen_at
                       ? t("devices.lastSeen").replace(
@@ -158,19 +216,56 @@ export function PairedDevices() {
                       : t("devices.neverConnected")}
                 </span>
               </span>
-              <button
-                type="button"
-                className={s.revoke}
-                onClick={() => void revoke(device)}
-                disabled={busy}
-                title={t("devices.revokeHint")}
-              >
-                {t("devices.revoke")}
-              </button>
+              <span className={s.itemActions}>
+                {!device.revoked && (
+                  <button
+                    type="button"
+                    className={s.revoke}
+                    onClick={() => setConfirming({ device, action: "revoke" })}
+                    disabled={busy}
+                    title={t("devices.revokeHint")}
+                  >
+                    {t("devices.revoke")}
+                  </button>
+                )}
+                <button
+                  type="button"
+                  className={s.revoke}
+                  onClick={() => setConfirming({ device, action: "delete" })}
+                  disabled={busy}
+                >
+                  {t("common.delete")}
+                </button>
+              </span>
             </li>
           ))}
         </ul>
       )}
+
+      <Modal
+        open={confirming !== null}
+        title={confirming?.action === "delete"
+          ? text("Eliminar dispositivo", "Delete device")
+          : text("Revocar dispositivo", "Revoke device")}
+        onClose={() => setConfirming(null)}
+        footer={confirming && (
+          <>
+            <Button variant="ghost" onClick={() => setConfirming(null)}>{t("common.cancel")}</Button>
+            <Button
+              variant="destructive"
+              loading={busy}
+              onClick={() => void mutate(confirming.device, confirming.action)}
+            >
+              {confirming.action === "delete" ? t("common.delete") : t("devices.revoke")}
+            </Button>
+          </>
+        )}
+      >
+        {confirming && text(
+          `${confirming.action === "delete" ? "Eliminar" : "Revocar"} “${confirming.device.name}” corta su acceso. Esta acción no mueve conversaciones ni configuración.`,
+          `${confirming.action === "delete" ? "Deleting" : "Revoking"} “${confirming.device.name}” cuts off its access. This does not move conversations or configuration.`,
+        )}
+      </Modal>
     </div>
   );
 }

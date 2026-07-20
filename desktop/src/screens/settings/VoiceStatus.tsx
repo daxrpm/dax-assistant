@@ -144,8 +144,8 @@ export function VoiceStatus({ config }: { config: FullConfig }) {
           {usesRemoteAudio() && (
             <p className={p.hint}>
               {text(
-                "Modo remoto: el micrófono de este equipo solo transmite mientras mantienes pulsado PTT. En esta versión, la respuesta de voz se reproduce en los altavoces del servidor, no en este equipo.",
-                "Remote mode: this device's microphone streams only while you hold PTT. In this version, spoken replies play through the server's speakers, not this device.",
+                "Modo remoto: el micrófono de este equipo solo transmite mientras mantienes pulsado PTT. Las respuestas aparecen como texto en este equipo; la reproducción de voz remota aún no está disponible.",
+                "Remote mode: this device's microphone streams only while you hold PTT. Replies appear as text on this device; remote voice playback is not available yet.",
               )}
             </p>
           )}

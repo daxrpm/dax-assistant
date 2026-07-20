@@ -4,6 +4,7 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -22,8 +23,13 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.semantics.heading
+import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.res.pluralStringResource
 import androidx.compose.ui.unit.dp
 import com.dax.assistant.assistant.ApprovalRequest
+import com.dax.assistant.R
 import com.dax.assistant.ui.design.Orbita
 import com.dax.assistant.ui.design.OrbitaType
 
@@ -54,29 +60,32 @@ fun ApprovalSheet(
     onDecision: (String) -> Unit,
     modifier: Modifier = Modifier,
 ) {
-    Box(
+    BoxWithConstraints(
         modifier = modifier
             .fillMaxSize()
             .background(Color.Black.copy(alpha = 0.72f)),
         contentAlignment = Alignment.BottomCenter,
     ) {
+        val sheetMaxHeight = maxHeight - Orbita.spacing.x6
         Column(
             modifier = Modifier
                 .fillMaxWidth()
                 .padding(Orbita.spacing.x3)
+                .heightIn(max = sheetMaxHeight)
                 .clip(RoundedCornerShape(Orbita.radii.xxl))
                 .background(Orbita.colors.bgElevated)
+                .verticalScroll(rememberScrollState())
                 .padding(Orbita.spacing.x6),
         ) {
             Text(
-                text = "Approve this action?",
+                text = stringResource(R.string.approval_title),
                 style = OrbitaType.title1,
                 color = Orbita.colors.fgPrimary,
+                modifier = Modifier.semantics { heading() },
             )
             Spacer(Modifier.height(Orbita.spacing.x2))
             Text(
-                text = "Dax wants to run a tool that can change things. " +
-                    "Check what it is about to do.",
+                text = stringResource(R.string.approval_explanation),
                 style = OrbitaType.callout,
                 color = Orbita.colors.fgSecondary,
             )
@@ -106,7 +115,7 @@ fun ApprovalSheet(
                     Column(
                         modifier = Modifier
                             .heightIn(max = 220.dp)
-                            .verticalScroll(rememberScrollState()),
+                            .fillMaxWidth(),
                         verticalArrangement = Arrangement.spacedBy(Orbita.spacing.x2),
                     ) {
                         request.arguments.forEach { (key, value) ->
@@ -133,7 +142,7 @@ fun ApprovalSheet(
             // "once" and "save", a plain gate offers "approve".
             request.options.filter { it != "deny" }.forEach { option ->
                 DecisionButton(
-                    label = option.replaceFirstChar { it.uppercase() },
+                    label = approvalDecisionLabel(option),
                     background = Orbita.colors.warning,
                     foreground = Orbita.colors.fgOnAccent,
                     onClick = { onDecision(option) },
@@ -142,7 +151,7 @@ fun ApprovalSheet(
             }
 
             DecisionButton(
-                label = "Deny",
+                label = stringResource(R.string.chat_deny),
                 background = Orbita.colors.bgPanel,
                 foreground = Orbita.colors.fgPrimary,
                 onClick = { onDecision("deny") },
@@ -150,13 +159,23 @@ fun ApprovalSheet(
 
             Spacer(Modifier.height(Orbita.spacing.x3))
             Text(
-                text = "If you do nothing, Dax denies this after " +
-                    "${request.timeoutSeconds} seconds.",
+                text = pluralStringResource(
+                    R.plurals.approval_timeout,
+                    request.timeoutSeconds,
+                    request.timeoutSeconds,
+                ),
                 style = OrbitaType.footnote,
                 color = Orbita.colors.fgQuaternary,
             )
         }
     }
+}
+
+@Composable
+private fun approvalDecisionLabel(option: String): String = when (option) {
+    "once" -> stringResource(R.string.chat_approve_once)
+    "save" -> stringResource(R.string.chat_approve_save)
+    else -> stringResource(R.string.chat_allow)
 }
 
 @Composable

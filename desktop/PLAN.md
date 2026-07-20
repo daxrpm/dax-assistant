@@ -1,7 +1,7 @@
 # Dax Desktop - Implementation Record
 
 **Status:** implementation complete; automated release gates pass.
-**Document version:** 2 (2026-07-19).
+**Document version:** 3 (2026-07-19).
 **Target:** native Linux client in `desktop/` for the backend in `src/dax/`.
 
 This document replaces the execution checklist with the implemented architecture,
@@ -14,13 +14,13 @@ milestones, measurements, and open gates.
 
 ## 1. Scope
 
-Dax Desktop is a second first-class client beside the browser SPA. It uses Tauri
+Dax Desktop is a first-class client beside the browser SPA and Android app. It uses Tauri
 v2, Rust, React 19 and TypeScript. It talks directly to the existing FastAPI HTTP
 and WebSocket API; Rust does not proxy application requests or contain business
 logic.
 
-The desktop application provides chat, dashboard/host metrics, MCP management and
-marketplace, command allowlisting, logs, complete Settings, tray integration,
+The desktop application provides chat, a command deck with host metrics, MCP management,
+device enrollment, command allowlisting, logs, complete Settings, tray integration,
 global shortcuts, autostart, notifications and a separate voice HUD.
 
 ## 2. Closed Decisions
@@ -52,7 +52,9 @@ depend on it.
 STT, TTS, wake-word, VAD and speaker verification remain in Python. Input is
 pluggable through `AudioSource`: `LocalAudioSource` captures on the backend host;
 `RemoteAudioSource` accepts bounded authenticated PCM from the desktop client.
-Remote TTS is reproduced on the server host.
+Default remote output is synthesized and reproduced on the server host. A
+`client_text` lease instead emits sentence text without server synthesis or
+playback. Streaming server-synthesized audio to the client is not implemented.
 
 ### D5. Performance uses measured PSS
 
@@ -86,9 +88,12 @@ idle-CPU profiler run has been recorded, so that performance residue stays open.
                        v
 +-------------------------------------------------------------+
 | Dax Python backend                                          |
-| FastAPI + agent + MCP + storage + voice pipeline            |
-| local dax-assistant.service or remote host                  |
+| sole authority: FastAPI + agent + MCP + SQLite + voice      |
+| local dax-assistant.service OR one remote host              |
 +-------------------------------------------------------------+
+
+Optional laptop node: outbound `dax edge` -> authority `/ws/capabilities`.
+It contributes tools while online and owns no server state.
 ```
 
 ### 3.1 Local deployment
@@ -100,11 +105,13 @@ is `dax-assistant.service`, installed by `scripts/install.sh`, at
 collects CPU, logical CPU count, memory, uptime and disk metrics through
 `sysinfo`.
 
-The versioned native connection document uses schema v2 and supports three
-strategies: `local`, `remote`, and `hybrid`. Local probes only the validated
-loopback URL; remote probes only its validated HTTPS URL; hybrid resolves remote
-first and then loopback. A legacy v1 `{mode,url}` document is migrated on read
-and rewritten atomically as v2.
+The versioned native connection document uses schema v3 and supports `local`
+and `remote`. Local probes only the validated loopback URL and intentionally
+makes that service the sole authority. Remote probes only its validated HTTPS
+URL. There is no fallback between them. A legacy v1 `{mode,url}` document is
+migrated on read. Schema-v2 local/remote settings retain their meaning;
+schema-v2 `hybrid` is historical input and migrates to remote using its
+configured `remote_url`. Migrated settings are rewritten atomically as v3.
 
 First-run onboarding runs before backend authentication. It explains privacy,
 selects a strategy, validates URLs, checks connectivity, and asks for explicit
@@ -121,13 +128,10 @@ Both Rust and TypeScript validate connection URLs:
 - Credentials, query strings, fragments and non-HTTP schemes are rejected.
 - CSP permits HTTPS/WSS remote connections.
 
-Remote input sends microphone audio to the server. Protocol v1 does not return
-synthesized audio; TTS plays through the backend host's speakers.
-
-Hybrid may fall back from remote to local after three confirmed runtime
-failures. It does not automatically fail back to remote during the active
-session; remote is reconsidered only by explicit reconfiguration or a later
-launch. Pure remote mode never silently falls back.
+Remote input sends microphone audio to the server. Default output does not
+return synthesized audio; TTS plays through the backend host's speakers.
+`client_text` output suppresses server synthesis/playback and emits speech text
+for local client synthesis. No mode streams server-synthesized PCM.
 
 ### 3.3 Native boundary
 
@@ -136,9 +140,11 @@ system metrics, systemd service control, and HUD show/hide/toggle. Scoped Tauri
 plugins provide single-instance behavior, URL opening, global shortcuts,
 autostart and notifications.
 
-Tokens are stored in the OS keyring by backend URL origin. Changing the active
-origin closes realtime stores, loads only that origin's token, and restarts
-authentication; credentials are never copied or reused across origins. The
+Health is accepted only from a ready authoritative Dax API with compatible
+protocol identity and a non-empty `instance_id`. Tokens are stored in the OS
+keyring by normalized backend origin plus that instance identity. Changing
+either closes realtime stores and restarts authentication; credentials are
+never copied or reused across authorities. The
 documented in-memory fallback applies when Secret Service is unavailable.
 Non-secret browser-development fallbacks use web storage; the packaged token
 does not use `localStorage`.
@@ -208,8 +214,9 @@ timeouts fail safe to deny and the modal exposes the server-provided countdown.
 
 `/ws/voice` is implemented and authenticated. Server events are `state`, `level`,
 `transcript`, `speech`, `speaker` and `error`. `transcript` is user speech;
-`speech` is emitted after synthesis and immediately before each Kokoro sentence
-plays, allowing both desktop surfaces to show the audible assistant phrase.
+in default server-output mode, `speech` is emitted after synthesis and
+immediately before each Kokoro sentence plays. With a `client_text` lease it is
+the sentence for client-side synthesis and no server audio is produced.
 State data contains:
 
 ```json
@@ -241,8 +248,10 @@ Its fixed behavior is:
 - stable JSON errors and policy/size/retry close codes for invalid order,
   malformed controls, unsupported formats, overflow and backpressure;
 - PTT only, with no remote wake-word/continuous-capture mode;
-- output capability reports `mode: server` and
-  `client_audio_supported: false`.
+- output negotiation supports default `server` and optional `client_text`;
+- `client_text` emits sentence text and suppresses server synthesis/playback;
+- `client_audio_supported` remains `false` because synthesized PCM streaming is
+  not implemented.
 
 Desktop capture uses `getUserMedia`, prefers `AudioWorklet`, falls back to
 `ScriptProcessorNode`, resamples to 16 kHz and encodes PCM16.
@@ -325,7 +334,7 @@ tool was not performed in this final pass.
 
 ### M3 - Settings and screens: automated gate passed
 
-Settings 6.0, full config coverage, memory, MCP, marketplace, commands, virtualized
+Settings 6.0, full config coverage, memory, MCP, devices, commands, virtualized
 logs, i18n, responsive 720 px behavior, stores and lazy chunks are implemented.
 The original 10k-log PSS gate was not rerun.
 
@@ -350,34 +359,15 @@ packages, but neither a clean Fedora install nor uninstall was performed.
 
 Audio source abstraction, bounded remote source, browser mic capture, resampling,
 PCM encoding, PTT controls, errors and cleanup are tested. A real remote-host
-conversation was not performed. TTS output remains on the server by design.
+conversation was not performed. Default output remains on the server;
+`client_text` is text-only client-owned output.
 
 ## 8. Automated Release Gate
 
-Executed 2026-07-19:
-
-| Check | Result |
-| --- | --- |
-| `uv run pytest -q` | 312 backend tests passed |
-| `uv run ruff check src tests` | clean |
-| `uv run mypy src` | clean across 75 source files |
-| `npm test` | 49 frontend tests passed |
-| `npm audit --omit=dev` | 0 vulnerabilities |
-| `npm run build` | TypeScript and Vite clean |
-| `cargo test --all-targets --all-features` | 16 Rust tests passed |
-| `cargo clippy --all-targets --all-features -- -D warnings` | clean |
-| `npm run tauri build` | binary, RPM and deb produced |
-
-Package output from that build:
-
-| Artefact under `desktop/src-tauri/target/release/` | Exact size |
-| --- | ---: |
-| `dax-desktop` | 7,214,672 bytes |
-| `bundle/rpm/Dax-0.1.0-1.x86_64.rpm` | 3,354,025 bytes |
-| `bundle/deb/Dax_0.1.0_amd64.deb` | 3,352,736 bytes |
-
-These automated and build results do not imply visual approval, hardware audio,
-idle profiling, accessibility review, remote two-host audio or clean-system
+Use the reproducible commands below rather than recording test counts or exact
+artifact sizes, which become stale immediately. Passing automated and build
+gates does not imply visual approval, hardware audio, idle profiling,
+accessibility review, remote two-host audio, signing, or clean-system
 installation.
 
 ## 9. Reproducible Commands
@@ -431,7 +421,7 @@ Only mark these complete after the stated evidence exists:
 - Interactive Wayland HUD placement/shadow inspection; positioning remains a
   compositor limitation, not a code gate.
 - Real two-host HTTPS/WSS remote PTT conversation, remembering that TTS plays on
-  the server.
+  the server in default output mode and `client_text` produces no server audio.
 - RPM install, launch, connection and uninstall on a clean Fedora 44 system.
 
 ## 11. Ground Truth
@@ -448,6 +438,8 @@ Only mark these complete after the stated evidence exists:
 | Settings | `desktop/src/screens/settings/registry.json` |
 | Native integration | `desktop/src-tauri/src/*.rs`, `desktop/src/native/` |
 | Bundle targets | `desktop/src-tauri/tauri.conf.json` |
+| Capability nodes | `docs/capability-nodes.md`, `src/dax/capabilities/`, `src/dax/edge/` |
+| Deployment and releases | `docs/deployment.md`, `docs/releases.md` |
 
 The knowledge graph at `graphify-out/graph.json` is useful for orientation.
 Source remains implementation truth, while `docs/desktop-architecture.md` is the

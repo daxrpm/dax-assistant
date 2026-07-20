@@ -241,7 +241,7 @@ class TestDatabase:
         cursor = await database.connection.execute("SELECT version FROM schema_version")
         row = await cursor.fetchone()
         assert row is not None
-        assert row["version"] == 5
+        assert row["version"] == 6
 
     async def test_wal_mode(self, database: Database):
         cursor = await database.connection.execute("PRAGMA journal_mode")

@@ -7,6 +7,38 @@ layout rebuilt for one hand and one thumb.
 The backend stays the source of truth. Nothing here re-implements the agent
 loop, tool policy, or conversation storage.
 
+Android is a client of the same single authoritative backend as web and desktop.
+It does not become an authority when the server or an optional laptop capability
+node is offline. The node contributes laptop tools only while connected; Android
+continues to use server-owned chat, policy, approvals, and persistence.
+
+## Product behavior
+
+Android provides the same core assistant outcomes as the other first-party
+clients: authenticated enrollment, conversation history and chat, Markdown,
+agent activity, session-bound tool approvals, voice turns, settings, and device
+diagnostics. Parity means shared backend contracts and safety behavior, not an
+identical desktop layout.
+
+Intentional native differences include one-thumb voice controls, Android audio
+routing and speech-recognition choices, media-button triggers, a foreground
+assistant service, runtime Bluetooth/watch capability probing, Android Keystore
+credentials, and native permission recovery. Phones use bottom navigation;
+larger widths use a navigation rail, and conversation list/detail becomes a
+split view. Compact conversation detail hides the bottom bar, handles Back
+locally, pads the composer for the IME, preserves deliberate scroll position,
+and offers an explicit jump-to-latest action instead of forcing the user away
+from older messages.
+
+The activity is edge-to-edge. System-bar appearance follows the selected theme,
+while navigation/system-bar and keyboard insets are consumed by the relevant
+surfaces rather than assumed fixed. Voice actions request microphone permission
+when needed. If it was permanently denied, the UI directs the user to Android
+app settings; the foreground service starts only after enrollment and microphone
+permission. Bluetooth connection and Android 13+ notification permissions are
+requested with the voice permission set, and Diagnostics reports unavailable
+capabilities instead of pretending they work.
+
 ## Building
 
 The toolchain lives on the external volume because the primary disk sits at
@@ -18,6 +50,16 @@ source ./env.sh          # JAVA_HOME, ANDROID_HOME, GRADLE_USER_HOME, PATH
 gradle :app:assembleDebug
 gradle :app:testDebugUnitTest
 ```
+
+Production APKs are built only by the tagged release workflow. The release build requires
+`DAX_ANDROID_KEYSTORE_PATH`, `DAX_ANDROID_KEYSTORE_PASSWORD`, `DAX_ANDROID_KEY_ALIAS`,
+`DAX_ANDROID_KEY_PASSWORD`, and the expected signing certificate fingerprint in
+`DAX_ANDROID_CERT_SHA256`; `scripts/release.py build` fails unless `apksigner` validates both
+the APK signature and exact signer identity. Android may only be explicitly skipped for local
+pipeline validation. CI stores signing values and the expected fingerprint as environment secrets
+and publishes the signed APK as a separate Android asset, never through the Linux installer.
+See [`../docs/releases.md`](../docs/releases.md) for coordinated artifact
+attestation and the external signing/clean-install gates.
 
 `env.sh` points at:
 

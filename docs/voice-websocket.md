@@ -19,17 +19,18 @@ explicit farewell ends the session. `session_expires_at` is an absolute Unix
 timestamp, or `null` when there is no active session, so clients do not need to
 estimate expiry.
 
-`transcript` is recognized user speech. `speech` is the assistant sentence whose
-synthesized audio is about to play on the backend host:
+`transcript` is recognized user speech. `speech` is an assistant sentence. Its
+output meaning depends on the lease mode:
 
 ```json
 {"type":"speech","data":{"text":"Ahora mismo está sonando.","language":"es"}}
 ```
 
-Kokoro responses are synthesized sentence by sentence. The backend emits each
-`speech` event after synthesis and immediately before playback, allowing the
-command deck and HUD to show the phrase aligned with audible output. Clients
-clear it when state leaves `speaking`.
+In default `server` mode, Kokoro responses are synthesized sentence by sentence
+and the backend emits each event after synthesis and immediately before backend
+playback. In `client_text` mode, the event is text for client-side synthesis and
+the backend performs no synthesis, playback, or earcon. Clients clear it when
+state leaves `speaking`.
 
 ## Remote input v1
 

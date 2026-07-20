@@ -13,13 +13,15 @@ Rules:
 
 ## Project architecture
 
-Dax is a single-user assistant with a Python backend and two clients. The backend is the source of truth for conversations, configuration, MCP, policy, voice processing, and persistence. `web/` is the browser client; `desktop/` is the first-class Tauri client. Do not move business logic into either client.
+Dax is a single-user assistant with one always-on authoritative Python backend and three clients. The backend is the sole source of truth for SQLite, conversations, configuration, LLM routing, MCP, policy, approvals, voice processing, and persistence. `web/` is the browser client, `desktop/` is the first-class Tauri client, and `android/` is the native mobile client. Do not move business logic into a client.
+
+An optional laptop runs `dax edge` as an outbound capability node. It contributes a bounded `dax-system` inventory while connected; it is never a second backend or storage authority. Laptop shutdown removes those tools but server/chat continue. Do not introduce backend fallback, authority election, state replication, active-active SQLite, or automatic movement between local and remote servers.
 
 The backend follows hexagonal boundaries:
 
 - `src/dax/core/`: configuration, domain models, ports, events, and policies.
 - `src/dax/orchestrator/`: agent loop, approvals, tool gating, and message bus.
-- `src/dax/llm/`: provider adapters and local-first failover routing.
+- `src/dax/llm/`: provider adapters and ordered provider failover within the one authority.
 - `src/dax/mcp/`: MCP clients, lifecycle, registry, and environment resolution.
 - `src/dax/channels/`: web, voice, Telegram, and WhatsApp adapters.
 - `src/dax/voice/`: local/remote audio sources, wake word, VAD, STT, TTS, speaker verification, and the voice state machine.
@@ -57,13 +59,22 @@ The desktop UI talks directly to FastAPI over HTTP/WebSocket. HTTP uses `Authori
 - The home screen is the command deck, not a permanent sidebar. Navigation is command-palette-first.
 - The voice orb and HUD must not route level frames through React state. Pass complete `LevelFrame` objects to imperative sinks, keep separate input/output ring buffers, and stop animation frames after idle settles.
 - The pseudo-3D orb is Canvas 2D by design: radial gradients, perspective ellipses, z-sorted particles, and source-specific wave rings. Do not replace it with WebGL or ASCII without a measured need.
-- The backend connection strategy is `local`, `remote`, or `hybrid` and is persisted by Rust in a versioned schema loaded before authentication. Hybrid is remote-first and falls back to loopback after confirmed failures; it never fails back during an active session.
-- Authentication tokens are isolated by backend origin. Never reuse or copy a token when the active backend changes.
+- The backend connection strategy is only `local` or `remote` and is persisted by Rust schema v3 before authentication. Local deliberately selects the laptop's loopback service as the sole authority; remote selects one HTTPS server. Never add fallback between them. Schema-v2 `hybrid` is historical migration input only and migrates to remote using its configured `remote_url`.
+- Authentication tokens are isolated by normalized backend origin and authoritative `instance_id`. Never reuse or copy a token when either changes. Health is accepted only for a ready `role=authoritative`, `api_protocol=dax`, compatible API identity.
 - First-run onboarding must complete before backend authentication. It explains privacy, validates URLs, checks connectivity, and asks before starting the local systemd service.
 - The local backend is the systemd user service `dax-assistant.service`; service actions are a fixed allowlist, never arbitrary shell commands.
 - Remote audio is push-to-talk only. TTS plays on the server host unless a client claims `output.mode = "client_text"` on `remote_audio.acquire`, in which case the server emits `speech` events and synthesizes nothing. Streaming server-synthesized audio to a client is still not implemented; do not imply it.
 - The main window defaults to the compact custom frame. Users may switch live to native decorations in Desktop Settings; the HUD never uses the main frame.
 - The target packages are Fedora RPM and Debian/Ubuntu deb. Fedora/GNOME/Wayland is the primary runtime.
+
+## Capability nodes and deployment
+
+- Enrollment codes are created from authenticated desktop/web device UI with kind `capability_node`; the laptop runs `dax edge enroll --server URL --code CODE --name NAME`.
+- Credentials default to `~/.local/state/dax-assistant/edge.json` (`0700` parent, `0600` file). `dax-assistant-node.service` is installed only on request and must not start before enrollment.
+- Remote nodes require HTTPS/WSS and connect outbound. Their server-trusted inventory is ephemeral, generation-fenced, policy/approval-gated, and removed immediately on disconnect or revocation.
+- Node paths resolve on the node under `DAX_SYSTEM_ROOTS`; shell calls remain server-allowlisted, argv-only, and reject shell metacharacters. Do not describe this as unrestricted shell access.
+- Current scope is one live socket per enrolled node and the bundled trusted inventory, not arbitrary remote MCP discovery, queued offline execution, or multi-authority orchestration.
+- Production is one `systemd --user` authoritative service. Back up a consistent database together with its matching `dax.key` or external `DAX_MASTER_KEY`; do not support active-active SQLite. See `docs/deployment.md` and `docs/capability-nodes.md`.
 
 ## Verification gates
 

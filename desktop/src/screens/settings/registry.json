@@ -357,6 +357,13 @@
           ]
         },
         {
+          "id": "voz-galeria",
+          "title": "Galería de voces",
+          "description": "Escucha las voces disponibles antes de elegir una.",
+          "custom": "voice-gallery",
+          "fields": []
+        },
+        {
           "id": "voz-transcribe",
           "title": "Cómo transcribe",
           "description": "Reconocimiento de voz local o alojado.",
@@ -1074,7 +1081,7 @@
               "api": "telegram",
               "path": "allowed_user_ids",
               "label": "IDs autorizados",
-              "description": "Un ID numérico por línea. Vacío significa que nadie puede escribirle.",
+              "description": "Un ID numérico por línea. Vacío permite escribir a cualquier usuario; configura esta lista antes de activar el bot.",
               "control": "lines-int",
               "rows": 4,
               "apply": "restart"
@@ -1202,27 +1209,17 @@
             },
             {
               "key": "security.device_token_ttl_minutes",
-              "api": "security",
-              "path": "device_token_ttl_minutes",
               "label": "Duración del token de dispositivo",
               "description": "Minutos que vive un token de acceso del móvil. Corto es mejor: el dispositivo renueva solo.",
-              "control": "number",
-              "unit": "min",
-              "min": 1,
-              "max": 1440,
-              "step": 1
+              "control": "readonly",
+              "reason": "La API de configuración todavía no acepta cambios para este valor."
             },
             {
               "key": "security.pairing_code_ttl_minutes",
-              "api": "security",
-              "path": "pairing_code_ttl_minutes",
               "label": "Duración del código de vinculación",
               "description": "Minutos para escribir el código en el dispositivo nuevo antes de que caduque.",
-              "control": "number",
-              "unit": "min",
-              "min": 1,
-              "max": 60,
-              "step": 1
+              "control": "readonly",
+              "reason": "La API de configuración todavía no acepta cambios para este valor."
             },
             {
               "key": "security.cookie_secure",

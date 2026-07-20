@@ -9,11 +9,13 @@ from __future__ import annotations
 import asyncio
 import logging
 import signal
+import uuid
 from typing import TYPE_CHECKING, Any
 
 import structlog
 import uvicorn
 
+from dax.capabilities import CapabilityHub
 from dax.channels.telegram_channel import TelegramChannel
 from dax.channels.voice_channel import VoiceChannel
 from dax.channels.web_channel import WebChannel
@@ -42,6 +44,17 @@ if TYPE_CHECKING:
     from dax.voice.pipeline import VoicePipeline
 
 logger = structlog.get_logger(__name__)
+
+_SERVER_INSTANCE_ID_KEY = "DAX_SERVER_INSTANCE_ID"
+
+
+def _load_server_instance_id(store: SecretStore) -> str:
+    """Return the authority identity, creating it in encrypted storage once."""
+    instance_id = store.get(_SERVER_INSTANCE_ID_KEY)
+    if instance_id is None:
+        instance_id = str(uuid.uuid4())
+        store.set(_SERVER_INSTANCE_ID_KEY, instance_id)
+    return instance_id
 
 
 def _configure_logging(log_level: str) -> None:
@@ -85,6 +98,7 @@ class DaxApp:
 
         # Encrypted secret store (replaces .env as the source of truth).
         self._secrets = SecretStore(config.storage.database_path)
+        self._server_instance_id = _load_server_instance_id(self._secrets)
         from dax.web.routes.oauth import configure_oauth_store
 
         configure_oauth_store(self._secrets)
@@ -121,7 +135,11 @@ class DaxApp:
         self._voice_events = VoiceEventHub()
 
         # Web
-        self._web_app = create_app(config=config, bus=self._bus)
+        self._web_app = create_app(
+            config=config,
+            bus=self._bus,
+            server_instance_id=self._server_instance_id,
+        )
         self._web_app.state.voice_events = self._voice_events
         self._web_app.state.approval = self._approval
         self._web_app.state.tts_service = self._tts_service
@@ -129,6 +147,7 @@ class DaxApp:
 
         self._agent: Agent | None = None
         self._dispatcher: Dispatcher | None = None
+        self._capability_hub: CapabilityHub | None = None
 
     @classmethod
     def from_config_path(cls, config_path: Path | None = None) -> DaxApp:
@@ -175,11 +194,14 @@ class DaxApp:
         # WebSocket handshake, where awaiting SQLite is not an option.
         self._devices = DeviceRegistry(self._database)
         await self._devices.load()
+        self._capability_hub = CapabilityHub(self._mcp, self._devices)
         if hasattr(self._web_app, "state"):
             auth_manager = getattr(self._web_app.state, "auth", None)
             if auth_manager is not None:
                 auth_manager.attach_devices(self._devices)
+                auth_manager.attach_capability_hub(self._capability_hub)
             self._web_app.state.devices = self._devices
+            self._web_app.state.capability_hub = self._capability_hub
         log.info("Device registry ready", devices=self._devices.count)
 
         # Deliver live log records to web subscribers on this loop.
@@ -321,6 +343,7 @@ class DaxApp:
                     self._web_app.state.voice_pipeline = None
                     self._web_app.state.voice_listening = False
 
+        self._web_app.state.ready = True
         log.info("Dax Assistant is ready")
 
     async def reload_telegram(self) -> None:
@@ -404,6 +427,7 @@ class DaxApp:
         """Shut down all components in reverse order."""
         log = logger.bind(app="dax")
         log.info("Shutting down Dax Assistant")
+        self._web_app.state.ready = False
 
         if self._uvicorn_server:
             self._uvicorn_server.should_exit = True
@@ -422,6 +446,8 @@ class DaxApp:
         for _name, channel in self._channels.items():
             await channel.stop()
 
+        if self._capability_hub is not None:
+            await self._capability_hub.stop()
         await self._mcp.stop()
         await self._database.stop()
 

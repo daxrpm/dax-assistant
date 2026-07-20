@@ -115,6 +115,37 @@ class TestEnrolmentFlow:
         assert second.status_code == 401
         assert second.json()["ok"] is False
 
+    async def test_capability_node_kind_is_bound_to_pairing_code(
+        self, client: AsyncClient, app: FastAPI
+    ):
+        pair = await client.post(
+            "/api/auth/devices/pair", json={"kind": "capability_node"}
+        )
+        enrolled = await client.post(
+            "/api/auth/devices/enroll",
+            json={
+                "code": pair.json()["code"],
+                "name": "Laptop",
+                "platform": "linux",
+            },
+        )
+        credentials = enrolled.json()
+        token = (
+            await client.post(
+                "/api/auth/devices/token",
+                json={
+                    "device_id": credentials["device_id"],
+                    "device_secret": credentials["device_secret"],
+                },
+            )
+        ).json()["token"]
+
+        listed = (await client.get("/api/auth/devices")).json()["devices"][0]
+        assert pair.json()["kind"] == "capability_node"
+        assert listed["kind"] == "capability_node"
+        assert app.state.auth.capability_node_from_token(token) == listed["id"]
+        assert app.state.auth.validate_token(token) is False
+
     async def test_bad_pairing_code_is_rejected(self, client: AsyncClient):
         response = await client.post("/api/auth/devices/enroll", json={"code": "ZZZZZZZZ"})
         assert response.status_code == 401

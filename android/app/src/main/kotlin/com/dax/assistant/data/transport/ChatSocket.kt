@@ -12,7 +12,9 @@ import kotlin.math.min
 import kotlin.math.pow
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.cancelAndJoin
 import kotlinx.coroutines.channels.Channel
+import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -22,6 +24,7 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.runBlocking
 import kotlin.random.Random
 import okhttp3.OkHttpClient
 import okhttp3.Request
@@ -59,9 +62,6 @@ class ChatSocket(
     private val _state = MutableStateFlow<ConnectionState>(ConnectionState.Disconnected)
     val state: StateFlow<ConnectionState> = _state.asStateFlow()
 
-    // Callbacks feed one ordered pump; SharedFlow then broadcasts every frame
-    // independently to voice and any number of conversation collectors.
-    private val frameBuffer = Channel<ServerFrame>(Channel.UNLIMITED)
     private val _frames = MutableSharedFlow<ServerFrame>(extraBufferCapacity = 64)
     val frames: SharedFlow<ServerFrame> = _frames.asSharedFlow()
 
@@ -72,12 +72,6 @@ class ChatSocket(
     private var connectJob: Job? = null
     private val shouldRun = AtomicBoolean(false)
     private var attempt = 0
-
-    init {
-        scope.launch {
-            for (frame in frameBuffer) _frames.emit(frame)
-        }
-    }
 
     fun connect() {
         if (!shouldRun.compareAndSet(false, true)) return
@@ -153,7 +147,7 @@ class ChatSocket(
     }
 
     /** Opens the socket and suspends until it closes, returning why. */
-    private suspend fun openSocket(token: String): String {
+    private suspend fun openSocket(token: String): String = coroutineScope {
         val base = credentials.backendUrl
         val wsUrl = base.replaceFirst(
             Regex("^https?"),
@@ -165,6 +159,12 @@ class ChatSocket(
             .build()
 
         val closeReason = kotlinx.coroutines.CompletableDeferred<String>()
+        // This queue belongs to exactly one WebSocket generation. Closing that
+        // generation cancels queued delivery before a reconnect can start.
+        val frameBuffer = Channel<ServerFrame>(capacity = FRAME_BUFFER_CAPACITY)
+        val deliveryJob = launch {
+            for (frame in frameBuffer) _frames.emit(frame)
+        }
 
         socket = client.newWebSocket(
             request,
@@ -181,7 +181,20 @@ class ChatSocket(
 
                 override fun onMessage(webSocket: WebSocket, text: String) {
                     FrameParser.parse(text)?.let { frame ->
-                        if (frame !is ServerFrame.Unknown) frameBuffer.trySend(frame)
+                        if (frame is ServerFrame.Unknown) return
+                        if (frame.isTransientChatFrame()) {
+                            // Activity is transient and may be dropped under pressure.
+                            frameBuffer.trySend(frame)
+                        } else {
+                            // Backpressure the serialized OkHttp callback rather than
+                            // spawning unbounded application-scope delivery jobs.
+                            val delivered = runCatching {
+                                runBlocking { frameBuffer.send(frame) }
+                            }.isSuccess
+                            if (!delivered) {
+                                DaxLog.i(TAG, "Discarded critical frame from closed connection")
+                            }
+                        }
                     }
                 }
 
@@ -202,9 +215,11 @@ class ChatSocket(
             },
         )
 
-        return try {
+        try {
             closeReason.await()
         } finally {
+            frameBuffer.cancel()
+            deliveryJob.cancelAndJoin()
             socket?.cancel()
             socket = null
         }
@@ -223,5 +238,9 @@ class ChatSocket(
         const val POLICY_VIOLATION = 1008
         const val MAX_BACKOFF_SECONDS = 30
         const val MAX_SESSIONS = 32
+        const val FRAME_BUFFER_CAPACITY = 128
     }
 }
+
+internal fun ServerFrame.isTransientChatFrame(): Boolean =
+    this is ServerFrame.AgentEvent && eventType != "done"

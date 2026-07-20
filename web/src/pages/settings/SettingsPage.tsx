@@ -8,6 +8,7 @@ import {
   ShieldCheck,
   Globe,
   Brain,
+  Smartphone,
 } from "lucide-react";
 import { useConfig } from "../../hooks/useConfig";
 import { Tabs } from "../../components/ui";
@@ -19,6 +20,7 @@ import { TelegramTab } from "./TelegramTab";
 import { ToolsTab } from "./ToolsTab";
 import { ServerTab } from "./ServerTab";
 import { MemoryTab } from "./MemoryTab";
+import { DevicesTab } from "./DevicesTab";
 
 const TABS = [
   { id: "general", label: "General", icon: <SlidersHorizontal size={15} /> },
@@ -29,6 +31,7 @@ const TABS = [
   { id: "tools", label: "Security & Tools", icon: <ShieldCheck size={15} /> },
   { id: "server", label: "Web Server", icon: <Globe size={15} /> },
   { id: "memory", label: "Memory", icon: <Brain size={15} /> },
+  { id: "devices", label: "Devices", icon: <Smartphone size={15} /> },
 ];
 
 export function SettingsPage({ initialTab = "general" }: { initialTab?: string }) {
@@ -52,6 +55,7 @@ export function SettingsPage({ initialTab = "general" }: { initialTab?: string }
             {active === "tools" && <ToolsTab config={config} onSaved={refresh} />}
             {active === "server" && <ServerTab config={config} onSaved={refresh} />}
             {active === "memory" && <MemoryTab config={config} onSaved={refresh} />}
+            {active === "devices" && <DevicesTab />}
           </>
         )}
       </div>

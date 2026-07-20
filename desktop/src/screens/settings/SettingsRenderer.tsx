@@ -17,6 +17,7 @@ import s from "./settings.module.css";
 import { ChangePassword } from "./ToolsTab";
 import type { SettingsDraft } from "./useSettingsDraft";
 import { VoiceEnrollment } from "./VoiceEnrollment";
+import { VoiceGallery } from "./VoiceGallery";
 import { VoiceStatus } from "./VoiceStatus";
 
 interface RendererContext {
@@ -33,6 +34,8 @@ function CustomGroup({ group, context }: { group: GroupSpec; context: RendererCo
       return <VoiceStatus config={context.config} />;
     case "voice-enrollment":
       return <VoiceEnrollment />;
+    case "voice-gallery":
+      return <VoiceGallery config={context.config} />;
     case "mcp-servers":
       return <McpServers config={context.config} onSaved={context.onSaved} />;
     case "shell-allow":

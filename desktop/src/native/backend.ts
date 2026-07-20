@@ -1,6 +1,6 @@
 import { invoke } from "@tauri-apps/api/core";
 
-export type BackendStrategy = "local" | "remote" | "hybrid";
+export type BackendStrategy = "local" | "remote";
 
 export interface BackendSettings {
   version: number;
@@ -8,6 +8,7 @@ export interface BackendSettings {
   local_url: string;
   remote_url: string | null;
   active_url: string;
+  active_server_id: string | null;
   onboarding_complete: boolean;
 }
 
@@ -17,8 +18,9 @@ export interface BackendResolution {
   previous_url: string;
   changed: boolean;
   healthy: boolean;
+  server_instance_id: string | null;
   service_start_attempted: boolean;
-  attempts: Array<{ url: string; healthy: boolean }>;
+  attempts: Array<{ url: string; healthy: boolean; server_instance_id: string | null }>;
 }
 
 export interface BackendSettingsInput {
@@ -42,4 +44,8 @@ export function resolveNativeBackend(
   allowServiceStart = false,
 ): Promise<BackendResolution> {
   return invoke<BackendResolution>("backend_resolve", { allowServiceStart });
+}
+
+export function replaceNativeAuthorityConfirmed(): Promise<BackendSettings> {
+  return invoke<BackendSettings>("backend_authority_replace_confirmed");
 }

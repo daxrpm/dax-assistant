@@ -24,6 +24,12 @@ export interface LoginResponse {
 
 export interface HealthResponse {
   status: string;
+  instance_id: string;
+  role: string;
+  api_protocol: string;
+  api_version: number;
+  liveness: boolean;
+  readiness: boolean;
 }
 
 export interface StatusResponse {
@@ -342,7 +348,10 @@ export interface PairCodeResponse {
   expires_in_seconds: number;
   backend_url: string;
   pairing_uri: string;
+  kind: DeviceKind;
 }
+
+export type DeviceKind = "client" | "capability_node";
 
 /**
  * An enrolled client.
@@ -361,4 +370,5 @@ export interface PairedDevice {
   revoked_at: string | null;
   revoked: boolean;
   connected: boolean;
+  kind: DeviceKind;
 }

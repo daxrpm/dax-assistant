@@ -24,3 +24,6 @@ data class PairingPayload(val backendUrl: String, val code: String) {
             URLDecoder.decode(value, StandardCharsets.UTF_8.name())
     }
 }
+
+internal fun isValidPairingCode(value: String): Boolean =
+    value.trim().matches(Regex("[A-Za-z0-9]{8}"))

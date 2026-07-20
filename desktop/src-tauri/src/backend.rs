@@ -8,16 +8,18 @@ use std::time::Duration;
 use url::{Host, Url};
 
 pub const DEFAULT_URL: &str = "http://127.0.0.1:8420";
-pub const SETTINGS_VERSION: u8 = 2;
+pub const SETTINGS_VERSION: u8 = 3;
 const SETTINGS_FILE: &str = "backend.json";
 const PROBE_TIMEOUT: Duration = Duration::from_secs(2);
+const STARTUP_READINESS_DEADLINE: Duration = Duration::from_secs(8);
+const STARTUP_INITIAL_BACKOFF: Duration = Duration::from_millis(100);
+const STARTUP_MAX_BACKOFF: Duration = Duration::from_secs(1);
 
 #[derive(Clone, Copy, Debug, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "lowercase")]
 pub enum BackendStrategy {
     Local,
     Remote,
-    Hybrid,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
@@ -28,7 +30,28 @@ pub struct BackendSettings {
     pub local_url: String,
     pub remote_url: Option<String>,
     pub active_url: String,
+    pub active_server_id: Option<String>,
     pub onboarding_complete: bool,
+}
+
+#[derive(Clone, Copy, Debug, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "lowercase")]
+enum VersionTwoStrategy {
+    Local,
+    Remote,
+    Hybrid,
+}
+
+#[derive(Clone, Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct VersionTwoSettings {
+    version: u8,
+    strategy: VersionTwoStrategy,
+    local_url: String,
+    remote_url: Option<String>,
+    #[serde(rename = "active_url")]
+    _active_url: String,
+    onboarding_complete: bool,
 }
 
 #[derive(Clone, Debug, Deserialize)]
@@ -49,6 +72,7 @@ enum LegacyMode {
 pub struct ResolutionAttempt {
     pub url: String,
     pub healthy: bool,
+    pub server_instance_id: Option<String>,
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -58,6 +82,7 @@ pub struct BackendResolution {
     pub previous_url: String,
     pub changed: bool,
     pub healthy: bool,
+    pub server_instance_id: Option<String>,
     pub service_start_attempted: bool,
     pub attempts: Vec<ResolutionAttempt>,
 }
@@ -80,6 +105,7 @@ impl BackendSettings {
             local_url: DEFAULT_URL.to_string(),
             remote_url: None,
             active_url: DEFAULT_URL.to_string(),
+            active_server_id: None,
             onboarding_complete: false,
         }
     }
@@ -89,6 +115,7 @@ impl BackendSettings {
         local_url: &str,
         remote_url: Option<&str>,
         active_url: Option<&str>,
+        active_server_id: Option<&str>,
         onboarding_complete: bool,
     ) -> Result<Self, String> {
         let local_url = validate_local_url(local_url)?;
@@ -96,14 +123,12 @@ impl BackendSettings {
             .filter(|value| !value.trim().is_empty())
             .map(validate_remote_url)
             .transpose()?;
-        if matches!(strategy, BackendStrategy::Remote | BackendStrategy::Hybrid)
-            && remote_url.is_none()
-        {
-            return Err("remote_url is required for remote and hybrid strategies".into());
+        if strategy == BackendStrategy::Remote && remote_url.is_none() {
+            return Err("remote_url is required for the remote strategy".into());
         }
         let preferred = match strategy {
             BackendStrategy::Local => local_url.clone(),
-            BackendStrategy::Remote | BackendStrategy::Hybrid => remote_url.clone().unwrap(),
+            BackendStrategy::Remote => remote_url.clone().unwrap(),
         };
         let active_url = active_url
             .map(validate_remote_url)
@@ -116,6 +141,7 @@ impl BackendSettings {
             local_url,
             remote_url,
             active_url,
+            active_server_id: active_server_id.map(str::to_owned),
             onboarding_complete,
         })
     }
@@ -124,12 +150,6 @@ impl BackendSettings {
         match self.strategy {
             BackendStrategy::Local => vec![self.local_url.clone()],
             BackendStrategy::Remote => self.remote_url.iter().cloned().collect(),
-            BackendStrategy::Hybrid => self
-                .remote_url
-                .iter()
-                .cloned()
-                .chain(std::iter::once(self.local_url.clone()))
-                .collect(),
         }
     }
 }
@@ -183,11 +203,24 @@ impl BackendState {
             .inner
             .lock()
             .map_err(|_| "backend settings lock is poisoned".to_string())?;
+        let preferred_url = match strategy {
+            BackendStrategy::Local => validate_local_url(&local_url)?,
+            BackendStrategy::Remote => validate_remote_url(
+                remote_url
+                    .as_deref()
+                    .ok_or_else(|| "remote_url is required for the remote strategy".to_string())?,
+            )?,
+        };
+        let same_authority_origin =
+            token_origin(&preferred_url)? == token_origin(&guard.settings.active_url)?;
         let next = BackendSettings::validated(
             strategy,
             &local_url,
             remote_url.as_deref(),
-            Some(&guard.settings.active_url),
+            Some(&preferred_url),
+            same_authority_origin
+                .then_some(guard.settings.active_server_id.as_deref())
+                .flatten(),
             onboarding_complete,
         )?;
         persist_settings(&self.path, &next)?;
@@ -203,7 +236,12 @@ impl BackendState {
             .map_err(|_| "backend settings lock is poisoned".into())
     }
 
-    fn set_active_if_current(&self, generation: u64, active_url: String) -> Result<bool, String> {
+    fn set_active_if_current(
+        &self,
+        generation: u64,
+        active_url: String,
+        server_instance_id: String,
+    ) -> Result<bool, String> {
         let mut guard = self
             .inner
             .lock()
@@ -213,6 +251,7 @@ impl BackendState {
         }
         let mut next = guard.settings.clone();
         next.active_url = active_url;
+        next.active_server_id = Some(server_instance_id);
         persist_settings(&self.path, &next)?;
         guard.settings = next;
         guard.generation = guard.generation.wrapping_add(1);
@@ -240,11 +279,67 @@ impl BackendState {
             Err("token origin is not a configured backend origin".into())
         }
     }
+
+    pub fn token_authority(&self, value: &str, instance_id: &str) -> Result<String, String> {
+        let origin = self.token_origin(value)?;
+        let settings = self.settings()?;
+        let active_origin = token_origin(&settings.active_url)?;
+        if origin != active_origin || settings.active_server_id.as_deref() != Some(instance_id) {
+            return Err("token authority is not the validated active backend".into());
+        }
+        Ok(origin)
+    }
+
+    pub fn reset_authority_pin<F>(&self, clear_credentials: F) -> Result<BackendSettings, String>
+    where
+        F: FnOnce(&str, Option<&str>) -> Result<(), String>,
+    {
+        let mut guard = self
+            .inner
+            .lock()
+            .map_err(|_| "backend settings lock is poisoned".to_string())?;
+        let origin = token_origin(&guard.settings.active_url)?;
+        let mut next = guard.settings.clone();
+        next.active_server_id = None;
+        persist_settings(&self.path, &next)?;
+        if let Err(err) = clear_credentials(&origin, guard.settings.active_server_id.as_deref()) {
+            persist_settings(&self.path, &guard.settings)?;
+            return Err(err);
+        }
+        guard.settings = next.clone();
+        guard.generation = guard.generation.wrapping_add(1);
+        Ok(next)
+    }
 }
 
 fn decode_settings(bytes: &[u8]) -> Result<(BackendSettings, bool), String> {
     let value: serde_json::Value = serde_json::from_slice(bytes)
         .map_err(|err| format!("invalid backend settings file: {err}"))?;
+    if value.get("version").and_then(serde_json::Value::as_u64) == Some(2) {
+        let stored: VersionTwoSettings = serde_json::from_value(value)
+            .map_err(|err| format!("invalid backend settings file: {err}"))?;
+        debug_assert_eq!(stored.version, 2);
+        let strategy = match stored.strategy {
+            VersionTwoStrategy::Local => BackendStrategy::Local,
+            VersionTwoStrategy::Remote | VersionTwoStrategy::Hybrid => BackendStrategy::Remote,
+        };
+        let active_url = match strategy {
+            BackendStrategy::Local => stored.local_url.as_str(),
+            BackendStrategy::Remote => stored
+                .remote_url
+                .as_deref()
+                .ok_or_else(|| "version 2 hybrid/remote settings require remote_url".to_string())?,
+        };
+        let migrated = BackendSettings::validated(
+            strategy,
+            &stored.local_url,
+            stored.remote_url.as_deref(),
+            Some(active_url),
+            None,
+            stored.onboarding_complete,
+        )?;
+        return Ok((migrated, true));
+    }
     if value.get("version").is_some() {
         let stored: BackendSettings = serde_json::from_value(value)
             .map_err(|err| format!("invalid backend settings file: {err}"))?;
@@ -259,6 +354,7 @@ fn decode_settings(bytes: &[u8]) -> Result<(BackendSettings, bool), String> {
             &stored.local_url,
             stored.remote_url.as_deref(),
             Some(&stored.active_url),
+            stored.active_server_id.as_deref(),
             stored.onboarding_complete,
         )?;
         return Ok((validated, false));
@@ -272,6 +368,7 @@ fn decode_settings(bytes: &[u8]) -> Result<(BackendSettings, bool), String> {
             &legacy.url,
             None,
             Some(&legacy.url),
+            None,
             true,
         )?,
         LegacyMode::Remote => BackendSettings::validated(
@@ -279,6 +376,7 @@ fn decode_settings(bytes: &[u8]) -> Result<(BackendSettings, bool), String> {
             DEFAULT_URL,
             Some(&legacy.url),
             Some(&legacy.url),
+            None,
             true,
         )?,
         LegacyMode::Sidecar if is_loopback_url(&legacy.url)? => BackendSettings::validated(
@@ -286,6 +384,7 @@ fn decode_settings(bytes: &[u8]) -> Result<(BackendSettings, bool), String> {
             &legacy.url,
             None,
             Some(&legacy.url),
+            None,
             true,
         )?,
         LegacyMode::Sidecar => BackendSettings::validated(
@@ -293,6 +392,7 @@ fn decode_settings(bytes: &[u8]) -> Result<(BackendSettings, bool), String> {
             DEFAULT_URL,
             Some(&legacy.url),
             Some(&legacy.url),
+            None,
             true,
         )?,
     };
@@ -311,10 +411,20 @@ pub async fn resolve(
     let mut service_start_attempted = false;
 
     for candidate in candidates {
-        let mut healthy = probe(&candidate).await;
+        let mut server_instance_id = probe(&candidate).await;
+        let mut healthy = server_instance_id.is_some();
+        let mut observed_server_instance_id = server_instance_id.clone();
+        if candidate == settings.active_url
+            && settings.active_server_id.is_some()
+            && settings.active_server_id != server_instance_id
+        {
+            healthy = false;
+            server_instance_id = None;
+        }
         attempts.push(ResolutionAttempt {
             url: candidate.clone(),
             healthy,
+            server_instance_id: observed_server_instance_id.clone(),
         });
         if !healthy
             && candidate == settings.local_url
@@ -332,24 +442,55 @@ pub async fn resolve(
                 .await
                 .is_ok()
             {
-                healthy = probe(&candidate).await;
+                server_instance_id = match tokio::time::timeout(
+                    STARTUP_READINESS_DEADLINE,
+                    poll_startup_readiness(
+                        || probe(&candidate),
+                        tokio::time::sleep,
+                        || state.is_current(generation),
+                    ),
+                )
+                .await
+                {
+                    Ok(result) => result?,
+                    Err(_) => None,
+                };
+                healthy = server_instance_id.is_some();
+                observed_server_instance_id = server_instance_id.clone();
+                if candidate == settings.active_url
+                    && settings.active_server_id.is_some()
+                    && settings.active_server_id != server_instance_id
+                {
+                    healthy = false;
+                    server_instance_id = None;
+                }
                 attempts.push(ResolutionAttempt {
                     url: candidate.clone(),
                     healthy,
+                    server_instance_id: observed_server_instance_id.clone(),
                 });
             }
         }
         if healthy {
-            selected = Some(candidate);
+            selected = server_instance_id.map(|instance_id| (candidate, instance_id));
             break;
         }
     }
 
     let healthy = selected.is_some();
-    let active_url = selected.unwrap_or_else(|| previous_url.clone());
+    let (active_url, server_instance_id) = selected.clone().unwrap_or_else(|| {
+        (
+            previous_url.clone(),
+            settings.active_server_id.clone().unwrap_or_default(),
+        )
+    });
     let changed = active_url != previous_url;
-    if changed {
-        if !state.set_active_if_current(generation, active_url.clone())? {
+    if healthy && (changed || settings.active_server_id.as_ref() != Some(&server_instance_id)) {
+        if !state.set_active_if_current(
+            generation,
+            active_url.clone(),
+            server_instance_id.clone(),
+        )? {
             return Err(
                 "backend settings changed during resolution; retry with current settings".into(),
             );
@@ -365,9 +506,46 @@ pub async fn resolve(
         previous_url,
         changed,
         healthy,
+        server_instance_id: healthy.then_some(server_instance_id),
         service_start_attempted,
         attempts,
     })
+}
+
+async fn poll_startup_readiness<P, ProbeFuture, S, SleepFuture, C>(
+    mut probe_fn: P,
+    mut sleep_fn: S,
+    mut is_current: C,
+) -> Result<Option<String>, String>
+where
+    P: FnMut() -> ProbeFuture,
+    ProbeFuture: std::future::Future<Output = Option<String>>,
+    S: FnMut(Duration) -> SleepFuture,
+    SleepFuture: std::future::Future<Output = ()>,
+    C: FnMut() -> Result<bool, String>,
+{
+    let mut elapsed = Duration::ZERO;
+    let mut backoff = STARTUP_INITIAL_BACKOFF;
+    while elapsed < STARTUP_READINESS_DEADLINE {
+        if !is_current()? {
+            return Err(
+                "backend settings changed during resolution; retry with current settings".into(),
+            );
+        }
+        let delay = backoff.min(STARTUP_READINESS_DEADLINE - elapsed);
+        sleep_fn(delay).await;
+        elapsed += delay;
+        if !is_current()? {
+            return Err(
+                "backend settings changed during resolution; retry with current settings".into(),
+            );
+        }
+        if let Some(instance_id) = probe_fn().await {
+            return Ok(Some(instance_id));
+        }
+        backoff = (backoff * 2).min(STARTUP_MAX_BACKOFF);
+    }
+    Ok(None)
 }
 
 pub fn validate_local_url(value: &str) -> Result<String, String> {
@@ -492,19 +670,46 @@ fn restrict_file(_path: &Path) -> Result<(), String> {
     Ok(())
 }
 
-/// Probe `GET /api/health`. It is intentionally unauthenticated.
-pub async fn probe(url: &str) -> bool {
+#[derive(Deserialize)]
+struct HealthResponse {
+    status: String,
+    instance_id: String,
+    role: String,
+    api_protocol: String,
+    api_version: u8,
+    liveness: bool,
+    readiness: bool,
+}
+
+fn validated_health_identity(health: HealthResponse) -> Option<String> {
+    (health.status == "ok"
+        && health.role == "authoritative"
+        && health.api_protocol == "dax"
+        && health.api_version == 1
+        && health.liveness
+        && health.readiness
+        && !health.instance_id.is_empty())
+    .then_some(health.instance_id)
+}
+
+/// Return the identity only for a ready authoritative Dax API.
+pub async fn probe(url: &str) -> Option<String> {
     let client = match reqwest::Client::builder()
         .timeout(PROBE_TIMEOUT)
         .redirect(reqwest::redirect::Policy::none())
         .build()
     {
         Ok(client) => client,
-        Err(_) => return false,
+        Err(_) => return None,
     };
     match client.get(format!("{url}/api/health")).send().await {
-        Ok(response) => response.status().is_success(),
-        Err(_) => false,
+        Ok(response) if response.status().is_success() => {
+            match response.json::<HealthResponse>().await {
+                Ok(health) => validated_health_identity(health),
+                _ => None,
+            }
+        }
+        _ => None,
     }
 }
 
@@ -560,7 +765,7 @@ mod tests {
     #[test]
     fn resolution_order_matches_strategy_and_never_falls_back_for_remote() {
         let local =
-            BackendSettings::validated(BackendStrategy::Local, DEFAULT_URL, None, None, true)
+            BackendSettings::validated(BackendStrategy::Local, DEFAULT_URL, None, None, None, true)
                 .unwrap();
         assert_eq!(local.candidates(), vec![DEFAULT_URL]);
         let remote = BackendSettings::validated(
@@ -568,22 +773,46 @@ mod tests {
             DEFAULT_URL,
             Some("https://remote.example"),
             None,
-            true,
-        )
-        .unwrap();
-        assert_eq!(remote.candidates(), vec!["https://remote.example"]);
-        let hybrid = BackendSettings::validated(
-            BackendStrategy::Hybrid,
-            DEFAULT_URL,
-            Some("https://remote.example"),
             None,
             true,
         )
         .unwrap();
+        assert_eq!(remote.candidates(), vec!["https://remote.example"]);
+        assert!(local.candidates().len() == 1 && remote.candidates().len() == 1);
+    }
+
+    #[test]
+    fn migrates_version_two_hybrid_to_remote_only_and_discards_local_active_url() {
+        let (settings, migrated) = decode_settings(
+            br#"{"version":2,"strategy":"hybrid","local_url":"http://127.0.0.1:8420","remote_url":"https://remote.example","active_url":"http://127.0.0.1:8420","onboarding_complete":true}"#,
+        )
+        .unwrap();
+
+        assert!(migrated);
+        assert_eq!(settings.version, 3);
+        assert_eq!(settings.strategy, BackendStrategy::Remote);
+        assert_eq!(settings.active_url, "https://remote.example");
+        assert_eq!(settings.candidates(), vec!["https://remote.example"]);
+        assert_eq!(settings.active_server_id, None);
+    }
+
+    #[test]
+    fn health_requires_ready_authoritative_dax_identity() {
+        let health = |role: &str, readiness| HealthResponse {
+            status: "ok".into(),
+            instance_id: "authority-1".into(),
+            role: role.into(),
+            api_protocol: "dax".into(),
+            api_version: 1,
+            liveness: true,
+            readiness,
+        };
         assert_eq!(
-            hybrid.candidates(),
-            vec!["https://remote.example", DEFAULT_URL]
+            validated_health_identity(health("authoritative", true)).as_deref(),
+            Some("authority-1")
         );
+        assert!(validated_health_identity(health("authoritative", false)).is_none());
+        assert!(validated_health_identity(health("edge", true)).is_none());
     }
 
     #[test]
@@ -592,6 +821,30 @@ mod tests {
             token_origin("https://example.com/dax").unwrap(),
             "https://example.com"
         );
+    }
+
+    #[test]
+    fn loading_persists_version_two_hybrid_migration() {
+        let directory =
+            std::env::temp_dir().join(format!("dax-hybrid-migration-test-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&directory);
+        fs::create_dir_all(&directory).unwrap();
+        let path = directory.join(SETTINGS_FILE);
+        fs::write(
+            &path,
+            br#"{"version":2,"strategy":"hybrid","local_url":"http://127.0.0.1:8420","remote_url":"https://remote.example","active_url":"http://127.0.0.1:8420","onboarding_complete":true}"#,
+        )
+        .unwrap();
+
+        let state = BackendState::load(&directory).unwrap();
+        let persisted: serde_json::Value =
+            serde_json::from_slice(&fs::read(&path).unwrap()).unwrap();
+
+        assert_eq!(state.settings().unwrap().strategy, BackendStrategy::Remote);
+        assert_eq!(persisted["version"], 3);
+        assert_eq!(persisted["strategy"], "remote");
+        assert_eq!(persisted["active_url"], "https://remote.example");
+        let _ = fs::remove_dir_all(directory);
     }
 
     #[test]
@@ -631,7 +884,7 @@ mod tests {
         fs::create_dir_all(&directory).unwrap();
         fs::write(
             directory.join(SETTINGS_FILE),
-            br#"{"version":3,"strategy":"local","local_url":"http://127.0.0.1:8420","remote_url":null,"active_url":"http://127.0.0.1:8420","onboarding_complete":true}"#,
+            br#"{"version":4,"strategy":"local","local_url":"http://127.0.0.1:8420","remote_url":null,"active_url":"http://127.0.0.1:8420","active_server_id":null,"onboarding_complete":true}"#,
         )
         .unwrap();
         assert!(BackendState::load(&directory).is_err());
@@ -654,9 +907,150 @@ mod tests {
             )
             .unwrap();
         assert!(!state
-            .set_active_if_current(generation, DEFAULT_URL.into())
+            .set_active_if_current(generation, DEFAULT_URL.into(), "stale-id".into())
             .unwrap());
         assert_eq!(state.settings().unwrap(), current);
         let _ = fs::remove_dir_all(directory);
+    }
+
+    #[test]
+    fn unchanged_settings_save_preserves_the_authority_pin() {
+        let directory =
+            std::env::temp_dir().join(format!("dax-authority-reset-test-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&directory);
+        let state = BackendState::load(&directory).unwrap();
+        let (_, generation) = state.snapshot().unwrap();
+        assert!(state
+            .set_active_if_current(generation, DEFAULT_URL.into(), "old-authority".into())
+            .unwrap());
+
+        let settings = state
+            .set(BackendStrategy::Local, DEFAULT_URL.into(), None, true)
+            .unwrap();
+
+        assert_eq!(settings.active_server_id.as_deref(), Some("old-authority"));
+        let _ = fs::remove_dir_all(directory);
+    }
+
+    #[test]
+    fn explicit_authority_switch_clears_the_pin() {
+        let directory =
+            std::env::temp_dir().join(format!("dax-authority-switch-test-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&directory);
+        let state = BackendState::load(&directory).unwrap();
+        let (_, generation) = state.snapshot().unwrap();
+        state
+            .set_active_if_current(generation, DEFAULT_URL.into(), "old-authority".into())
+            .unwrap();
+
+        let settings = state
+            .set(
+                BackendStrategy::Remote,
+                DEFAULT_URL.into(),
+                Some("https://new.example".into()),
+                true,
+            )
+            .unwrap();
+
+        assert_eq!(settings.active_url, "https://new.example");
+        assert_eq!(settings.active_server_id, None);
+        let _ = fs::remove_dir_all(directory);
+    }
+
+    #[test]
+    fn confirmed_authority_reset_clears_credentials_and_pin_as_one_state_change() {
+        let directory = std::env::temp_dir().join(format!(
+            "dax-authority-recovery-test-{}",
+            std::process::id()
+        ));
+        let _ = fs::remove_dir_all(&directory);
+        let state = BackendState::load(&directory).unwrap();
+        let (_, generation) = state.snapshot().unwrap();
+        state
+            .set_active_if_current(generation, DEFAULT_URL.into(), "old-authority".into())
+            .unwrap();
+
+        let cleared = std::cell::RefCell::new(None);
+        let settings = state
+            .reset_authority_pin(|origin, instance_id| {
+                *cleared.borrow_mut() = Some((origin.to_owned(), instance_id.map(str::to_owned)));
+                Ok(())
+            })
+            .unwrap();
+
+        assert_eq!(
+            cleared.into_inner(),
+            Some((DEFAULT_URL.to_string(), Some("old-authority".to_string())))
+        );
+        assert_eq!(settings.active_server_id, None);
+        assert_eq!(state.settings().unwrap().active_server_id, None);
+        let _ = fs::remove_dir_all(directory);
+    }
+
+    #[test]
+    fn failed_credential_clear_preserves_the_authority_pin() {
+        let directory = std::env::temp_dir().join(format!(
+            "dax-authority-recovery-failure-test-{}",
+            std::process::id()
+        ));
+        let _ = fs::remove_dir_all(&directory);
+        let state = BackendState::load(&directory).unwrap();
+        let (_, generation) = state.snapshot().unwrap();
+        state
+            .set_active_if_current(generation, DEFAULT_URL.into(), "old-authority".into())
+            .unwrap();
+
+        assert!(state
+            .reset_authority_pin(|_, _| Err("keyring failure".into()))
+            .is_err());
+        assert_eq!(
+            state.settings().unwrap().active_server_id.as_deref(),
+            Some("old-authority")
+        );
+        let _ = fs::remove_dir_all(directory);
+    }
+
+    #[tokio::test]
+    async fn startup_poll_accepts_a_backend_that_becomes_ready_later() {
+        let mut probes =
+            std::collections::VecDeque::from([None, None, Some("authority-1".to_string())]);
+        let delays = std::sync::Mutex::new(Vec::new());
+
+        let result = poll_startup_readiness(
+            || std::future::ready(probes.pop_front().flatten()),
+            |delay| {
+                delays.lock().unwrap().push(delay);
+                std::future::ready(())
+            },
+            || Ok(true),
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(result.as_deref(), Some("authority-1"));
+        assert_eq!(
+            *delays.lock().unwrap(),
+            vec![
+                Duration::from_millis(100),
+                Duration::from_millis(200),
+                Duration::from_millis(400)
+            ]
+        );
+    }
+
+    #[tokio::test]
+    async fn startup_poll_aborts_when_settings_generation_changes() {
+        let checks = std::cell::Cell::new(0);
+        let result = poll_startup_readiness(
+            || std::future::ready(None),
+            |_| std::future::ready(()),
+            || {
+                checks.set(checks.get() + 1);
+                Ok(checks.get() < 2)
+            },
+        )
+        .await;
+
+        assert!(result.unwrap_err().contains("settings changed"));
     }
 }

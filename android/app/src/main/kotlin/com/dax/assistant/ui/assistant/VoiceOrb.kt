@@ -15,10 +15,11 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.platform.LocalAccessibilityManager
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.dax.assistant.assistant.AssistantState
 import com.dax.assistant.ui.design.Orbita
 import kotlin.math.sin
+import kotlinx.coroutines.flow.StateFlow
 
 /**
  * The voice surface.
@@ -37,11 +38,13 @@ import kotlin.math.sin
 @Composable
 fun VoiceOrb(
     state: AssistantState,
+    inputLevel: StateFlow<Float>,
+    compact: Boolean,
+    reduceMotion: Boolean,
     modifier: Modifier = Modifier,
 ) {
     val colors = Orbita.colors
-    val reduceMotion =
-        LocalAccessibilityManager.current?.let { false } ?: false
+    val level by inputLevel.collectAsStateWithLifecycle()
 
     val tone = when (state) {
         is AssistantState.Listening, is AssistantState.ConnectingAudio -> colors.accent
@@ -66,28 +69,36 @@ fun VoiceOrb(
         is AssistantState.Disconnected, is AssistantState.Failed -> 5200
     }
 
-    val transition = rememberInfiniteTransition(label = "orb")
-    val phase by transition.animateFloat(
-        initialValue = 0f,
-        targetValue = 1f,
-        animationSpec = infiniteRepeatable(
-            animation = tween(periodMillis, easing = LinearEasing),
-            repeatMode = RepeatMode.Restart,
-        ),
-        label = "phase",
-    )
+    val animating = !reduceMotion && state !is AssistantState.Idle &&
+        state !is AssistantState.Disconnected && state !is AssistantState.Failed
+    val phase = if (animating) {
+        val transition = rememberInfiniteTransition(label = "orb")
+        val animatedPhase by transition.animateFloat(
+            initialValue = 0f,
+            targetValue = 1f,
+            animationSpec = infiniteRepeatable(
+                animation = tween(periodMillis, easing = LinearEasing),
+                repeatMode = RepeatMode.Restart,
+            ),
+            label = "phase",
+        )
+        animatedPhase
+    } else {
+        0f
+    }
 
     val energy = when (state) {
         is AssistantState.Listening ->
-            if (state.speechDetected) maxOf(0.65f, state.inputLevel) else maxOf(0.4f, state.inputLevel)
+            if (state.speechDetected) maxOf(0.65f, level) else maxOf(0.4f, level)
         is AssistantState.Processing, is AssistantState.Transcribing -> 0.8f
         is AssistantState.Speaking -> 0.9f
         is AssistantState.Idle -> 0.32f
         else -> 0.4f
     }
 
-    Box(modifier = modifier.size(Orbita.sizing.orbDiameter)) {
-        Canvas(Modifier.size(Orbita.sizing.orbDiameter)) {
+    val diameter = if (compact) Orbita.sizing.orbDiameterCompact else Orbita.sizing.orbDiameter
+    Box(modifier = modifier.size(diameter)) {
+        Canvas(Modifier.size(diameter)) {
             val centre = Offset(size.width / 2f, size.height / 2f)
             val maxRadius = size.minDimension / 2f
             val breath = if (reduceMotion) 0f else sin(phase * 2f * Math.PI.toFloat())
@@ -111,7 +122,7 @@ fun VoiceOrb(
 
             // Two expanding rings, offset in phase so there is always one
             // visible mid-flight. Only while something is actually happening.
-            if (!reduceMotion && state !is AssistantState.Idle) {
+            if (animating) {
                 listOf(0f, 0.5f).forEach { offset ->
                     val p = (phase + offset) % 1f
                     drawCircle(

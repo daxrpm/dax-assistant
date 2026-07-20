@@ -192,27 +192,27 @@ class TestPairingCodes:
         codes = _PairingCodes()
         entry = codes.issue(300)
 
-        assert codes.redeem(entry.code) is True
-        assert codes.redeem(entry.code) is False
+        assert codes.redeem(entry.code) == "client"
+        assert codes.redeem(entry.code) is None
 
     def test_code_is_case_insensitive_and_trimmed(self):
         codes = _PairingCodes()
         entry = codes.issue(300)
 
-        assert codes.redeem(f"  {entry.code.lower()}  ") is True
+        assert codes.redeem(f"  {entry.code.lower()}  ") == "client"
 
     def test_expired_code_is_rejected(self):
         codes = _PairingCodes()
         entry = codes.issue(0)
 
-        assert codes.redeem(entry.code) is False
+        assert codes.redeem(entry.code) is None
         assert codes.outstanding == 0
 
     def test_wrong_code_is_rejected(self):
         codes = _PairingCodes()
         codes.issue(300)
 
-        assert codes.redeem("XXXXXXXX") is False
+        assert codes.redeem("XXXXXXXX") is None
         assert codes.outstanding == 1
 
     def test_outstanding_codes_are_bounded(self):

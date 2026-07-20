@@ -254,6 +254,7 @@ export function createVoiceStore() {
       if (remoteAcquired) return;
       await sendControl("remote_audio.acquire", "remote_audio.acquired", {
         format: { sample_rate: 16_000, channels: 1, sample_format: "pcm_s16le" },
+        output: { mode: "client_text" },
       });
       remoteAcquired = true;
     },

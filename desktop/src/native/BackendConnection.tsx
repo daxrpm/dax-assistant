@@ -4,6 +4,7 @@ import { Button } from "../design/primitives";
 import { useI18n } from "../i18n/I18n";
 import { shutdownRealtimeStores } from "../stores/realtime";
 import s from "./BackendConnection.module.css";
+import { AuthorityRecovery } from "./AuthorityRecovery";
 
 export function BackendConnection({
   error,
@@ -46,6 +47,7 @@ export function BackendConnection({
         <Button variant="primary" onClick={onRetry}>{t("common.retry")}</Button>
         <Button loading={busy} onClick={() => void reevaluate()}>{text("Reevaluar fallback", "Re-evaluate fallback")}</Button>
         <Button variant="ghost" onClick={onConfigure}>{text("Cambiar estrategia", "Change strategy")}</Button>
+        <AuthorityRecovery onRecovered={onRetry} />
       </div>
     </section>
   );

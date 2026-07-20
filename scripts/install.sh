@@ -1,447 +1,430 @@
 #!/usr/bin/env bash
-# Production Linux installer and lifecycle manager for Dax Assistant.
-#
-# Usage:
-#   ./scripts/install.sh install [options]
-#   ./scripts/install.sh update
-#   ./scripts/install.sh doctor
-#   ./scripts/install.sh service
-#   ./scripts/install.sh uninstall [--purge]
+# Verified tagged-release installer for Dax on Fedora/RHEL and Debian/Ubuntu.
 
 set -Eeuo pipefail
 IFS=$'\n\t'
 
-REPO_URL="${DAX_REPO_URL:-https://github.com/daxrpm/dax-assistant.git}"
-COMMAND="install"
-LANGUAGE="es"
+REPOSITORY="${DAX_RELEASE_REPOSITORY:-daxrpm/dax-assistant}"
+GH_COMMAND="${DAX_GH_COMMAND:-gh}"
 VERSION=""
-WITH_VOICE=1
-WITH_SERVICE=1
-WITH_MODELS=1
-INSTALL_DEPS="ask"
-ASSUME_YES=0
-PURGE=0
+MANIFEST_SOURCE=""
+CHECKSUMS_SOURCE=""
+COMPONENTS="both"
+WITH_NODE=0
 DRY_RUN=0
-INSTALL_DIR_EXPLICIT=0
-
-[[ -n "${DAX_INSTALL_DIR:-}" ]] && INSTALL_DIR_EXPLICIT=1
+ASSUME_YES=0
+INSECURE_SKIP_ATTESTATION=0
+SOURCE_MODE=""
+OS_RELEASE_FILE="${DAX_OS_RELEASE_FILE:-/etc/os-release}"
+MACHINE="${DAX_UNAME_MACHINE:-$(uname -m)}"
+SUPPORTED_API_VERSION=1
 
 XDG_DATA_HOME="${XDG_DATA_HOME:-$HOME/.local/share}"
 XDG_STATE_HOME="${XDG_STATE_HOME:-$HOME/.local/state}"
 XDG_CACHE_HOME="${XDG_CACHE_HOME:-$HOME/.cache}"
 XDG_CONFIG_HOME="${XDG_CONFIG_HOME:-$HOME/.config}"
-
-APP_DIR="${DAX_INSTALL_DIR:-$XDG_DATA_HOME/dax-assistant/app}"
-DATA_DIR="${DAX_DATA_DIR:-$XDG_DATA_HOME/dax-assistant}"
-STATE_DIR="${DAX_STATE_DIR:-$XDG_STATE_HOME/dax-assistant}"
-CACHE_DIR="${DAX_CACHE_DIR:-$XDG_CACHE_HOME/dax-assistant}"
-MODELS_DIR="${DAX_MODELS_DIR:-$DATA_DIR/models}"
-MEMORY_DIR="${DAX_MEMORY_DIR:-$STATE_DIR/memory}"
-DATABASE_PATH="${DAX_DATABASE_PATH:-$STATE_DIR/dax.db}"
+DATA_DIR="$XDG_DATA_HOME/dax-assistant"
+STATE_DIR="$XDG_STATE_HOME/dax-assistant"
+CACHE_DIR="$XDG_CACHE_HOME/dax-assistant"
+RELEASES_DIR="$DATA_DIR/releases"
+CURRENT_LINK="$DATA_DIR/current"
 UNIT_DIR="$XDG_CONFIG_HOME/systemd/user"
-UNIT_PATH="$UNIT_DIR/dax-assistant.service"
+BACKEND_UNIT="$UNIT_DIR/dax-assistant.service"
+NODE_UNIT="$UNIT_DIR/dax-assistant-node.service"
+NODE_CREDENTIALS="$STATE_DIR/edge.json"
 BACKUP_DIR="$STATE_DIR/backups"
 
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" 2>/dev/null && pwd || true)"
-SOURCE_ROOT="$(dirname "$SCRIPT_DIR")"
+TEMP_DIR=""
+cleanup() { [[ -z "$TEMP_DIR" ]] || rm -rf "$TEMP_DIR"; }
+trap cleanup EXIT
 
-if [[ -t 1 ]]; then
-    RED=$'\033[0;31m'; GREEN=$'\033[0;32m'; BLUE=$'\033[0;34m'; YELLOW=$'\033[0;33m'; RESET=$'\033[0m'
-else
-    RED=""; GREEN=""; BLUE=""; YELLOW=""; RESET=""
-fi
-
-info() { printf '%s[INFO]%s %s\n' "$BLUE" "$RESET" "$*"; }
-ok() { printf '%s[OK]%s %s\n' "$GREEN" "$RESET" "$*"; }
-warn() { printf '%s[WARN]%s %s\n' "$YELLOW" "$RESET" "$*" >&2; }
-die() { printf '%s[ERROR]%s %s\n' "$RED" "$RESET" "$*" >&2; exit 1; }
+info() { printf '[INFO] %s\n' "$*"; }
+die() { printf '[ERROR] %s\n' "$*" >&2; exit 1; }
 
 usage() {
     cat <<'EOF'
-Dax Assistant Linux installer
+Dax verified Linux release installer
 
-Commands:
-  install              Install Dax and enable its user service (default)
-  update               Back up state, update source, sync, and health-check
-  doctor               Check service, storage, network, audio, and models
-  service              Regenerate and restart the systemd user service
-  uninstall            Remove app and unit, preserving state/models by default
+Usage:
+  bash install.sh [install] [--backend-only|--desktop-only|--both] [options]
 
-Options:
-  --yes                 Non-interactive defaults
-  --language es|en      Voice language (default: es)
-  --version REF         Git tag/branch/commit to install
-  --install-dir PATH    Application source directory
-  --no-voice            Install without local microphone/voice dependencies
-  --skip-models         Do not download local voice models
-  --no-service          Install without systemd integration
-  --install-system-deps Install supported distro packages using sudo
-  --skip-system-deps    Never invoke a system package manager
-  --purge               With uninstall, also remove encrypted state and models
-  --dry-run             Validate and print the resolved layout without changes
-  -h, --help            Show this help
+Release options:
+  --version VERSION       Pin an immutable release (for example 0.1.0)
+  --manifest PATH|URL     Use an explicit release-manifest.json
+  --checksums PATH|URL    SHA256SUMS authenticating the explicit manifest
+  --backend-only          Install and start the authoritative backend only
+  --desktop-only          Install the RPM/deb desktop client only
+  --both                  Install backend and desktop (default)
+  --with-node             Also install the laptop capability-node unit; never enable/start it
+  --dry-run               Download and verify assets, then print installation actions
+  --yes                   Do not prompt
+  --insecure-skip-attestation
+                          UNSAFE: bypass GitHub artifact attestation verification
 
-Environment overrides:
-  DAX_INSTALL_DIR, DAX_DATA_DIR, DAX_STATE_DIR, DAX_MODELS_DIR,
-  DAX_MEMORY_DIR, DAX_DATABASE_PATH, DAX_REPO_URL
+Development mode:
+  --source PATH           Install the backend from an existing checkout with `uv sync`.
+                          This mode never clones a branch and does not install desktop packages.
+
+This Linux installer never downloads or installs the Android APK.
 EOF
 }
 
-if [[ $# -gt 0 && "$1" != -* ]]; then
-    COMMAND="$1"
-    shift
-fi
-
+if [[ "${1:-}" == "install" ]]; then shift; fi
 while [[ $# -gt 0 ]]; do
     case "$1" in
-        --yes|-y) ASSUME_YES=1 ;;
-        --language) LANGUAGE="${2:-}"; shift ;;
         --version) VERSION="${2:-}"; shift ;;
-        --install-dir) APP_DIR="${2:-}"; INSTALL_DIR_EXPLICIT=1; shift ;;
-        --no-voice) WITH_VOICE=0; WITH_MODELS=0 ;;
-        --skip-models) WITH_MODELS=0 ;;
-        --no-service) WITH_SERVICE=0 ;;
-        --install-system-deps) INSTALL_DEPS="yes" ;;
-        --skip-system-deps) INSTALL_DEPS="no" ;;
-        --purge) PURGE=1 ;;
+        --manifest) MANIFEST_SOURCE="${2:-}"; shift ;;
+        --checksums) CHECKSUMS_SOURCE="${2:-}"; shift ;;
+        --backend-only) COMPONENTS="backend" ;;
+        --desktop-only) COMPONENTS="desktop" ;;
+        --both) COMPONENTS="both" ;;
+        --with-node) WITH_NODE=1 ;;
+        --source) SOURCE_MODE="${2:-}"; shift ;;
         --dry-run) DRY_RUN=1 ;;
+        --yes|-y) ASSUME_YES=1 ;;
+        --insecure-skip-attestation) INSECURE_SKIP_ATTESTATION=1 ;;
         --help|-h) usage; exit 0 ;;
-        *) die "Unknown option: $1" ;;
+        *) die "unknown option: $1" ;;
     esac
     shift
 done
 
-[[ "$LANGUAGE" == "es" || "$LANGUAGE" == "en" ]] || die "--language must be es or en"
-[[ " install update doctor service uninstall " == *" $COMMAND "* ]] || die "Unknown command: $COMMAND"
-[[ "$(uname -s)" == "Linux" ]] || die "This installer supports Linux only"
-[[ "$EUID" -ne 0 ]] || die "Run as your desktop user, not root"
-
-if [[ "$INSTALL_DIR_EXPLICIT" -eq 0 && -f "$SOURCE_ROOT/pyproject.toml" ]]; then
-    APP_DIR="$SOURCE_ROOT"
+[[ "$(uname -s)" == "Linux" ]] || die "Linux is required"
+[[ "$EUID" -ne 0 ]] || die "run as the desktop user, not root"
+[[ "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ || -z "$VERSION" ]] || die "--version must be MAJOR.MINOR.PATCH"
+[[ "$WITH_NODE" -eq 0 || "$COMPONENTS" != "desktop" ]] || die "--with-node requires the backend runtime"
+[[ -z "$SOURCE_MODE" || "$COMPONENTS" == "backend" ]] || die "--source supports --backend-only only"
+if [[ "$COMPONENTS" != "desktop" ]]; then
+    [[ "$XDG_DATA_HOME" == "$HOME/.local/share" && "$XDG_STATE_HOME" == "$HOME/.local/state" && "$XDG_CACHE_HOME" == "$HOME/.cache" && "$XDG_CONFIG_HOME" == "$HOME/.config" ]] || die "backend installation uses the canonical user-systemd assets and requires the default XDG directories"
 fi
 
-APP_DIR="$(realpath -m "$APP_DIR")"
-DATA_DIR="$(realpath -m "$DATA_DIR")"
-STATE_DIR="$(realpath -m "$STATE_DIR")"
-CACHE_DIR="$(realpath -m "$CACHE_DIR")"
-MODELS_DIR="$(realpath -m "$MODELS_DIR")"
-MEMORY_DIR="$(realpath -m "$MEMORY_DIR")"
-DATABASE_PATH="$(realpath -m "$DATABASE_PATH")"
-KEY_PATH="$(dirname "$DATABASE_PATH")/dax.key"
+case "$MACHINE" in
+    x86_64|amd64) ARCH="x86_64" ;;
+    aarch64|arm64) ARCH="aarch64" ;;
+    *) die "unsupported architecture: $MACHINE" ;;
+esac
+
+[[ -r "$OS_RELEASE_FILE" ]] || die "cannot identify Linux distribution"
+# shellcheck disable=SC1090
+source "$OS_RELEASE_FILE"
+FAMILY="${ID_LIKE:-${ID:-}}"
+if [[ "${ID:-}" == "fedora" || "${ID:-}" == "rhel" || "$FAMILY" == *fedora* || "$FAMILY" == *rhel* ]]; then
+    DISTRO="rpm"
+elif [[ "${ID:-}" == "debian" || "${ID:-}" == "ubuntu" || "$FAMILY" == *debian* ]]; then
+    DISTRO="deb"
+else
+    die "unsupported distribution: ${ID:-unknown}; use Fedora/RHEL or Debian/Ubuntu"
+fi
 
 print_layout() {
-    printf 'Application: %s\nState:       %s\nDatabase:    %s\nModels:      %s\nUnit:        %s\n' \
-        "$APP_DIR" "$STATE_DIR" "$DATABASE_PATH" "$MODELS_DIR" "$UNIT_PATH"
+    printf 'Components:   %s\nArchitecture: %s\nDistribution: %s\nReleases:     %s\nState:        %s\nBackend unit: %s\nNode unit:    %s\n' \
+        "$COMPONENTS" "$ARCH" "$DISTRO" "$RELEASES_DIR" "$STATE_DIR" "$BACKEND_UNIT" "$NODE_UNIT"
 }
 
-if [[ "$DRY_RUN" -eq 1 ]]; then
-    info "Dry run for '$COMMAND'"
-    print_layout
-    exit 0
-fi
-
-confirm() {
-    local prompt="$1"
-    [[ "$ASSUME_YES" -eq 1 ]] && return 0
-    [[ -t 0 ]] || return 0
-    read -r -p "$prompt [Y/n] " answer
-    [[ -z "$answer" || "$answer" =~ ^[Yy]$ ]]
+fetch() {
+    local source="$1" destination="$2"
+    case "$source" in
+        https://*) curl --proto '=https' --tlsv1.2 --fail --location --silent --show-error "$source" -o "$destination" ;;
+        file://*) cp "${source#file://}" "$destination" ;;
+        /*|./*|../*) cp "$source" "$destination" ;;
+        *) die "refusing non-HTTPS URL: $source" ;;
+    esac
 }
 
-ensure_command() {
-    command -v "$1" >/dev/null 2>&1 || die "Required command not found: $1"
+verify_file() {
+    local path="$1" expected="$2" actual
+    actual="$(sha256sum "$path" | cut -d ' ' -f 1)"
+    [[ "$actual" == "$expected" ]] || die "SHA256 mismatch for $(basename "$path"): expected $expected, got $actual"
+}
+
+verify_manifest_checksum() {
+    local expected="" hash name
+    while IFS=' ' read -r hash name; do
+        [[ -n "$name" ]] || continue
+        name="${name# }"
+        name="${name#\*}"
+        [[ "$name" != "release-manifest.json" ]] || expected="$hash"
+    done < "$TEMP_DIR/SHA256SUMS"
+    [[ "$expected" =~ ^[0-9a-f]{64}$ ]] || die "SHA256SUMS has no release-manifest.json entry"
+    verify_file "$TEMP_DIR/release-manifest.json" "$expected"
+}
+
+verify_attestation() {
+    local path="$1"
+    if [[ "$INSECURE_SKIP_ATTESTATION" -eq 1 ]]; then
+        printf '[WARNING] INSECURE: skipping GitHub attestation verification for %s\n' "$(basename "$path")" >&2
+        return
+    fi
+    command -v "$GH_COMMAND" >/dev/null 2>&1 || die "gh is required for release attestation verification; install GitHub CLI or explicitly accept the risk with --insecure-skip-attestation"
+    "$GH_COMMAND" attestation verify "$path" --repo "$REPOSITORY" >/dev/null || die "GitHub attestation verification failed for $(basename "$path")"
+}
+
+write_selection() {
+    python3 - "$TEMP_DIR/release-manifest.json" "$TEMP_DIR/selection.tsv" "$COMPONENTS" "$DISTRO" "$ARCH" "$VERSION" "$MANIFEST_SOURCE" "$WITH_NODE" "$REPOSITORY" <<'PY'
+import json
+import re
+import sys
+from pathlib import Path
+
+manifest_path, output, components, distro, arch, pinned, source, with_node, repository = sys.argv[1:]
+data = json.loads(Path(manifest_path).read_text(encoding="utf-8"))
+if data.get("schema_version") != 1:
+    raise SystemExit("unsupported release manifest schema")
+version = data.get("version", "")
+if not re.fullmatch(r"[0-9]+\.[0-9]+\.[0-9]+", version):
+    raise SystemExit("invalid release version")
+if pinned and version != pinned:
+    raise SystemExit(f"manifest version {version} does not match --version {pinned}")
+if not re.fullmatch(r"[0-9a-f]{40}", data.get("commit", "")):
+    raise SystemExit("invalid release commit")
+compat = data.get("api_compatibility", {})
+if components == "both" and compat.get("backend") != compat.get("desktop"):
+    raise SystemExit("backend and desktop API compatibility differ")
+if not all(isinstance(compat.get(key), str) and compat[key] for key in ("backend", "desktop", "android", "capability_node")):
+    raise SystemExit("incomplete API compatibility metadata")
+
+wanted = []
+if components in {"backend", "both"}:
+    wanted.extend(("backend-wheel", "backend-dependency-lock", "backend-service"))
+    if with_node == "1":
+        wanted.append("node-service")
+if components in {"desktop", "both"}:
+    wanted.append("desktop-rpm" if distro == "rpm" else "desktop-deb")
+found = {}
+local_manifest = not source.startswith("https://")
+for artifact in data.get("artifacts", []):
+    role = artifact.get("role")
+    if role not in wanted:
+        continue
+    name = artifact.get("name", "")
+    url = artifact.get("url", "")
+    artifact_arch = artifact.get("arch")
+    digest = artifact.get("sha256", "")
+    size = artifact.get("size")
+    if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._+-]*", name) or Path(name).name != name:
+        raise SystemExit(f"unsafe artifact name for {role}")
+    release_base = f"https://github.com/{repository}/releases/download/v{version}/"
+    if not url.startswith(release_base) and not (local_manifest and url.startswith("file://")):
+        raise SystemExit(f"unsafe artifact URL for {role}")
+    if artifact_arch not in {"any", arch}:
+        continue
+    if not re.fullmatch(r"[0-9a-f]{64}", digest) or not isinstance(size, int) or size < 1:
+        raise SystemExit(f"invalid integrity metadata for {role}")
+    if role in found:
+        raise SystemExit(f"ambiguous {role} artifact")
+    found[role] = (name, url, artifact_arch, digest, size)
+missing = [role for role in wanted if role not in found]
+if missing:
+    raise SystemExit(f"release does not support {arch}/{distro}: {', '.join(missing)} missing")
+with Path(output).open("w", encoding="utf-8") as stream:
+    stream.write(f"version\t{version}\n")
+    stream.write(f"commit\t{data['commit']}\n")
+    for role in wanted:
+        stream.write(role + "\t" + "\t".join(str(value) for value in found[role]) + "\n")
+PY
 }
 
 install_system_dependencies() {
-    [[ "$INSTALL_DEPS" == "no" ]] && return 0
-    if [[ "$INSTALL_DEPS" == "ask" ]] && ! confirm "Install Linux audio/build prerequisites with sudo?"; then
-        return 0
-    fi
-    [[ -r /etc/os-release ]] || die "Cannot identify Linux distribution"
-    # shellcheck disable=SC1091
-    source /etc/os-release
-    local family="${ID_LIKE:-$ID}"
-    if [[ "$family" == *debian* || "$ID" == "ubuntu" || "$ID" == "debian" ]]; then
-        sudo apt-get update
-        sudo apt-get install -y ca-certificates curl git build-essential libportaudio2 portaudio19-dev libsndfile1 espeak-ng
-    elif [[ "$family" == *fedora* || "$family" == *rhel* || "$ID" == "fedora" ]]; then
-        sudo dnf install -y ca-certificates curl git gcc gcc-c++ make portaudio portaudio-devel libsndfile espeak-ng
-    elif [[ "$family" == *arch* || "$ID" == "arch" ]]; then
-        sudo pacman -S --needed --noconfirm ca-certificates curl git base-devel portaudio libsndfile espeak-ng
-    elif [[ "$family" == *suse* || "$ID" == "opensuse-tumbleweed" || "$ID" == "opensuse-leap" ]]; then
-        sudo zypper --non-interactive install ca-certificates curl git gcc gcc-c++ make portaudio-devel libsndfile1 espeak-ng
+    if [[ "$DISTRO" == "rpm" ]]; then
+        sudo dnf install -y portaudio libsndfile espeak-ng
     else
-        die "Unsupported distro '$ID'. Install git, curl, a C compiler, PortAudio, libsndfile, and espeak-ng, then rerun with --skip-system-deps."
+        sudo apt-get update
+        sudo apt-get install -y libportaudio2 libsndfile1 espeak-ng
     fi
-}
-
-ensure_uv() {
-    if ! command -v uv >/dev/null 2>&1; then
-        ensure_command curl
-        info "Installing uv from the official installer"
-        curl --proto '=https' --tlsv1.2 -LsSf https://astral.sh/uv/install.sh | sh
-        export PATH="$HOME/.local/bin:$PATH"
-    fi
-    ensure_command uv
-    uv python install 3.11
-}
-
-prepare_source() {
-    ensure_command git
-    if [[ -f "$APP_DIR/pyproject.toml" ]]; then
-        grep -q '^name = "dax-assistant"' "$APP_DIR/pyproject.toml" || die "$APP_DIR is not Dax Assistant"
-        return 0
-    fi
-    [[ ! -e "$APP_DIR" ]] || die "$APP_DIR exists but is not a Dax checkout"
-    mkdir -p "$(dirname "$APP_DIR")"
-    git clone --filter=blob:none "$REPO_URL" "$APP_DIR"
-    touch "$APP_DIR/.dax-managed-install"
-    if [[ -n "$VERSION" ]]; then
-        git -C "$APP_DIR" fetch --tags --force
-        git -C "$APP_DIR" checkout --detach "$VERSION"
-    fi
-}
-
-sync_environment() {
-    local args=(sync --frozen --no-dev --compile-bytecode --python 3.11)
-    [[ "$WITH_VOICE" -eq 1 ]] && args+=(--extra voice)
-    info "Installing locked Python environment"
-    uv --directory "$APP_DIR" "${args[@]}"
-    [[ -f "$APP_DIR/src/dax/web/static/index.html" ]] || die "Production web assets are missing from this release"
-}
-
-initialize_storage() {
-    install -d -m 700 "$STATE_DIR" "$BACKUP_DIR" "$DATA_DIR" "$MODELS_DIR" "$MEMORY_DIR" "$CACHE_DIR"
-    env \
-        DAX_STORAGE__DATABASE_PATH="$DATABASE_PATH" \
-        DAX_STORAGE__MODELS_PATH="$MODELS_DIR" \
-        DAX_MEMORY_PATH="$MEMORY_DIR" \
-        "$APP_DIR/.venv/bin/python" - "$LANGUAGE" <<'PY'
-import sys
-from dax.core.config import load_config
-from dax.core.config_io import save_encrypted_config
-from dax.storage.secrets import SecretStore
-
-config = load_config(None)
-object.__setattr__(config, "language_default", sys.argv[1])
-object.__setattr__(config.voice, "stt_language", sys.argv[1])
-store = SecretStore(config.storage.database_path)
-save_encrypted_config(config, store)
-PY
-    chmod 600 "$DATABASE_PATH" "$KEY_PATH" 2>/dev/null || true
-}
-
-download_models() {
-    [[ "$WITH_VOICE" -eq 1 && "$WITH_MODELS" -eq 1 ]] || return 0
-    info "Downloading local voice models (several GB on first install)"
-    env HF_HOME="$CACHE_DIR/huggingface" DAX_MODELS_DIR="$MODELS_DIR" \
-        uv --directory "$APP_DIR" run python scripts/download_models.py \
-        --language "$LANGUAGE" --models-dir "$MODELS_DIR"
-}
-
-systemd_escape_value() {
-    local value="$1"
-    printf '%s' "${value//%/%%}"
-}
-
-write_service() {
-    ensure_command systemctl
-    local app models memory database
-    app="$(systemd_escape_value "$APP_DIR")"
-    models="$(systemd_escape_value "$MODELS_DIR")"
-    memory="$(systemd_escape_value "$MEMORY_DIR")"
-    database="$(systemd_escape_value "$DATABASE_PATH")"
-    install -d -m 700 "$UNIT_DIR"
-    umask 077
-    cat > "$UNIT_PATH" <<EOF
-[Unit]
-Description=Dax Personal AI Assistant
-Documentation=https://github.com/daxrpm/dax-assistant
-Wants=network-online.target
-After=network-online.target graphical-session.target
-
-[Service]
-Type=simple
-WorkingDirectory=$app
-ExecStart=$app/.venv/bin/dax
-Restart=on-failure
-RestartSec=5s
-TimeoutStopSec=30s
-KillMode=mixed
-UMask=0077
-Environment=PYTHONUNBUFFERED=1
-Environment="DAX_STORAGE__DATABASE_PATH=$database"
-Environment="DAX_STORAGE__MODELS_PATH=$models"
-Environment="DAX_MEMORY_PATH=$memory"
-Environment="HF_HOME=$(systemd_escape_value "$CACHE_DIR")/huggingface"
-
-NoNewPrivileges=yes
-PrivateTmp=yes
-ProtectSystem=full
-ProtectKernelTunables=yes
-ProtectKernelModules=yes
-ProtectKernelLogs=yes
-ProtectControlGroups=yes
-ProtectClock=yes
-ProtectHostname=yes
-RestrictSUIDSGID=yes
-LockPersonality=yes
-CapabilityBoundingSet=
-AmbientCapabilities=
-RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
-
-[Install]
-WantedBy=default.target
-EOF
-    systemctl --user daemon-reload
-    systemd-analyze --user verify "$UNIT_PATH" >/dev/null
-}
-
-enable_service() {
-    write_service
-    systemctl --user enable --now dax-assistant.service
-}
-
-health_check() {
-    local attempts=30
-    while (( attempts > 0 )); do
-        if curl --fail --silent --max-time 2 http://127.0.0.1:8420/api/health >/dev/null; then
-            return 0
-        fi
-        sleep 1
-        attempts=$((attempts - 1))
-    done
-    return 1
 }
 
 backup_database() {
-    [[ -f "$DATABASE_PATH" ]] || return 0
+    local python="$1" database="$STATE_DIR/dax.db" target timestamp
+    [[ -f "$database" ]] || return 0
     install -d -m 700 "$BACKUP_DIR"
-    local timestamp target
     timestamp="$(date -u +%Y%m%dT%H%M%SZ)"
     target="$BACKUP_DIR/dax-$timestamp.db"
-    "$APP_DIR/.venv/bin/python" - "$DATABASE_PATH" "$target" <<'PY'
+    "$python" - "$database" "$target" <<'PY'
 import sqlite3
 import sys
-
 source = sqlite3.connect(sys.argv[1])
-destination = sqlite3.connect(sys.argv[2])
-with destination:
-    source.backup(destination)
+target = sqlite3.connect(sys.argv[2])
+with target:
+    source.backup(target)
 source.close()
-destination.close()
+target.close()
 PY
     chmod 600 "$target"
-    if [[ -f "$KEY_PATH" ]]; then
-        install -m 600 "$KEY_PATH" "$BACKUP_DIR/dax-$timestamp.key"
-    fi
-    ok "Database backup: $target"
+    [[ ! -f "$STATE_DIR/dax.key" ]] || install -m 600 "$STATE_DIR/dax.key" "$BACKUP_DIR/dax-$timestamp.key"
 }
 
-install_dax() {
+write_units() {
+    local backend_asset="$1" node_asset="${2:-}"
+    install -d -m 700 "$UNIT_DIR"
+    install -m 600 "$backend_asset" "$BACKEND_UNIT"
+    if [[ "$WITH_NODE" -eq 1 ]]; then
+        [[ -n "$node_asset" ]] || die "release has no canonical node unit"
+        install -m 600 "$node_asset" "$NODE_UNIT"
+        systemctl --user disable dax-assistant-node.service >/dev/null 2>&1 || true
+    fi
+    systemctl --user daemon-reload
+}
+
+rollback_backend() {
+    local previous_target="$1" was_active="$2" was_enabled="$3"
+    if [[ -n "$previous_target" ]]; then
+        ln -sfn "$previous_target" "$CURRENT_LINK.new"
+        mv -Tf "$CURRENT_LINK.new" "$CURRENT_LINK"
+        if [[ "$was_active" -eq 1 ]]; then
+            systemctl --user restart dax-assistant.service || true
+        else
+            systemctl --user stop dax-assistant.service || true
+        fi
+        [[ "$was_enabled" -eq 1 ]] || systemctl --user disable dax-assistant.service || true
+    else
+        systemctl --user disable --now dax-assistant.service || true
+        rm -f "$CURRENT_LINK"
+    fi
+}
+
+install_backend() {
+    local wheel="$1" dependency_lock="$2" backend_asset="$3" node_asset="${4:-}"
+    local release_dir="$RELEASES_DIR/$RESOLVED_VERSION" managed_python previous_target="" deadline ready=0
+    local backend_was_active=0 backend_was_enabled=0
+    command -v uv >/dev/null 2>&1 || die "uv is required to install the managed Python 3.11 runtime (https://docs.astral.sh/uv/)"
+    if systemctl --user is-active --quiet dax-assistant-node.service; then
+        die "dax-assistant-node.service is active; stop it explicitly before changing the shared backend version"
+    fi
+    if systemctl --user is-enabled --quiet dax-assistant-node.service; then
+        die "dax-assistant-node.service is enabled; disable it explicitly before changing the shared backend version"
+    fi
     install_system_dependencies
-    ensure_uv
-    prepare_source
-    sync_environment
-    initialize_storage
-    download_models
-    if [[ "$WITH_SERVICE" -eq 1 ]]; then
-        enable_service
-        health_check || die "Service did not become healthy. Run: journalctl --user -u dax-assistant -n 100"
+    uv python install 3.11
+    managed_python="$(uv python find 3.11)"
+    backup_database "$managed_python"
+    install -d -m 700 "$RELEASES_DIR" "$STATE_DIR" "$CACHE_DIR" "$DATA_DIR/models" "$STATE_DIR/memory"
+    [[ ! -L "$CURRENT_LINK" ]] || previous_target="$(readlink "$CURRENT_LINK")"
+    if [[ -n "$previous_target" && "$(readlink -f "$CURRENT_LINK")" == "$release_dir" ]]; then
+        die "backend release $RESOLVED_VERSION is already the current target"
     fi
-    ok "Dax Assistant installed"
-    print_layout
-    printf 'Web UI: http://127.0.0.1:8420\n'
-}
-
-update_dax() {
-    [[ -d "$APP_DIR/.git" ]] || die "No managed Git checkout at $APP_DIR"
-    [[ -z "$(git -C "$APP_DIR" status --porcelain --untracked-files=no)" ]] || die "Refusing to update a checkout with modified tracked files"
-    ensure_uv
-    backup_database
-    local old_revision
-    old_revision="$(git -C "$APP_DIR" rev-parse HEAD)"
-    git -C "$APP_DIR" fetch --tags --prune origin
-    if [[ -n "$VERSION" ]]; then
-        git -C "$APP_DIR" checkout --detach "$VERSION"
-    else
-        git -C "$APP_DIR" pull --ff-only
+    rm -rf "$release_dir.new"
+    install -d -m 700 "$release_dir.new"
+    uv venv --python "$managed_python" "$release_dir.new/.venv"
+    uv pip install --python "$release_dir.new/.venv/bin/python" --require-hashes -r "$dependency_lock"
+    uv pip install --python "$release_dir.new/.venv/bin/python" --no-deps "$wheel"
+    rm -rf "$release_dir"
+    mv "$release_dir.new" "$release_dir"
+    if systemctl --user is-active --quiet dax-assistant.service; then backend_was_active=1; fi
+    if systemctl --user is-enabled --quiet dax-assistant.service; then backend_was_enabled=1; fi
+    write_units "$backend_asset" "$node_asset"
+    ln -sfn "$release_dir" "$CURRENT_LINK.new"
+    mv -Tf "$CURRENT_LINK.new" "$CURRENT_LINK"
+    if ! systemctl --user enable dax-assistant.service || ! systemctl --user restart dax-assistant.service; then
+        rollback_backend "$previous_target" "$backend_was_active" "$backend_was_enabled"
+        die "backend service activation failed; restored the previous current target and service"
     fi
-    sync_environment
-    write_service
-    systemctl --user restart dax-assistant.service
-    if ! health_check; then
-        warn "Update health check failed; rolling source back to $old_revision"
-        git -C "$APP_DIR" reset --keep "$old_revision"
-        sync_environment
-        systemctl --user restart dax-assistant.service
-        die "Update rolled back. Inspect the journal before retrying."
-    fi
-    ok "Dax Assistant updated"
-}
-
-doctor() {
-    local failures=0
-    print_layout
-    for command in git uv systemctl curl; do
-        if command -v "$command" >/dev/null 2>&1; then ok "$command available"; else warn "$command missing"; failures=$((failures + 1)); fi
+    deadline=$((SECONDS + ${DAX_READINESS_TIMEOUT_SECONDS:-60}))
+    while (( SECONDS < deadline )); do
+        if ! systemctl --user is-active --quiet dax-assistant.service; then
+            break
+        fi
+        if curl --fail --silent --show-error http://127.0.0.1:8420/api/health | python3 -c 'import json,sys; value=json.load(sys.stdin); version=value.get("api_version"); instance_id=value.get("instance_id"); valid=value.get("status") == "ok" and value.get("liveness") is True and value.get("readiness") is True and value.get("role") == "authoritative" and value.get("api_protocol") == "dax" and type(version) is int and version == int(sys.argv[1]) and isinstance(instance_id, str) and bool(instance_id); raise SystemExit(0 if valid else 1)' "$SUPPORTED_API_VERSION" 2>/dev/null && systemctl --user is-active --quiet dax-assistant.service; then
+            ready=1
+            break
+        fi
+        sleep 2
     done
-    if [[ -x "$APP_DIR/.venv/bin/dax" ]]; then ok "Python environment ready"; else warn "Dax executable missing"; failures=$((failures + 1)); fi
-    if [[ -f "$DATABASE_PATH" && "$(stat -c '%a' "$DATABASE_PATH")" == "600" ]]; then ok "Encrypted database permissions: 600"; else warn "Database missing or permissions are not 600"; failures=$((failures + 1)); fi
-    if systemctl --user is-active --quiet dax-assistant.service; then ok "systemd service active"; else warn "systemd service inactive"; failures=$((failures + 1)); fi
-    if health_check; then ok "Web health check passed"; else warn "Web health check failed"; failures=$((failures + 1)); fi
-    if [[ "$WITH_VOICE" -eq 1 && -x "$APP_DIR/.venv/bin/python" ]]; then
-        if "$APP_DIR/.venv/bin/python" - <<'PY'
-import sounddevice as sd
-
-devices = sd.query_devices()
-assert any(d.get("max_input_channels", 0) > 0 for d in devices)
-assert any(d.get("max_output_channels", 0) > 0 for d in devices)
-PY
-        then ok "Audio input and output detected"; else warn "Audio preflight failed in this user session"; failures=$((failures + 1)); fi
+    if [[ "$ready" -ne 1 ]]; then
+        rollback_backend "$previous_target" "$backend_was_active" "$backend_was_enabled"
+        die "backend did not become authoritatively ready before the deadline; restored the previous current target and service"
     fi
-    (( failures == 0 )) || die "$failures doctor check(s) failed"
-    ok "All checks passed"
+    if [[ "$WITH_NODE" -eq 1 ]]; then
+        info "Node unit installed, disabled, and not started. Create a capability-node enrollment code on the authoritative backend, then run: $CURRENT_LINK/.venv/bin/dax edge enroll --server URL --code CODE --name NAME. After $NODE_CREDENTIALS exists, explicitly enable and start dax-assistant-node.service."
+    fi
 }
 
-uninstall_dax() {
-    if command -v systemctl >/dev/null 2>&1; then
-        systemctl --user disable --now dax-assistant.service 2>/dev/null || true
-        rm -f "$UNIT_PATH"
-        systemctl --user daemon-reload
-    fi
-    if [[ -f "$APP_DIR/.dax-managed-install" ]]; then
-        safe_remove_tree "$APP_DIR"
-    elif [[ "$APP_DIR" != "$SOURCE_ROOT" ]]; then
-        warn "Keeping unmarked application directory: $APP_DIR"
+install_desktop() {
+    local package="$1"
+    if [[ "$DISTRO" == "rpm" ]]; then
+        sudo dnf install -y "$package"
     else
-        warn "Keeping source checkout used for this local installation: $APP_DIR"
-    fi
-    if [[ "$PURGE" -eq 1 ]]; then
-        confirm "Permanently delete encrypted state, keys, memories, models, and backups?" || die "Purge cancelled"
-        safe_remove_tree "$STATE_DIR"
-        [[ "$DATA_DIR" == "$STATE_DIR" ]] || safe_remove_tree "$DATA_DIR"
-        [[ "$CACHE_DIR" == "$STATE_DIR" || "$CACHE_DIR" == "$DATA_DIR" ]] || safe_remove_tree "$CACHE_DIR"
-    fi
-    ok "Dax Assistant uninstalled"
-}
-
-safe_remove_tree() {
-    local path="$1"
-    [[ -n "$path" && "$path" != "/" && "$path" != "$HOME" ]] || \
-        die "Refusing to remove unsafe path: $path"
-    if [[ "$path" != "$HOME/"* ]]; then
-        die "Refusing to remove path outside the current user's home: $path"
-    fi
-    if [[ -e "$path" ]]; then
-        rm -rf "$path"
+        sudo apt-get install -y "$package"
     fi
 }
 
-case "$COMMAND" in
-    install) install_dax ;;
-    update) update_dax ;;
-    doctor) doctor ;;
-    service) enable_service; health_check || die "Service health check failed"; ok "Service installed and healthy" ;;
-    uninstall) uninstall_dax ;;
-esac
+install_source() {
+    command -v uv >/dev/null 2>&1 || die "development --source mode requires an existing uv installation"
+    [[ -f "$SOURCE_MODE/pyproject.toml" ]] || die "--source is not a Dax checkout"
+    [[ -f "$SOURCE_MODE/src/dax/web/static/index.html" ]] || die "source checkout has no built web static assets"
+    if [[ "$DRY_RUN" -eq 1 ]]; then
+        info "Development source mode; no release manifest or desktop package will be used"
+        print_layout
+        printf 'Would run: uv --directory %q sync --frozen --all-extras\n' "$SOURCE_MODE"
+        return
+    fi
+    uv --directory "$SOURCE_MODE" sync --frozen --all-extras
+    RESOLVED_VERSION="source"
+    install -d -m 700 "$DATA_DIR"
+    ln -sfn "$SOURCE_MODE" "$CURRENT_LINK.new"
+    mv -Tf "$CURRENT_LINK.new" "$CURRENT_LINK"
+    write_units "$SOURCE_MODE/systemd/dax-assistant.service"
+    systemctl --user enable --now dax-assistant.service
+}
+
+if [[ -n "$SOURCE_MODE" ]]; then
+    install_source
+    exit 0
+fi
+
+for command in curl sha256sum python3; do command -v "$command" >/dev/null 2>&1 || die "required command not found: $command"; done
+TEMP_DIR="$(mktemp -d "${TMPDIR:-/tmp}/dax-install.XXXXXXXX")"
+if [[ -z "$MANIFEST_SOURCE" ]]; then
+    if [[ -n "$VERSION" ]]; then RELEASE_BASE="https://github.com/$REPOSITORY/releases/download/v$VERSION"; else RELEASE_BASE="https://github.com/$REPOSITORY/releases/latest/download"; fi
+    MANIFEST_SOURCE="$RELEASE_BASE/release-manifest.json"
+    CHECKSUMS_SOURCE="$RELEASE_BASE/SHA256SUMS"
+elif [[ -z "$CHECKSUMS_SOURCE" ]]; then
+    die "--checksums is required with --manifest"
+fi
+
+fetch "$CHECKSUMS_SOURCE" "$TEMP_DIR/SHA256SUMS"
+fetch "$MANIFEST_SOURCE" "$TEMP_DIR/release-manifest.json"
+verify_attestation "$TEMP_DIR/release-manifest.json"
+verify_manifest_checksum
+write_selection
+
+declare -A ARTIFACT_PATHS
+while IFS=$'\t' read -r role name url artifact_arch digest size; do
+    if [[ "$role" == "version" ]]; then RESOLVED_VERSION="$name"; continue; fi
+    if [[ "$role" == "commit" ]]; then RESOLVED_COMMIT="$name"; continue; fi
+    target="$TEMP_DIR/$name"
+    fetch "$url" "$target"
+    verify_file "$target" "$digest"
+    [[ "$(stat -c %s "$target")" == "$size" ]] || die "size mismatch for $name"
+    verify_attestation "$target"
+    ARTIFACT_PATHS[$role]="$target"
+done < "$TEMP_DIR/selection.tsv"
+
+if command -v "$GH_COMMAND" >/dev/null 2>&1; then
+    TAG_COMMIT="$("$GH_COMMAND" api "repos/$REPOSITORY/commits/v$RESOLVED_VERSION" --jq .sha)" || die "could not resolve release tag v$RESOLVED_VERSION"
+else
+    TAG_COMMIT="$(curl --proto '=https' --tlsv1.2 --fail --silent --show-error "https://api.github.com/repos/$REPOSITORY/commits/v$RESOLVED_VERSION" | python3 -c 'import json,sys; print(json.load(sys.stdin)["sha"])')" || die "could not resolve release tag v$RESOLVED_VERSION"
+fi
+[[ "$TAG_COMMIT" == "$RESOLVED_COMMIT" ]] || die "manifest commit $RESOLVED_COMMIT does not match tag v$RESOLVED_VERSION ($TAG_COMMIT)"
+
+info "Verified release $RESOLVED_VERSION before installation"
+print_layout
+if [[ "$DRY_RUN" -eq 1 ]]; then
+    [[ "$COMPONENTS" == "desktop" ]] || printf 'Would install backend wheel: %s\n' "${ARTIFACT_PATHS[backend-wheel]}"
+    if [[ "$COMPONENTS" != "backend" ]]; then
+        printf 'Would run: sudo %s install desktop %s\n' "$([[ "$DISTRO" == "rpm" ]] && printf dnf || printf apt-get)" "${ARTIFACT_PATHS[desktop-$DISTRO]}"
+    fi
+    [[ "$WITH_NODE" -eq 0 ]] || printf 'Would install node unit without enabling or starting it; credentials: %s\n' "$NODE_CREDENTIALS"
+    exit 0
+fi
+
+if [[ "$ASSUME_YES" -eq 0 && -t 0 ]]; then
+    read -r -p "Install verified Dax $RESOLVED_VERSION ($COMPONENTS)? [Y/n] " answer
+    [[ -z "$answer" || "$answer" =~ ^[Yy]$ ]] || die "installation cancelled"
+fi
+[[ "$COMPONENTS" == "desktop" ]] || install_backend \
+    "${ARTIFACT_PATHS[backend-wheel]}" \
+    "${ARTIFACT_PATHS[backend-dependency-lock]}" \
+    "${ARTIFACT_PATHS[backend-service]}" \
+    "${ARTIFACT_PATHS[node-service]:-}"
+[[ "$COMPONENTS" == "backend" ]] || install_desktop "${ARTIFACT_PATHS[desktop-$DISTRO]}"
+info "Dax $RESOLVED_VERSION installation complete. Android is distributed separately and was not installed."

@@ -9,6 +9,7 @@ from __future__ import annotations
 from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import TYPE_CHECKING
+from uuid import uuid4
 
 from fastapi import Depends, FastAPI
 from fastapi.middleware.cors import CORSMiddleware
@@ -16,6 +17,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from dax.web.auth import AuthManager, require_auth, require_session
 from dax.web.routes import (
     auth,
+    capabilities_ws,
     chat,
     conversations,
     devices,
@@ -50,6 +52,7 @@ _LOCAL_DEV_ORIGIN_PATTERN = r"^http://(?:localhost|127\.0\.0\.1):(?:5173|5273)$"
 def create_app(
     config: DaxConfig,
     bus: MessageBus,
+    server_instance_id: str | None = None,
 ) -> FastAPI:
     """Create and configure the FastAPI application."""
 
@@ -78,6 +81,8 @@ def create_app(
     # Available immediately (not only after lifespan) so require_auth and the
     # WebSocket handshake always find it.
     app.state.auth = _auth
+    app.state.server_instance_id = server_instance_id or str(uuid4())
+    app.state.ready = False
 
     # CORS — allow the Vite dev server origin only in dev mode.
     origins = list(config.web.cors_origins)
@@ -126,6 +131,7 @@ def create_app(
     app.include_router(chat.router, prefix="/ws")
     app.include_router(logs.router, prefix="/ws")
     app.include_router(voice_ws.router, prefix="/ws")
+    app.include_router(capabilities_ws.router, prefix="/ws")
     app.include_router(webhooks.router, prefix="/webhook")
 
     # SPA static files — serves built React app with index.html fallback

@@ -66,6 +66,9 @@ describe("voice store", () => {
       channels: 1,
       sample_format: "pcm_s16le",
     });
+    expect(JSON.parse(ws?.send.mock.calls[0]?.[0] as string).output).toEqual({
+      mode: "client_text",
+    });
     ws?.onmessage?.(new MessageEvent("message", {
       data: JSON.stringify({ type: "remote_audio.acquired", data: {} }),
     }));

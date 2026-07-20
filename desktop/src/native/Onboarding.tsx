@@ -58,6 +58,7 @@ export function Onboarding({
   const check = async () => {
     setBusy(true);
     try {
+      shutdownRealtimeStores();
       await saveDraft(false);
       const result = await resolveConnection(false, shutdownRealtimeStores);
       setMessage(
@@ -75,7 +76,7 @@ export function Onboarding({
   const serviceAction = async (action: "status" | "start") => {
     setBusy(true);
     try {
-      const status = await controlService(action);
+      const status = await controlService("backend", action);
       setService(status);
       setMessage(
         status.load_state === "not-found"
@@ -92,6 +93,7 @@ export function Onboarding({
   const finish = async () => {
     setBusy(true);
     try {
+      shutdownRealtimeStores();
       await saveDraft(true);
       await resolveConnection(allowStart, shutdownRealtimeStores);
       onComplete();
@@ -104,9 +106,7 @@ export function Onboarding({
 
   const strategyName = strategy === "local"
     ? text("Local", "Local")
-    : strategy === "remote"
-      ? text("Servidor", "Server")
-      : text("Híbrido", "Hybrid");
+    : text("Servidor", "Server");
 
   return (
     <main className={s.wrap} aria-labelledby="onboarding-title">
@@ -121,7 +121,7 @@ export function Onboarding({
           <div className={s.content}>
             <p className={s.eyebrow}>DAX DESKTOP</p>
             <h1 id="onboarding-title">{text("Tu asistente, tu conexión", "Your assistant, your connection")}</h1>
-            <p>{text("Dax puede trabajar con un backend en este equipo, con tu servidor o con ambos. Tú eliges dónde se procesan y almacenan las conversaciones.", "Dax can use a backend on this computer, your server, or both. You choose where conversations are processed and stored.")}</p>
+            <p>{text("Dax usa una sola autoridad: un backend en este equipo o tu servidor. Ahí se procesan y almacenan las conversaciones.", "Dax uses one authority: a backend on this computer or your server. Conversations are processed and stored there.")}</p>
             <div className={s.notice} role="note">
               <strong>{text("Privacidad", "Privacy")}</strong>
               <span>{text("La aplicación no copia tokens entre servidores. Las credenciales se guardan por origen en el keyring del sistema.", "The app never copies tokens between servers. Credentials are stored per origin in the system keyring.")}</span>
@@ -133,17 +133,20 @@ export function Onboarding({
           <div className={s.content}>
             <h1 id="onboarding-title">{text("Elige una estrategia", "Choose a strategy")}</h1>
             <div className={s.choices} role="radiogroup" aria-label={text("Estrategia de conexión", "Connection strategy")}>
-              {(["local", "remote", "hybrid"] as const).map((value) => (
+              {(["local", "remote"] as const).map((value) => (
                 <button
                   key={value}
                   type="button"
                   role="radio"
                   aria-checked={strategy === value}
                   className={strategy === value ? s.choiceActive : s.choice}
-                  onClick={() => setStrategy(value)}
+                  onClick={() => {
+                    setStrategy(value);
+                    if (value === "remote") setAllowStart(false);
+                  }}
                 >
-                  <strong>{value === "local" ? text("Local", "Local") : value === "remote" ? text("Servidor", "Server") : text("Híbrido", "Hybrid")}</strong>
-                  <span>{value === "local" ? text("Solo este equipo", "This computer only") : value === "remote" ? text("Solo tu servidor; sin fallback", "Your server only; no fallback") : text("Servidor primero, local si falla", "Server first, local if it fails")}</span>
+                  <strong>{value === "local" ? text("Local", "Local") : text("Servidor", "Server")}</strong>
+                  <span>{value === "local" ? text("La única autoridad se ejecuta en este equipo", "The sole authority runs on this computer") : text("Tu servidor es la única autoridad; sin fallback", "Your server is the sole authority; no fallback")}</span>
                 </button>
               ))}
             </div>
@@ -153,10 +156,12 @@ export function Onboarding({
         {step === 2 && (
           <div className={s.content}>
             <h1 id="onboarding-title">{text("Configura y comprueba", "Configure and verify")}</h1>
-            <label className={s.field}>
-              <span>{text("URL local (solo loopback)", "Local URL (loopback only)")}</span>
-              <TextInput value={localUrl} spellCheck={false} onChange={(event) => setLocalUrl(event.target.value)} />
-            </label>
+            {strategy === "local" && (
+              <label className={s.field}>
+                <span>{text("URL local (solo loopback)", "Local URL (loopback only)")}</span>
+                <TextInput value={localUrl} spellCheck={false} onChange={(event) => setLocalUrl(event.target.value)} />
+              </label>
+            )}
             {strategy !== "local" && (
               <label className={s.field}>
                 <span>{text("URL del servidor (HTTPS)", "Server URL (HTTPS)")}</span>
@@ -171,7 +176,7 @@ export function Onboarding({
         {step === 3 && (
           <div className={s.content}>
             <h1 id="onboarding-title">{text("Servicio local", "Local service")}</h1>
-            <p>{text("Dax puede detectar y controlar dax-assistant.service si ya está instalado. Esta aplicación no instala el backend ni promete que esté disponible.", "Dax can detect and control dax-assistant.service when it is already installed. This app does not install the backend or promise it is available.")}</p>
+            <p>{text("Si elegiste Local, dax-assistant.service es la autoridad. Esta aplicación solo puede iniciarlo con tu permiso. Las capacidades de este portátil para un servidor remoto pertenecen a un servicio separado dax edge; nunca son un backend de fallback.", "If you chose Local, dax-assistant.service is the authority. This app can start it only with your permission. Laptop capabilities for a remote server belong to a separate dax edge service; they are never a fallback backend.")}</p>
             <div className={s.actions}>
               <Button loading={busy} onClick={() => void serviceAction("status")}>{text("Detectar", "Detect")}</Button>
               <Button
@@ -196,7 +201,7 @@ export function Onboarding({
             <h1 id="onboarding-title">{text("Revisa y guarda", "Review and save")}</h1>
             <dl className={s.summary}>
               <div><dt>{text("Estrategia", "Strategy")}</dt><dd>{strategyName}</dd></div>
-              <div><dt>{text("Local", "Local")}</dt><dd>{localUrl}</dd></div>
+               {strategy === "local" && <div><dt>{text("Local", "Local")}</dt><dd>{localUrl}</dd></div>}
               {strategy !== "local" && <div><dt>{text("Servidor", "Server")}</dt><dd>{remoteUrl}</dd></div>}
               <div><dt>{text("Inicio del servicio", "Service start")}</dt><dd>{allowStart ? text("Permitido", "Allowed") : text("No permitido", "Not allowed")}</dd></div>
             </dl>

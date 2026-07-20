@@ -3,8 +3,10 @@ package com.dax.assistant.ui
 import android.Manifest
 import android.content.Intent
 import android.content.pm.PackageManager
+import android.net.Uri
 import android.os.Build
 import android.os.Bundle
+import android.provider.Settings
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
@@ -14,10 +16,14 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.SideEffect
 import androidx.compose.runtime.setValue
 import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.ui.platform.LocalContext
 import androidx.core.content.ContextCompat
+import androidx.core.content.edit
+import androidx.core.app.ActivityCompat
+import androidx.core.view.WindowCompat
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.appcompat.app.AppCompatActivity
@@ -57,6 +63,12 @@ class MainActivity : AppCompatActivity() {
                 ThemePreference.DARK -> true
                 ThemePreference.LIGHT -> false
             }
+            SideEffect {
+                WindowCompat.getInsetsController(window, window.decorView).apply {
+                    isAppearanceLightStatusBars = !darkTheme
+                    isAppearanceLightNavigationBars = !darkTheme
+                }
+            }
             OrbitaTheme(darkTheme = darkTheme) {
                 DaxApp(pairingDeepLink.collectAsStateWithLifecycle().value)
             }
@@ -91,6 +103,22 @@ private val requiredPermissions = buildList {
     }
 }.toTypedArray()
 
+enum class MicrophonePermissionState {
+    Granted,
+    Requestable,
+    PermanentlyDenied,
+}
+
+internal fun microphonePermissionState(
+    granted: Boolean,
+    requestedBefore: Boolean,
+    shouldShowRationale: Boolean,
+): MicrophonePermissionState = when {
+    granted -> MicrophonePermissionState.Granted
+    requestedBefore && !shouldShowRationale -> MicrophonePermissionState.PermanentlyDenied
+    else -> MicrophonePermissionState.Requestable
+}
+
 @Composable
 private fun DaxApp(
     pairingDeepLink: String?,
@@ -103,7 +131,28 @@ private fun DaxApp(
     val history by viewModel.controller.history.collectAsStateWithLifecycle()
     val diagnosticsState by diagnostics.state.collectAsStateWithLifecycle()
 
-    var micGranted by remember { mutableStateOf(false) }
+    val activity = context as MainActivity
+    val permissionHistory = remember {
+        context.getSharedPreferences("permission_history", android.content.Context.MODE_PRIVATE)
+    }
+    var micPermission by remember { mutableStateOf(MicrophonePermissionState.Requestable) }
+    var permissionsChecked by remember { mutableStateOf(false) }
+
+    fun refreshMicrophonePermission() {
+        val granted = ContextCompat.checkSelfPermission(
+            context,
+            Manifest.permission.RECORD_AUDIO,
+        ) == PackageManager.PERMISSION_GRANTED
+        micPermission = microphonePermissionState(
+            granted = granted,
+            requestedBefore = permissionHistory.getBoolean("microphone_requested", false),
+            shouldShowRationale = ActivityCompat.shouldShowRequestPermissionRationale(
+                activity,
+                Manifest.permission.RECORD_AUDIO,
+            ),
+        )
+        diagnostics.onPermissionsResult(granted)
+    }
 
     val scanner = rememberLauncherForActivityResult(ScanContract()) { result ->
         result.contents?.let(viewModel::applyPairingPayload)
@@ -111,28 +160,44 @@ private fun DaxApp(
 
     val permissionLauncher = rememberLauncherForActivityResult(
         ActivityResultContracts.RequestMultiplePermissions(),
-    ) { granted ->
-        micGranted = granted[Manifest.permission.RECORD_AUDIO] == true
-        diagnostics.onPermissionsResult(micGranted)
-        if (micGranted && setup.enrolled) AssistantService.ensureRunning(context)
+    ) {
+        refreshMicrophonePermission()
+        if (micPermission == MicrophonePermissionState.Granted && setup.enrolled) {
+            AssistantService.ensureRunning(context)
+        }
+    }
+
+    val appSettingsLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.StartActivityForResult(),
+    ) { refreshMicrophonePermission() }
+
+    fun requestVoicePermissions() {
+        if (micPermission == MicrophonePermissionState.PermanentlyDenied) {
+            appSettingsLauncher.launch(
+                Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS).setData(
+                    Uri.fromParts("package", context.packageName, null),
+                ),
+            )
+        } else {
+            permissionHistory.edit { putBoolean("microphone_requested", true) }
+            permissionLauncher.launch(requiredPermissions)
+        }
     }
 
     LaunchedEffect(Unit) {
-        micGranted = ContextCompat.checkSelfPermission(
-            context,
-            Manifest.permission.RECORD_AUDIO,
-        ) == PackageManager.PERMISSION_GRANTED
-        diagnostics.onPermissionsResult(micGranted)
-        if (!micGranted) permissionLauncher.launch(requiredPermissions)
+        refreshMicrophonePermission()
+        permissionsChecked = true
     }
 
-    LaunchedEffect(setup.enrolled, micGranted) {
+    LaunchedEffect(setup.enrolled, micPermission) {
         if (setup.enrolled) {
             viewModel.connect()
             // The service is what keeps the socket alive and makes a
             // background-triggered turn legal, so it starts as soon as the
             // device is paired and the microphone is granted.
-            if (micGranted) AssistantService.ensureRunning(context)
+            if (micPermission == MicrophonePermissionState.Granted) {
+                AssistantService.ensureRunning(context)
+            }
         }
     }
 
@@ -153,24 +218,26 @@ private fun DaxApp(
                 )
             },
         )
-    } else {
+    } else if (permissionsChecked) {
         MainNavigation(
             assistantState = assistantState,
             history = history,
             diagnosticsState = diagnosticsState,
             diagnostics = diagnostics,
             onTrigger = {
-                if (micGranted) {
+                if (micPermission == MicrophonePermissionState.Granted) {
                     viewModel.controller.startTurn()
                 } else {
-                    permissionLauncher.launch(requiredPermissions)
+                    requestVoicePermissions()
                 }
             },
             onCancel = viewModel.controller::cancel,
             onApprove = viewModel.controller::resolveApproval,
-            onRequestPermissions = { permissionLauncher.launch(requiredPermissions) },
+            microphonePermission = micPermission,
+            onRequestPermissions = ::requestVoicePermissions,
             onForgetEverything = viewModel::forgetEverything,
             onDeviceRecognition = viewModel.onDeviceRecognition,
+            inputLevel = viewModel.controller.inputLevel,
         )
     }
 }

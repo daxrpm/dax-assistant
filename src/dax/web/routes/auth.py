@@ -53,6 +53,12 @@ class AuthStatus(BaseModel):
 
 class HealthResponse(BaseModel):
     status: str
+    instance_id: str
+    role: str
+    api_protocol: str
+    api_version: int
+    liveness: bool
+    readiness: bool
 
 
 def _client_key(request: Request) -> str:
@@ -91,9 +97,18 @@ def _is_loopback_request(request: Request) -> bool:
 
 
 @router.get("/health", response_model=HealthResponse)
-async def health() -> HealthResponse:
-    """Unauthenticated liveness probe for systemd and reverse proxies."""
-    return HealthResponse(status="ok")
+async def health(request: Request) -> HealthResponse:
+    """Public identity, liveness, and readiness for trusted client probing."""
+    ready = bool(getattr(request.app.state, "ready", False))
+    return HealthResponse(
+        status="ok" if ready else "starting",
+        instance_id=request.app.state.server_instance_id,
+        role="authoritative",
+        api_protocol="dax",
+        api_version=1,
+        liveness=True,
+        readiness=ready,
+    )
 
 
 @router.get("/auth/status", response_model=AuthStatus)

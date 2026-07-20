@@ -68,17 +68,17 @@ async function responseError(response: Response): Promise<never> {
   throw new ApiError(response.status, message || `API error ${response.status}`);
 }
 
-async function request<T>(path: string, options?: RequestInit): Promise<T> {
+async function request<T>(path: string, options?: RequestInit, authenticated = true): Promise<T> {
   let response: Response;
   try {
     response = await fetch(`${getBaseUrl()}/api${path}`, {
       ...options,
       headers: {
         "Content-Type": "application/json",
-        ...authHeaders(),
+        ...(authenticated ? authHeaders() : {}),
         ...(options?.headers ?? {}),
       },
-      credentials: "include",
+      credentials: authenticated ? "include" : "omit",
     });
   } catch (cause) {
     // fetch() rejects on DNS/connection failure — surface it as a 0 so callers
@@ -133,7 +133,7 @@ async function requestForm<T>(path: string, form: FormData): Promise<T> {
 /* ---------------- auth ---------------- */
 
 export const api = {
-  health: () => request<HealthResponse>("/health"),
+  health: () => request<HealthResponse>("/health", undefined, false),
 
   authStatus: () => request<AuthStatus>("/auth/status"),
 
@@ -153,9 +153,12 @@ export const api = {
 
   /* ---------------- paired devices ---------------- */
 
-  /** Mints a one-time pairing code for a new device (the phone). */
-  pairDevice: () =>
-    request<PairCodeResponse>("/auth/devices/pair", { method: "POST" }),
+  /** Mints a one-time pairing code. A bodyless request remains normal client pairing. */
+  pairDevice: (kind: "client" | "capability_node" = "client") =>
+    request<PairCodeResponse>("/auth/devices/pair", {
+      method: "POST",
+      ...(kind === "client" ? {} : { body: JSON.stringify({ kind }) }),
+    }),
 
   devices: () => request<{ devices: PairedDevice[] }>("/auth/devices"),
 

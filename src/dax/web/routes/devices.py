@@ -28,7 +28,12 @@ from urllib.parse import urlencode
 from fastapi import APIRouter, Depends, HTTPException, Request, Response, status
 from pydantic import BaseModel, Field
 
-from dax.storage.devices import generate_pairing_code
+from dax.storage.devices import (
+    CAPABILITY_NODE_KIND,
+    CLIENT_KIND,
+    DEVICE_KINDS,
+    generate_pairing_code,
+)
 from dax.web.auth import AuthManager, require_session
 from dax.web.dependencies import AuthDep, ConfigDep
 
@@ -45,6 +50,7 @@ _MAX_OUTSTANDING_CODES = 8
 class _PairingCode:
     code: str
     expires_at: float
+    kind: str
 
 
 class _PairingCodes:
@@ -57,23 +63,25 @@ class _PairingCodes:
     def __init__(self) -> None:
         self._codes: list[_PairingCode] = []
 
-    def issue(self, ttl_seconds: int) -> _PairingCode:
+    def issue(self, ttl_seconds: int, kind: str = CLIENT_KIND) -> _PairingCode:
         self._prune()
         if len(self._codes) >= _MAX_OUTSTANDING_CODES:
             self._codes.pop(0)
-        entry = _PairingCode(code=generate_pairing_code(), expires_at=time.time() + ttl_seconds)
+        entry = _PairingCode(
+            code=generate_pairing_code(), expires_at=time.time() + ttl_seconds, kind=kind
+        )
         self._codes.append(entry)
         return entry
 
-    def redeem(self, code: str) -> bool:
+    def redeem(self, code: str) -> str | None:
         """Consume *code*. A code works exactly once."""
         self._prune()
         normalized = code.strip().upper()
         for entry in self._codes:
             if entry.code == normalized:
                 self._codes.remove(entry)
-                return True
-        return False
+                return entry.kind
+        return None
 
     def _prune(self) -> None:
         now = time.time()
@@ -98,6 +106,13 @@ class PairResponse(BaseModel):
     expires_in_seconds: int
     pairing_uri: str
     backend_url: str
+    kind: str
+
+
+class PairRequest(BaseModel):
+    model_config = {"extra": "forbid"}
+
+    kind: str = CLIENT_KIND
 
 
 class EnrollRequest(BaseModel):
@@ -161,11 +176,19 @@ def _limit_attempts(
     response_model=PairResponse,
     dependencies=[Depends(require_session)],
 )
-async def pair_device(request: Request, config: ConfigDep, auth: AuthDep) -> PairResponse:
+async def pair_device(
+    request: Request,
+    config: ConfigDep,
+    auth: AuthDep,
+    body: PairRequest | None = None,
+) -> PairResponse:
     """Mint a one-time pairing code for a new device."""
     _limit_attempts(request, auth, "device_pair", client_limit=10, global_limit=50)
     ttl = max(60, config.security.pairing_code_ttl_minutes * 60)
-    entry = _codes(request).issue(ttl)
+    body = body or PairRequest()
+    if body.kind not in DEVICE_KINDS:
+        raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, "Invalid device kind")
+    entry = _codes(request).issue(ttl, body.kind)
     backend_url = str(request.base_url).rstrip("/")
     pairing_uri = f"dax://pair?{urlencode({'url': backend_url, 'code': entry.code})}"
     logger.info("Issued a device pairing code (expires in %ds)", ttl)
@@ -174,6 +197,7 @@ async def pair_device(request: Request, config: ConfigDep, auth: AuthDep) -> Pai
         expires_in_seconds=ttl,
         pairing_uri=pairing_uri,
         backend_url=backend_url,
+        kind=entry.kind,
     )
 
 
@@ -189,7 +213,8 @@ async def enroll_device(
 
     _limit_attempts(request, auth, "device_enroll", client_limit=10, global_limit=50)
 
-    if not _codes(request).redeem(body.code):
+    kind = _codes(request).redeem(body.code)
+    if kind is None:
         # Same delay as a failed login: the code space is small enough that
         # online guessing is the realistic attack.
         await asyncio.sleep(0.5)
@@ -200,6 +225,7 @@ async def enroll_device(
     device, secret = await devices.enroll(
         name=body.name or "Unnamed device",
         platform=body.platform or "unknown",
+        kind=kind,
     )
     return EnrollResponse(ok=True, device_id=device.id, device_secret=secret)
 
@@ -223,9 +249,15 @@ async def issue_device_token(
         return TokenResponse(ok=False)
 
     await devices.touch(body.device_id)
+    kind = devices.kind_of(body.device_id)
+    token = (
+        auth.issue_capability_token(body.device_id)
+        if kind == CAPABILITY_NODE_KIND
+        else auth.issue_device_token(body.device_id)
+    )
     return TokenResponse(
         ok=True,
-        token=auth.issue_device_token(body.device_id),
+        token=token,
         expires_in_seconds=auth.device_token_ttl_seconds,
     )
 
@@ -245,10 +277,15 @@ async def list_devices(auth: AuthDep) -> DeviceListResponse:
     from dax.web.routes.chat import ws_manager
 
     connected = ws_manager.connected_device_ids
+    hub = getattr(auth, "capability_hub", None)
     payload: list[dict[str, object]] = []
     for device in await devices.list_devices():
         entry = device.to_json()
-        entry["connected"] = device.id in connected
+        entry["connected"] = (
+            hub.is_present(device.id)
+            if device.kind == CAPABILITY_NODE_KIND and hub is not None
+            else device.id in connected
+        )
         payload.append(entry)
     return DeviceListResponse(devices=payload)
 
@@ -263,6 +300,9 @@ async def revoke_device(device_id: str, response: Response, auth: AuthDep) -> Ok
     if devices is None or not await devices.revoke(device_id):
         response.status_code = 404
         return OkResponse(ok=False)
+    hub = getattr(auth, "capability_hub", None)
+    if hub is not None:
+        await hub.disconnect_node(device_id)
     return OkResponse(ok=True)
 
 
@@ -276,4 +316,7 @@ async def delete_device(device_id: str, response: Response, auth: AuthDep) -> Ok
     if devices is None or not await devices.delete(device_id):
         response.status_code = 404
         return OkResponse(ok=False)
+    hub = getattr(auth, "capability_hub", None)
+    if hub is not None:
+        await hub.disconnect_node(device_id)
     return OkResponse(ok=True)

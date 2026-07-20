@@ -1,6 +1,7 @@
 import { invoke } from "@tauri-apps/api/core";
 
 export type ServiceAction = "status" | "start" | "stop" | "restart";
+export type ServiceTarget = "backend" | "capability_node";
 
 export interface ServiceStatus {
   unit: string;
@@ -9,6 +10,9 @@ export interface ServiceStatus {
   sub_state: string;
 }
 
-export function controlService(action: ServiceAction): Promise<ServiceStatus> {
-  return invoke<ServiceStatus>("service_control", { action });
+export function controlService(
+  target: ServiceTarget,
+  action: ServiceAction,
+): Promise<ServiceStatus> {
+  return invoke<ServiceStatus>("service_control", { target, action });
 }

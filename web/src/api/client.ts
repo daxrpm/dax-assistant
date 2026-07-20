@@ -22,9 +22,9 @@ async function request<T>(
     ...options,
   });
   if (!response.ok) {
-    const text = await response.text();
-    throw new ApiError(response.status, `API error ${response.status}: ${text}`);
+    return responseError(response);
   }
+  if (response.status === 204) return undefined as T;
   return response.json() as Promise<T>;
 }
 
@@ -126,6 +126,28 @@ export interface MCPServerStatus {
   tools: string[];
 }
 
+export interface PairCodeResponse {
+  code: string;
+  expires_in_seconds: number;
+  backend_url: string;
+  pairing_uri: string;
+  kind: DeviceKind;
+}
+
+export type DeviceKind = "client" | "capability_node";
+
+export interface PairedDevice {
+  id: string;
+  name: string;
+  platform: string;
+  created_at: string;
+  last_seen_at: string | null;
+  revoked_at: string | null;
+  revoked: boolean;
+  connected: boolean;
+  kind: DeviceKind;
+}
+
 export interface ToolPolicyResponse {
   default: string;
   allow: string[];
@@ -182,6 +204,24 @@ export const api = {
     }),
 
   logout: () => request<{ ok: boolean }>("/auth/logout", { method: "POST" }),
+
+  pairDevice: (kind: DeviceKind = "client") =>
+    request<PairCodeResponse>("/auth/devices/pair", {
+      method: "POST",
+      ...(kind === "client" ? {} : { body: JSON.stringify({ kind }) }),
+    }),
+
+  devices: () => request<{ devices: PairedDevice[] }>("/auth/devices"),
+
+  revokeDevice: (id: string) =>
+    request<{ ok: boolean }>(`/auth/devices/${encodeURIComponent(id)}/revoke`, {
+      method: "POST",
+    }),
+
+  deleteDevice: (id: string) =>
+    request<{ ok: boolean }>(`/auth/devices/${encodeURIComponent(id)}`, {
+      method: "DELETE",
+    }),
 
   // Tools
   getToolAudit: (limit = 50) =>
@@ -277,17 +317,17 @@ export const api = {
     }),
 
   updateMCPServer: (name: string, data: Record<string, unknown>) =>
-    request(`/config/mcp/servers/${name}`, {
+    request(`/config/mcp/servers/${encodeURIComponent(name)}`, {
       method: "PATCH",
       body: JSON.stringify(data),
     }),
 
   deleteMCPServer: (name: string) =>
-    request(`/config/mcp/servers/${name}`, { method: "DELETE" }),
+    request<void>(`/config/mcp/servers/${encodeURIComponent(name)}`, { method: "DELETE" }),
 
   reconnectMCPServer: (name: string) =>
     request<{ status: string; tools: number }>(
-      `/config/mcp/servers/${name}/reconnect`,
+      `/config/mcp/servers/${encodeURIComponent(name)}/reconnect`,
       { method: "POST" },
     ),
 
@@ -303,17 +343,17 @@ export const api = {
   // OAuth
   startMCPAuth: (name: string) =>
     request<{ authorization_url: string; state: string }>(
-      `/mcp/${name}/auth/start`,
+      `/mcp/${encodeURIComponent(name)}/auth/start`,
       { method: "POST" },
     ),
 
   getMCPAuthStatus: (name: string) =>
     request<{ authenticated: boolean; expired?: boolean }>(
-      `/mcp/${name}/auth/status`,
+      `/mcp/${encodeURIComponent(name)}/auth/status`,
     ),
 
   logoutMCP: (name: string) =>
-    request(`/mcp/${name}/auth/logout`, { method: "POST" }),
+    request(`/mcp/${encodeURIComponent(name)}/auth/logout`, { method: "POST" }),
 
   // LLM model discovery
   listLLMModels: (provider?: string) =>
@@ -336,7 +376,7 @@ export const api = {
       body: JSON.stringify(data),
     }),
   deleteMemory: (slug: string) =>
-    fetch(`${BASE}/memory/${slug}`, { method: "DELETE", credentials: "same-origin" }),
+    request<void>(`/memory/${encodeURIComponent(slug)}`, { method: "DELETE" }),
 
   // Codex / Claude config generators
   getCodexConfig: () => request<{ toml: string; server_count: number; note: string }>("/codex-config"),
@@ -373,8 +413,5 @@ export const api = {
     request<ConversationDetail>(`/conversations/${id}`),
 
   deleteConversation: (id: string) =>
-    fetch(`${BASE}/conversations/${id}`, {
-      method: "DELETE",
-      credentials: "same-origin",
-    }),
+    request<void>(`/conversations/${encodeURIComponent(id)}`, { method: "DELETE" }),
 };

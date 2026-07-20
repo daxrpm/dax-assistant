@@ -4,6 +4,7 @@ import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.selection.selectable
+import androidx.compose.foundation.selection.toggleable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -338,7 +339,7 @@ fun SettingsScreen(
                 } else {
                     stringResource(R.string.settings_save)
                 },
-                enabled = !state.saving,
+                enabled = !state.saving && state.dirty,
                 onClick = onSave,
             )
         }
@@ -414,7 +415,7 @@ private fun <T> ChoiceRow(
 ) {
     FlowRow(horizontalArrangement = Arrangement.spacedBy(Orbita.spacing.x2), verticalArrangement = Arrangement.spacedBy(Orbita.spacing.x2)) {
         options.forEach { (value, label) ->
-            ChoiceChip(label, selected == value, recommended == value) { onSelect(value) }
+            ChoiceChip(label, selected == value, recommended == value, Role.RadioButton) { onSelect(value) }
         }
     }
 }
@@ -423,16 +424,29 @@ private fun <T> ChoiceRow(
 @Composable
 private fun MultiChoiceRow(options: List<String>, selected: List<String>, onSelect: (String) -> Unit) {
     FlowRow(horizontalArrangement = Arrangement.spacedBy(Orbita.spacing.x2), verticalArrangement = Arrangement.spacedBy(Orbita.spacing.x2)) {
-        options.forEach { value -> ChoiceChip(value.providerName(), value in selected, false) { onSelect(value) } }
+        options.forEach { value ->
+            ChoiceChip(value.providerName(), value in selected, false, Role.Checkbox) { onSelect(value) }
+        }
     }
 }
 
 @Composable
-private fun ChoiceChip(label: String, selected: Boolean, recommended: Boolean, onClick: () -> Unit) {
+private fun ChoiceChip(
+    label: String,
+    selected: Boolean,
+    recommended: Boolean,
+    role: Role,
+    onClick: () -> Unit,
+) {
+    val selection = if (role == Role.Checkbox) {
+        Modifier.toggleable(value = selected, role = role, onValueChange = { onClick() })
+    } else {
+        Modifier.selectable(selected = selected, role = role, onClick = onClick)
+    }
     Column(
         Modifier.clip(RoundedCornerShape(Orbita.radii.pill))
             .background(if (selected) Orbita.colors.bgSelected else Orbita.colors.bgInset)
-            .selectable(selected = selected, role = Role.RadioButton, onClick = onClick)
+            .then(selection).heightIn(min = Orbita.sizing.minTouchTarget)
             .padding(horizontal = Orbita.spacing.x4, vertical = Orbita.spacing.x3),
         horizontalAlignment = Alignment.CenterHorizontally,
     ) {
@@ -491,10 +505,15 @@ private fun ModelField(label: String, value: String, onChange: (String) -> Unit)
 
 @Composable
 private fun AdvancedDisclosure(expanded: Boolean, onToggle: () -> Unit, content: @Composable () -> Unit) {
+    val expansionState = stringResource(
+        if (expanded) R.string.settings_expanded else R.string.settings_collapsed,
+    )
     Column(verticalArrangement = Arrangement.spacedBy(Orbita.spacing.x4)) {
         Row(
             Modifier.clip(RoundedCornerShape(Orbita.radii.pill)).background(Orbita.colors.bgInset)
                 .clickable(role = Role.Button, onClick = onToggle)
+                .semantics { stateDescription = expansionState }
+                .heightIn(min = Orbita.sizing.minTouchTarget)
                 .padding(horizontal = Orbita.spacing.x4, vertical = Orbita.spacing.x2),
             verticalAlignment = Alignment.CenterVertically,
         ) {

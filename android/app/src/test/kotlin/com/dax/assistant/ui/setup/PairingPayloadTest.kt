@@ -1,10 +1,18 @@
 package com.dax.assistant.ui.setup
 
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
+import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class PairingPayloadTest {
+    @Test
+    fun validatesPairingCodeLocally() {
+        assertTrue(isValidPairingCode("AB12CD34"))
+        assertFalse(isValidPairingCode("short"))
+        assertFalse(isValidPairingCode("AB12-CD3"))
+    }
     @Test
     fun `parses encoded dax pairing uri`() {
         val payload = PairingPayload.parse(

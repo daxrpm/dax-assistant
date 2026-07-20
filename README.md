@@ -8,6 +8,20 @@ with a modern web UI (chat + dashboard + settings, light/dark).
 Built on a hexagonal architecture (ports & adapters): channels, LLM providers, MCP tools
 and storage are all swappable behind small interfaces.
 
+## Topology
+
+Every installation has exactly one always-on authoritative backend. It owns
+SQLite, encrypted configuration, conversations, LLM routing, MCP, policy,
+approvals, audit data, and voice processing. The browser, Linux desktop, and
+Android apps are clients of that authority.
+
+A laptop can optionally run `dax edge` as an outbound capability node. While it
+is connected, the server may invoke its bounded, policy-gated `dax-system` tool
+inventory. Turning off the laptop removes those tools but does not interrupt the
+server or chat. The node is not another backend, does not replicate state, and
+does not provide authority fallback. See
+[`docs/capability-nodes.md`](docs/capability-nodes.md).
+
 ---
 
 ## Highlights
@@ -38,60 +52,82 @@ and storage are all swappable behind small interfaces.
 
 ## Requirements
 
-- Python **3.11** (the project pins `>=3.11,<3.12`).
-- [`uv`](https://docs.astral.sh/uv/) for dependency management.
-- Linux with `systemd --user`. The installer supports Fedora/RHEL, Debian/Ubuntu, Arch,
-  and openSUSE and installs Python 3.11 through `uv` when needed.
+- Python **3.11** (the project pins `>=3.11,<3.12`); tagged installs provision it through `uv`.
+- [`uv`](https://docs.astral.sh/uv/) and [GitHub CLI](https://cli.github.com/) for tagged Linux installs.
+- Linux with `systemd --user`. Tagged installation supports Fedora/RHEL RPM systems and
+  Debian/Ubuntu deb systems on an architecture published in that release.
 - [Ollama](https://ollama.com/) running locally if you want the default local provider
   (otherwise set a cloud provider as default).
 - Node.js (only to rebuild the web UI from source).
 
-> `uv` is installed at `~/.local/bin/uv` and may not be on your `PATH`. Use the full path
-> or add `~/.local/bin` to `PATH`.
-
----
-
 ## Production install
 
-Install the latest release and all voice/audio dependencies for the current user:
+The coordinated artifact and verification contract is documented in
+[`docs/releases.md`](docs/releases.md). The supported operational topology,
+backup, recovery, upgrade, and replacement procedures are in
+[`docs/deployment.md`](docs/deployment.md).
+
+Pin a release, download its installer without executing it, verify its GitHub artifact
+attestation, and only then run it. This establishes a provenance path independent of the
+SHA256 list delivered with the release and never executes a script from `main`.
 
 ```bash
-bash <(curl -fsSL https://raw.githubusercontent.com/daxrpm/dax-assistant/main/scripts/install.sh)
+VERSION=0.1.0
+curl --proto '=https' --tlsv1.2 --fail --location --remote-name "https://github.com/daxrpm/dax-assistant/releases/download/v$VERSION/install.sh"
+gh attestation verify install.sh --repo daxrpm/dax-assistant
+bash install.sh --version "$VERSION" --both
 ```
 
-From an existing checkout, run `./scripts/install.sh install`. The installer prompts for
-English or Spanish models, creates an isolated Python 3.11 environment, and starts a
-hardened `systemd --user` service. It does not require root except when the selected
-distribution's package manager installs missing system libraries. Production web assets
-are included; Node.js is not required.
+Use `--backend-only`, `--desktop-only`, or `--both` (the default). `--with-node` additionally
+installs `dax-assistant-node.service`, but deliberately does not enable or start it. Create a
+capability-node enrollment code on the authoritative backend and run
+`dax edge enroll --server URL --code CODE --name NAME`; enable the unit explicitly only after
+`~/.local/state/dax-assistant/edge.json` exists.
+The authoritative backend is always enabled and started when selected. The Linux installer
+selects the release's RPM or deb for the current host. It never downloads or installs the
+Android APK, which is a separate signed release asset.
+
+The installer verifies GitHub attestations for the manifest and every selected artifact with
+`gh attestation verify --repo daxrpm/dax-assistant`, then independently checks SHA256 and size.
+It also confirms that manifest version/commit identify the selected tag. It fails closed if
+attestation verification is unavailable or fails. `--insecure-skip-attestation` is an explicit,
+loudly warned emergency bypass and is not a safe installation path. Backend dependencies come
+from the manifested, frozen uv export and are installed with hash enforcement rather than
+open-ended `pyproject.toml` resolution. `--dry-run` performs all downloads and verification.
+
+For development only, an existing checkout can be installed with
+`bash scripts/install.sh --source "$PWD" --backend-only`. This mode runs `uv sync --frozen`,
+never clones `main`, and never claims to install a desktop package.
 
 Default paths follow the XDG base-directory specification:
 
 | Content | Default path |
 | --- | --- |
-| Application | `~/.local/share/dax-assistant/app` |
+| Versioned backend | `~/.local/share/dax-assistant/releases/VERSION/` |
+| Active backend link | `~/.local/share/dax-assistant/current` |
 | Models | `~/.local/share/dax-assistant/models` |
 | Database and key | `~/.local/state/dax-assistant/` |
 | Service unit | `~/.config/systemd/user/dax-assistant.service` |
 | Caches | `~/.cache/dax-assistant/` |
 
-Use `--install-dir PATH`, `--models-dir PATH`, or the corresponding XDG environment
-variables to change these locations. Run `./scripts/install.sh --help` for all options.
+Tagged backend installs intentionally require these default XDG locations because the verified,
+canonical user-systemd units name them directly. Existing state, models, and backups are
+preserved across versioned installs.
 
 ### Operations
 
 ```bash
 systemctl --user status dax-assistant
 journalctl --user -u dax-assistant -f
-./scripts/install.sh doctor
-./scripts/install.sh update
-./scripts/install.sh uninstall          # preserves state and models
-./scripts/install.sh uninstall --purge  # also removes state, models, and caches
+bash install.sh --version 0.1.1 --both  # verified upgrade to another immutable tag
 ```
 
-Updates create a timestamped database/key backup under
-`~/.local/state/dax-assistant/backups`, update the application and dependencies, restart
-the service, and roll back the application if startup fails. To restore a local-key
+Backend upgrades create a timestamped database/key backup under
+`~/.local/state/dax-assistant/backups`, install into a versioned environment, move the
+`current` link, and restart the service. The installer waits for authoritative readiness and
+restores the previous link/service if the deadline expires. An active capability node blocks
+the update until you stop it explicitly, so it cannot silently jump to a new shared runtime.
+To restore a local-key
 installation manually, stop the service and copy a matching `.db` and `.key` backup pair
 over `dax.db` and `dax.key` before restarting it. Never restore one without the other.
 
@@ -110,8 +146,8 @@ EnvironmentFile=%h/.config/dax-assistant/environment
 ### Audio troubleshooting
 
 The service joins your graphical user session so it can use PipeWire/PulseAudio. If voice
-does not start, run `./scripts/install.sh doctor`, confirm that
-`systemctl --user status pipewire pipewire-pulse` is healthy, and inspect the service log.
+does not start, run `systemctl --user status dax-assistant pipewire pipewire-pulse` and
+`journalctl --user -u dax-assistant`, then inspect the reported service and audio errors.
 Verify input devices independently with `wpctl status` or `arecord -l`. Remote SSH-only
 sessions may not have access to the desktop audio session; install and run Dax as the
 logged-in desktop user.
@@ -161,11 +197,17 @@ automatically trusts the packaged Tauri webview origins, so a fresh installation
 does not require a manual CORS entry.
 
 Native first-run onboarding completes before authentication and configures a
-schema-v2 `local`, `remote`, or `hybrid` strategy. Starting the existing local
-systemd service requires explicit consent. Hybrid is remote-first, falls back to
-loopback after three confirmed failures, and does not fail back during the active
-session. Authentication tokens are isolated by backend origin. The same
-connection editor is available later in Desktop Settings.
+schema-v3 `local` or `remote` strategy. Local deliberately uses this laptop's
+loopback service as the sole authority; remote uses one HTTPS server. There is no
+fallback between them. Schema-v2 `hybrid` settings are historical migration
+input: they become remote-only using the configured `remote_url`. Starting the
+existing local systemd service requires explicit consent.
+
+Desktop accepts health only from a ready authoritative Dax API with the expected
+protocol/version and a non-empty `instance_id`. Authentication tokens are bound
+to normalized backend origin plus that instance identity, so replacing a server
+at the same URL does not reuse its predecessor's token. The connection editor is
+available later in Desktop Settings.
 
 Orbita uses stepped cool surfaces over a blue-black ground. Its default main
 window chrome is a 31 px custom frame, with native decorations configurable in
@@ -174,7 +216,7 @@ RMS, peak, and spectrum frames through imperative buffers without routing level
 data through React state.
 
 See [`desktop/README.md`](desktop/README.md) for prerequisites, development,
-packaging, verified test counts and known validation gaps. See
+packaging, verification commands, and known validation gaps. See
 [`docs/desktop-architecture.md`](docs/desktop-architecture.md) for the primary
 desktop architecture reference.
 
@@ -237,6 +279,10 @@ the assistant typed tools to operate the machine. Safety is layered:
 - **Audit log.** Every gated execution is recorded and visible on the dashboard.
 
 Disable PC control entirely by setting `enabled = false` on the `dax-system` server.
+The optional laptop node exposes the corresponding trusted inventory under
+node-prefixed names, with paths resolved on that laptop and the same authoritative
+policy/approval gate. It is not unrestricted remote shell access; see
+[`docs/capability-nodes.md`](docs/capability-nodes.md).
 
 ---
 
@@ -320,18 +366,18 @@ Desktop verification and packaging:
 ```bash
 cd desktop
 npm run typecheck
-npm test           # 49 tests in the recorded 2026-07-19 run
+npm test
 npm run build
-npm audit --omit=dev # 0 vulnerabilities in the recorded run
+npm audit --omit=dev
 cd src-tauri
-cargo test --all-targets --all-features # 16 tests in the recorded run
+cargo fmt --all -- --check
+cargo test --all-targets --all-features
 cargo clippy --all-targets --all-features -- -D warnings
 ```
 
-The same recorded run passed 312 backend tests; ruff, mypy and clippy were
-clean, as was the frontend build. These automated gates do not claim a human
+These automated gates do not claim a human
 visual review, hardware audio, interactive Wayland behavior, remote audio
-between two hosts, or clean-system package installation.
+between two hosts, signing, or clean-system package installation.
 
 The wheel `force-include`s `src/dax/web/static`, so a production build of the web UI is
 served directly by the FastAPI app at `/`.
@@ -345,6 +391,8 @@ src/dax/
   llm/          providers/ (ollama, anthropic, openai, gemini), router, factory
   mcp/          MCP client manager
   mcp_servers/  system/  -> the bundled dax-system PC-control server
+  capabilities/ authoritative registry for ephemeral node tools
+  edge/         outbound laptop capability-node client
   channels/     web / whatsapp / voice adapters
   storage/      async SQLite database + repository
   web/          FastAPI app, auth, routes, static (built UI)
@@ -363,10 +411,13 @@ Set `[web] expose_lan = false` to return to loopback-only operation. For access 
 LAN, prefer a private overlay (Tailscale, WireGuard) or an authenticated HTTPS reverse
 proxy. Preserve WebSocket upgrades and proxy to `http://127.0.0.1:8420`.
 
-For desktop remote voice, microphone PCM travels from the client to
-`/ws/voice` as bounded PTT-only mono 16 kHz PCM. In protocol v1, synthesized
-speech is played on the backend server's speakers; audio output is not streamed
-back to the desktop client. See [`docs/voice-websocket.md`](docs/voice-websocket.md).
+For remote voice, microphone PCM travels from the client to `/ws/voice` as
+bounded PTT-only mono 16 kHz PCM. Default `server` output synthesizes and plays
+on the backend host. A client that acquires `client_text` output receives
+sentence `speech` events and the server performs no synthesis, playback, or
+earcon; the client may synthesize locally. Streaming server-synthesized audio to
+a client is not implemented. See
+[`docs/voice-websocket.md`](docs/voice-websocket.md).
 
 ---
 

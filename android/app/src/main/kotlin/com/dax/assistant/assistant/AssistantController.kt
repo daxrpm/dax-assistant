@@ -66,6 +66,10 @@ class AssistantController(
     private val _history = MutableStateFlow<List<Turn>>(emptyList())
     val history: StateFlow<List<Turn>> = _history.asStateFlow()
 
+    // Meter events are conflated separately so they never invalidate whole-app UI state.
+    private val _inputLevel = MutableStateFlow(0f)
+    val inputLevel: StateFlow<Float> = _inputLevel.asStateFlow()
+
     private var turnJob: Job? = null
     private val playbackQueue = Channel<PlaybackRequest>(Channel.UNLIMITED)
     private var playbackGeneration = 0L
@@ -150,6 +154,7 @@ class AssistantController(
         streamedReply = ""
         pendingUserText = ""
         acceptingResponse = false
+        _inputLevel.value = 0f
         _state.value = AssistantState.Idle
     }
 
@@ -187,6 +192,7 @@ class AssistantController(
         }
 
         _state.value = AssistantState.Listening(route)
+        _inputLevel.value = 0f
         streamedReply = ""
         pendingUserText = ""
 
@@ -208,6 +214,7 @@ class AssistantController(
         } catch (error: Exception) {
             fail(AssistantError.Backend(error.message ?: "Remote voice failed"))
         } finally {
+            _inputLevel.value = 0f
             routes.release()
         }
     }
@@ -279,11 +286,10 @@ class AssistantController(
             if (generation != playbackGeneration) return@runTurn
             when (event) {
                 is RemoteVoiceEvent.Listening -> _state.update { current ->
-                    (current as? AssistantState.Listening)?.copy(
-                        route = route,
-                        speechDetected = event.speechDetected,
-                        inputLevel = event.level,
-                    ) ?: current
+                    _inputLevel.value = event.level.coerceIn(0f, 1f)
+                    val listening = current as? AssistantState.Listening ?: return@update current
+                    if (listening.speechDetected == event.speechDetected && listening.route == route) current
+                    else listening.copy(route = route, speechDetected = event.speechDetected)
                 }
                 RemoteVoiceEvent.Transcribing -> {
                     routes.release()

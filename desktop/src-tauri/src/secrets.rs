@@ -1,15 +1,26 @@
-//! Session tokens isolated by normalized backend origin.
+//! Session tokens isolated by normalized backend origin and authority identity.
 
 const SERVICE: &str = "dev.dax.desktop";
 const LEGACY_ACCOUNT: &str = "session-token";
 
-fn account(origin: &str) -> String {
-    let encoded = origin
+fn encode(value: &str) -> String {
+    value
         .as_bytes()
         .iter()
         .map(|byte| format!("{byte:02x}"))
-        .collect::<String>();
-    format!("session-token-v2:{encoded}")
+        .collect()
+}
+
+fn account(origin: &str, instance_id: &str) -> String {
+    format!(
+        "session-token-v3:{}:{}",
+        encode(origin),
+        encode(instance_id)
+    )
+}
+
+fn origin_only_account(origin: &str) -> String {
+    format!("session-token-v2:{}", encode(origin))
 }
 
 fn entry(account: &str) -> Result<keyring::Entry, String> {
@@ -24,31 +35,55 @@ fn read(account: &str) -> Result<Option<String>, String> {
     }
 }
 
-pub fn get(origin: &str) -> Result<Option<String>, String> {
-    let scoped = account(origin);
+pub fn get(origin: &str, instance_id: &str) -> Result<Option<String>, String> {
+    let scoped = account(origin, instance_id);
     if let Some(token) = read(&scoped)? {
         return Ok(Some(token));
     }
-    // A legacy token can only be attributed safely to the active origin asking
-    // for it. Move it once; it is never copied across origins.
-    let Some(token) = read(LEGACY_ACCOUNT)? else {
-        return Ok(None);
-    };
-    // Write first so a transient keyring failure cannot destroy the only copy.
-    set(origin, &token)?;
+    // Neither legacy format proves which authority instance issued the token.
+    delete(&origin_only_account(origin))?;
     delete(LEGACY_ACCOUNT)?;
-    Ok(Some(token))
+    Ok(None)
 }
 
-pub fn set(origin: &str, token: &str) -> Result<(), String> {
-    let scoped = account(origin);
+pub fn set(origin: &str, instance_id: &str, token: &str) -> Result<(), String> {
+    let scoped = account(origin, instance_id);
     entry(&scoped)?
         .set_password(token)
         .map_err(|err| format!("keyring write failed: {err}"))
 }
 
-pub fn clear(origin: &str) -> Result<(), String> {
-    delete(&account(origin))
+pub fn clear(origin: &str, instance_id: &str) -> Result<(), String> {
+    delete(&account(origin, instance_id))
+}
+
+pub fn clear_authority(origin: &str, instance_id: Option<&str>) -> Result<(), String> {
+    let mut accounts = Vec::with_capacity(3);
+    if let Some(instance_id) = instance_id {
+        accounts.push(account(origin, instance_id));
+    }
+    accounts.push(origin_only_account(origin));
+    accounts.push(LEGACY_ACCOUNT.to_string());
+    let saved = accounts
+        .iter()
+        .map(|account| read(account).map(|token| (account.clone(), token)))
+        .collect::<Result<Vec<_>, _>>()?;
+
+    for (index, (account, _)) in saved.iter().enumerate() {
+        if let Err(err) = delete(account) {
+            for (removed_account, token) in &saved[..index] {
+                if let Some(token) = token {
+                    entry(removed_account)?
+                        .set_password(token)
+                        .map_err(|restore_err| {
+                            format!("{err}; credential rollback failed: {restore_err}")
+                        })?;
+                }
+            }
+            return Err(err);
+        }
+    }
+    Ok(())
 }
 
 fn delete(account: &str) -> Result<(), String> {
@@ -65,13 +100,26 @@ mod tests {
     #[test]
     fn accounts_are_stable_and_origin_isolated() {
         assert_eq!(
-            account("https://one.example"),
-            account("https://one.example")
+            account("https://one.example", "one"),
+            account("https://one.example", "one")
         );
         assert_ne!(
-            account("https://one.example"),
-            account("https://two.example")
+            account("https://one.example", "one"),
+            account("https://two.example", "one")
         );
-        assert!(!account("https://one.example").contains("https"));
+        assert_ne!(
+            account("https://one.example", "one"),
+            account("https://one.example", "two")
+        );
+        assert!(!account("https://one.example", "one").contains("https"));
+    }
+
+    #[test]
+    fn recovery_targets_scoped_and_legacy_account_formats() {
+        assert_ne!(
+            account("https://one.example", "one"),
+            origin_only_account("https://one.example")
+        );
+        assert_eq!(LEGACY_ACCOUNT, "session-token");
     }
 }

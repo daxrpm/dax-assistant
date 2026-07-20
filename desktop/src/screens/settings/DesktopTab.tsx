@@ -6,6 +6,7 @@ import {
   isTauri,
   resolveConnection,
   saveConnectionSettings,
+  validateCurrentAuthorityHealth,
 } from "../../api/connection";
 import { AlertIcon, RefreshIcon } from "../../components/icons";
 import { useWindowFrame } from "../../components/WindowFrame";
@@ -39,6 +40,12 @@ import {
   useMediaDuckingEnabled,
   useMediaDuckingLevel,
 } from "../../native/mediaDucking";
+import {
+  controlService,
+  type ServiceAction,
+  type ServiceStatus,
+} from "../../native/service";
+import { AuthorityRecovery } from "../../native/AuthorityRecovery";
 
 /**
  * Desktop-only preferences (PLAN.md 6.4).
@@ -67,13 +74,15 @@ export function DesktopTab({
   const [autostart, setAutostartState] = useState<AutostartState | null>(null);
   const [notifications, setNotificationState] = useState<NotificationState | null>(null);
   const [nativeSaving, setNativeSaving] = useState(false);
+  const [nodeService, setNodeService] = useState<ServiceStatus | null>(null);
+  const [nodeServiceBusy, setNodeServiceBusy] = useState(false);
   const mediaDucking = useMediaDuckingEnabled();
   const mediaDuckingLevel = useMediaDuckingLevel();
 
   const probe = async () => {
     setChecking(true);
     try {
-      await api.health();
+      validateCurrentAuthorityHealth(await api.health());
       const status = await api.status();
       setVersion(`${status.name} ${status.version}`);
       setHealth("ok");
@@ -96,9 +105,22 @@ export function DesktopTab({
         setNotificationState(nextNotifications);
       })
       .catch((err) => toast.show(err instanceof Error ? err.message : String(err), "danger"));
+    if (isTauri()) void runNodeServiceAction("status", false);
     // Probing once on mount is enough; the button covers manual re-checks.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  const runNodeServiceAction = async (action: ServiceAction, reportError = true) => {
+    setNodeServiceBusy(true);
+    try {
+      setNodeService(await controlService("capability_node", action));
+    } catch (err) {
+      setNodeService(null);
+      if (reportError) toast.show(err instanceof Error ? err.message : String(err), "danger");
+    } finally {
+      setNodeServiceBusy(false);
+    }
+  };
 
   const changeAutostart = async (enabled: boolean) => {
     setNativeSaving(true);
@@ -139,6 +161,7 @@ export function DesktopTab({
 
   const applyConnection = async () => {
     try {
+      shutdownRealtimeStores();
       await saveConnectionSettings({
         strategy,
         localUrl: localUrl.trim() || DEFAULT_BASE_URL,
@@ -189,7 +212,7 @@ export function DesktopTab({
         />
         <PanelBody>
           <div className={p.rows}>
-            <Field label={text("Estrategia", "Strategy")} description={text("Híbrido prueba remoto primero y local después; remoto nunca hace fallback.", "Hybrid tries remote first and local second; remote never falls back.")}>
+            <Field label={text("Autoridad", "Authority")} description={text("Elige una sola autoridad. Las capacidades locales para un servidor se conectan mediante dax edge, no mediante fallback.", "Choose one authority. Local capabilities for a server connect through dax edge, not through fallback.")}>
               {() => (
                 <SegmentedControl
                   value={strategy}
@@ -197,26 +220,27 @@ export function DesktopTab({
                   items={[
                     { id: "local", label: text("Local", "Local") },
                     { id: "remote", label: text("Servidor", "Server") },
-                    { id: "hybrid", label: text("Híbrido", "Hybrid") },
                   ]}
                 />
               )}
             </Field>
-            <Field
-              label={text("URL local", "Local URL")}
-              description={version ? t("settings.desktop.connectedTo", { version }) : t("settings.desktop.defaultUrl")}
-            >
-              {(id) => (
-                <div className={p.actions}>
-                  <TextInput
-                    id={id}
-                    className={p.grow}
-                    value={localUrl}
-                    onChange={(e) => setLocalUrl(e.target.value)}
-                  />
-                </div>
-              )}
-            </Field>
+            {strategy === "local" && (
+              <Field
+                label={text("URL local", "Local URL")}
+                description={version ? t("settings.desktop.connectedTo", { version }) : t("settings.desktop.defaultUrl")}
+              >
+                {(id) => (
+                  <div className={p.actions}>
+                    <TextInput
+                      id={id}
+                      className={p.grow}
+                      value={localUrl}
+                      onChange={(e) => setLocalUrl(e.target.value)}
+                    />
+                  </div>
+                )}
+              </Field>
+            )}
             {strategy !== "local" && (
               <Field label={text("URL del servidor", "Server URL")} description={text("HTTPS obligatorio salvo loopback explícito.", "HTTPS is required except for explicit loopback.")}>
                 {(id) => <TextInput id={id} value={remoteUrl} onChange={(event) => setRemoteUrl(event.target.value)} />}
@@ -234,6 +258,74 @@ export function DesktopTab({
               </span>
               <span>{text("Los backends remotos deben usar HTTPS (y WSS para sockets). La CSP incluida ya permite ambos; el backend debe autorizar explícitamente el origen ", "Remote backends must use HTTPS (and WSS for sockets). The bundled CSP already allows both; the backend must explicitly allow the ")}<code>tauri://localhost</code>{text(" en CORS.", " CORS origin.")}</span>
             </div>
+            <div className={p.notice}>
+              <span className={p.noticeIcon}><AlertIcon size={14} /></span>
+              <span>{text("Recuperación manual solo para un backend reemplazado deliberadamente en la misma URL. Borra la identidad fijada y obliga a autenticar otra vez.", "Manual recovery only for a backend deliberately replaced at the same URL. It clears the identity pin and forces authentication again.")}</span>
+              <AuthorityRecovery onRecovered={() => window.location.reload()} />
+            </div>
+          </div>
+        </PanelBody>
+      </Panel>
+
+      <Panel>
+        <PanelHeader
+          title={text("Nodo de capacidad del portátil", "Laptop capability node")}
+          subtitle={text(
+            "El servidor conserva chats, configuración y almacenamiento; este servicio solo aporta comandos y archivos locales mientras está conectado.",
+            "The server retains chats, configuration, and storage; this service only contributes local commands and files while connected.",
+          )}
+          actions={nodeService?.load_state === "loaded" ? (
+            <Badge tone={nodeService.active_state === "active" ? "success" : "neutral"} dot>
+              {nodeService.active_state === "active" ? text("En línea", "Online") : text("Detenido", "Stopped")}
+            </Badge>
+          ) : undefined}
+        />
+        <PanelBody>
+          <div className={p.rows}>
+            {!isTauri() ? (
+              <p className={p.hint}>{t("settings.desktop.nativeUnavailable")}</p>
+            ) : nodeService?.load_state !== "loaded" ? (
+              <div className={p.spread}>
+                <p className={p.hint}>
+                  {nodeService?.load_state === "not-found"
+                    ? text("El servicio dax-assistant-node.service no está instalado.", "The dax-assistant-node.service service is not installed.")
+                    : text("Comprueba si el servicio del nodo está instalado.", "Check whether the node service is installed.")}
+                </p>
+                <Button size="sm" variant="ghost" loading={nodeServiceBusy} onClick={() => void runNodeServiceAction("status")}>
+                  {t("common.refresh")}
+                </Button>
+              </div>
+            ) : (
+              <>
+                <div className={p.spread}>
+                  <span className={p.dim}>dax-assistant-node.service</span>
+                  <span className={p.mono}>{nodeService.active_state} ({nodeService.sub_state})</span>
+                </div>
+                <p className={p.hint}>
+                  {text(
+                    "Inscribe el portátil con el código de Dispositivos antes de iniciarlo. Dax nunca inicia este servicio automáticamente.",
+                    "Enroll the laptop with the code under Devices before starting it. Dax never starts this service automatically.",
+                  )}
+                </p>
+                <div className={p.actions}>
+                  {nodeService.active_state === "active" ? (
+                    <Button size="sm" variant="secondary" loading={nodeServiceBusy} onClick={() => void runNodeServiceAction("stop")}>
+                      {text("Detener", "Stop")}
+                    </Button>
+                  ) : (
+                    <Button size="sm" variant="primary" loading={nodeServiceBusy} onClick={() => void runNodeServiceAction("start")}>
+                      {text("Iniciar", "Start")}
+                    </Button>
+                  )}
+                  <Button size="sm" variant="secondary" disabled={nodeServiceBusy} onClick={() => void runNodeServiceAction("restart")}>
+                    {text("Reiniciar", "Restart")}
+                  </Button>
+                  <Button size="sm" variant="ghost" disabled={nodeServiceBusy} onClick={() => void runNodeServiceAction("status")}>
+                    {t("common.refresh")}
+                  </Button>
+                </div>
+              </>
+            )}
           </div>
         </PanelBody>
       </Panel>

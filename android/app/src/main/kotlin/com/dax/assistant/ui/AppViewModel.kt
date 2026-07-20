@@ -11,6 +11,7 @@ import com.dax.assistant.data.auth.CredentialStore
 import com.dax.assistant.data.auth.EnrolResult
 import com.dax.assistant.data.transport.ChatSocket
 import com.dax.assistant.ui.setup.PairingPayload
+import com.dax.assistant.ui.setup.isValidPairingCode
 import com.dax.assistant.R
 import dagger.hilt.android.lifecycle.HiltViewModel
 import dagger.hilt.android.qualifiers.ApplicationContext
@@ -79,6 +80,10 @@ class AppViewModel @Inject constructor(
             _setup.update {
                 it.copy(error = context.getString(R.string.setup_error_backend_invalid))
             }
+            return
+        }
+        if (!isValidPairingCode(current.pairingCode)) {
+            _setup.update { it.copy(error = context.getString(R.string.setup_error_code_invalid)) }
             return
         }
 

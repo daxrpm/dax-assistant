@@ -2,7 +2,6 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::time::Duration;
 
-const UNIT: &str = "dax-assistant.service";
 const STATUS_TIMEOUT: Duration = Duration::from_secs(3);
 const ACTION_TIMEOUT: Duration = Duration::from_secs(10);
 
@@ -13,6 +12,13 @@ pub enum ServiceAction {
     Start,
     Stop,
     Restart,
+}
+
+#[derive(Clone, Copy, Debug, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum ServiceTarget {
+    Backend,
+    CapabilityNode,
 }
 
 #[derive(Debug, Serialize, PartialEq, Eq)]
@@ -34,16 +40,34 @@ impl ServiceAction {
     }
 }
 
+impl ServiceTarget {
+    fn unit(self) -> &'static str {
+        match self {
+            Self::Backend => "dax-assistant.service",
+            Self::CapabilityNode => "dax-assistant-node.service",
+        }
+    }
+}
+
 #[cfg(target_os = "linux")]
 pub async fn control(action: ServiceAction) -> Result<ServiceStatus, String> {
+    control_target(ServiceTarget::Backend, action).await
+}
+
+#[cfg(target_os = "linux")]
+pub async fn control_target(
+    target: ServiceTarget,
+    action: ServiceAction,
+) -> Result<ServiceStatus, String> {
+    let unit = target.unit();
     if let Some(verb) = action.systemctl_verb() {
-        run_systemctl(&["--user", verb, UNIT], ACTION_TIMEOUT).await?;
+        run_systemctl(&["--user", verb, unit], ACTION_TIMEOUT).await?;
     }
     let output = run_systemctl(
         &[
             "--user",
             "show",
-            UNIT,
+            unit,
             "--no-pager",
             "--property=LoadState",
             "--property=ActiveState",
@@ -52,11 +76,19 @@ pub async fn control(action: ServiceAction) -> Result<ServiceStatus, String> {
         STATUS_TIMEOUT,
     )
     .await?;
-    parse_status(&output)
+    parse_status(unit, &output)
 }
 
 #[cfg(not(target_os = "linux"))]
-pub async fn control(_action: ServiceAction) -> Result<ServiceStatus, String> {
+pub async fn control(action: ServiceAction) -> Result<ServiceStatus, String> {
+    control_target(ServiceTarget::Backend, action).await
+}
+
+#[cfg(not(target_os = "linux"))]
+pub async fn control_target(
+    _target: ServiceTarget,
+    _action: ServiceAction,
+) -> Result<ServiceStatus, String> {
     Err("systemd user service control is only available on Linux".into())
 }
 
@@ -89,7 +121,7 @@ fn concise_output(bytes: &[u8]) -> String {
         .collect()
 }
 
-fn parse_status(output: &str) -> Result<ServiceStatus, String> {
+fn parse_status(unit: &'static str, output: &str) -> Result<ServiceStatus, String> {
     let values: HashMap<_, _> = output
         .lines()
         .filter_map(|line| line.split_once('='))
@@ -102,7 +134,7 @@ fn parse_status(output: &str) -> Result<ServiceStatus, String> {
             .ok_or_else(|| format!("systemctl response is missing {key}"))
     };
     Ok(ServiceStatus {
-        unit: UNIT,
+        unit,
         load_state: value("LoadState")?,
         active_state: value("ActiveState")?,
         sub_state: value("SubState")?,
@@ -122,10 +154,22 @@ mod tests {
     }
 
     #[test]
+    fn target_mapping_is_a_fixed_allowlist() {
+        assert_eq!(ServiceTarget::Backend.unit(), "dax-assistant.service");
+        assert_eq!(
+            ServiceTarget::CapabilityNode.unit(),
+            "dax-assistant-node.service"
+        );
+    }
+
+    #[test]
     fn parses_systemctl_properties_independent_of_order() {
-        let parsed =
-            parse_status("SubState=running\nLoadState=loaded\nActiveState=active\n").unwrap();
-        assert_eq!(parsed.unit, UNIT);
+        let parsed = parse_status(
+            ServiceTarget::Backend.unit(),
+            "SubState=running\nLoadState=loaded\nActiveState=active\n",
+        )
+        .unwrap();
+        assert_eq!(parsed.unit, ServiceTarget::Backend.unit());
         assert_eq!(parsed.load_state, "loaded");
         assert_eq!(parsed.active_state, "active");
         assert_eq!(parsed.sub_state, "running");
@@ -133,7 +177,11 @@ mod tests {
 
     #[test]
     fn rejects_incomplete_status() {
-        assert!(parse_status("LoadState=loaded\nActiveState=active\n").is_err());
+        assert!(parse_status(
+            ServiceTarget::CapabilityNode.unit(),
+            "LoadState=loaded\nActiveState=active\n"
+        )
+        .is_err());
     }
 
     #[test]

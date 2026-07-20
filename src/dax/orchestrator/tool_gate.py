@@ -15,6 +15,7 @@ from __future__ import annotations
 import logging
 from typing import TYPE_CHECKING
 
+from dax.capabilities.protocol import is_canonical_shell
 from dax.core.exceptions import ToolError
 from dax.core.models import ToolCall, ToolResult
 from dax.core.policy import Decision
@@ -126,7 +127,7 @@ class ToolGate:
             )
         # The shell tool is gated by the user-managed binary allowlist, not the
         # name-pattern policy: known binaries run freely, unknown ones prompt.
-        if call.tool_name == _SHELL_TOOL_NAME and self._shell_allow is not None:
+        if self._is_trusted_shell(call) and self._shell_allow is not None:
             return await self._gate_shell(call, channel=channel, session_id=session_id)
         if decision is Decision.ALLOW:
             return None
@@ -157,6 +158,14 @@ class ToolGate:
                 is_error=True,
             )
         return None
+
+    def _is_trusted_shell(self, call: ToolCall) -> bool:
+        if call.tool_name == _SHELL_TOOL_NAME:
+            return call.server_name == "dax-system"
+        if not is_canonical_shell(call.tool_name):
+            return False
+        owner = self._tools.get_server_for_tool(call.tool_name)
+        return owner == call.server_name and owner.startswith("capability-node:")
 
     async def _gate_shell(
         self,

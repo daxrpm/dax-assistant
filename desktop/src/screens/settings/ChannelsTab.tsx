@@ -102,7 +102,7 @@ export function TelegramTab({
 
             <Field
               label="Allowed user IDs"
-              description="Comma separated numeric Telegram IDs. Empty means nobody can reach the bot."
+              description="Comma separated numeric Telegram IDs. Empty allows any Telegram user, so set this before enabling the bot."
             >
               {(id) => (
                 <TextInput

@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
-# Compatibility wrapper. The production installer owns unit generation.
+# Development-only compatibility wrapper. Tagged installs configure services directly.
 set -Eeuo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-exec "$SCRIPT_DIR/install.sh" service "$@"
+SOURCE_ROOT="$(dirname "$SCRIPT_DIR")"
+exec "$SCRIPT_DIR/install.sh" --source "$SOURCE_ROOT" --backend-only "$@"

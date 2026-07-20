@@ -59,6 +59,41 @@ class ToolRegistry:
             if server != server_name
         }
 
+    def replace_server(
+        self,
+        server_name: str,
+        tools: list[dict[str, Any]],
+        *,
+        reject_collisions: bool = False,
+    ) -> None:
+        """Atomically replace one server's inventory."""
+        names = [str(tool["name"]) for tool in tools]
+        if len(names) != len(set(names)):
+            raise ValueError("Duplicate tool names in inventory")
+        if any(tool.get("server_name") != server_name for tool in tools):
+            raise ValueError("Tool inventory has an invalid server owner")
+        if reject_collisions:
+            collisions = {
+                name
+                for name in names
+                if (owner := self._tool_to_server.get(name)) is not None
+                and owner != server_name
+            }
+            if collisions:
+                raise ValueError(
+                    f"Tool name collision: {', '.join(sorted(collisions))}"
+                )
+        retained = [
+            tool for tool in self._tools if tool.get("server_name") != server_name
+        ]
+        retained_lookup = {
+            name: owner
+            for name, owner in self._tool_to_server.items()
+            if owner != server_name
+        }
+        self._tools = [*retained, *tools]
+        self._tool_to_server = retained_lookup | dict.fromkeys(names, server_name)
+
     def clear(self) -> None:
         """Remove all registered tools."""
         self._tools.clear()

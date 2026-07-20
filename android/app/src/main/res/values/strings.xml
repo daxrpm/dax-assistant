@@ -35,6 +35,12 @@
     <string name="setup_error_invalid_qr">This is not a valid Dax pairing QR.</string>
     <string name="setup_error_backend_required">Enter the backend address first.</string>
     <string name="setup_error_backend_invalid">Use HTTPS, or a private-network address without a path.</string>
+    <string name="setup_error_code_invalid">Enter the complete 8-character pairing code.</string>
+    <string name="setup_permissions_title">Your phone is paired</string>
+    <string name="setup_permissions_intro">Dax is connected. The final step enables the phone features you choose to use.</string>
+    <string name="setup_permissions_step">Allow voice and background controls</string>
+    <string name="setup_permissions_detail">Microphone is used only while listening. Bluetooth connects headsets, and notifications keep active voice turns visible. Android will ask for each permission next.</string>
+    <string name="setup_permissions_continue">Review permissions</string>
 
     <string name="conversations_title">Conversations</string>
     <string name="conversations_subtitle">Recent turns on this device. Complete conversation history remains on your backend.</string>
@@ -64,6 +70,40 @@
     <string name="chat_approve_once">Approve once</string>
     <string name="chat_approve_save">Approve and save</string>
     <string name="chat_allow">Allow</string>
+    <string name="chat_new_messages">Jump to new messages</string>
+    <string name="chat_role_you">Message from you</string>
+    <string name="chat_role_assistant">Message from Dax</string>
+    <string name="approval_title">Approve this action?</string>
+    <string name="approval_explanation">Dax wants to run a tool that can change things. Check what it is about to do.</string>
+    <plurals name="approval_timeout">
+        <item quantity="one">If you do nothing, Dax denies this after %1$d second.</item>
+        <item quantity="other">If you do nothing, Dax denies this after %1$d seconds.</item>
+    </plurals>
+    <string name="assistant_start_listening">Start listening</string>
+    <string name="assistant_interrupt">Interrupt and start listening</string>
+    <string name="assistant_settings">Settings and diagnostics</string>
+    <string name="assistant_offline">Offline</string>
+    <string name="assistant_phone">Phone</string>
+    <string name="assistant_wired">Wired</string>
+    <string name="assistant_empty_title">Tap to talk to Dax</string>
+    <string name="assistant_empty_body">Or use the assistant gesture, or a headset button.</string>
+    <string name="assistant_go_ahead">Go ahead</string>
+    <string name="assistant_cancel">Cancel</string>
+    <string name="assistant_running_tool">Running %1$s</string>
+    <string name="assistant_tool_failed">Tool failed</string>
+    <string name="assistant_mic_permission">Microphone permission needed</string>
+    <string name="assistant_mic_rationale">Voice needs microphone access only while Dax is listening. Text chat and settings remain available.</string>
+    <string name="assistant_mic_settings_rationale">Microphone access was blocked. Enable it in Android app settings to use voice; text chat still works.</string>
+    <string name="assistant_allow_microphone">Allow microphone</string>
+    <string name="assistant_open_app_settings">Open app settings</string>
+    <string name="assistant_cancelled">Cancelled</string>
+    <string name="assistant_a11y_idle">Start talking to Dax</string>
+    <string name="assistant_a11y_connecting">Opening the microphone. Tap to cancel.</string>
+    <string name="assistant_a11y_listening">Listening. Tap to cancel.</string>
+    <string name="assistant_a11y_transcribing">Transcribing. Tap to cancel.</string>
+    <string name="assistant_a11y_processing">Dax is thinking. Tap to cancel.</string>
+    <string name="assistant_a11y_speaking">Dax is speaking. Tap to interrupt.</string>
+    <string name="assistant_a11y_failed">Something went wrong. Tap to try again.</string>
 
     <string name="settings_title">Settings</string>
     <string name="settings_secret_note">Provider and voice preferences are loaded from your backend. API keys are never displayed or downloaded.</string>

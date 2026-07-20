@@ -39,6 +39,8 @@ if TYPE_CHECKING:
     from collections.abc import Iterator
 
 logger = logging.getLogger(__name__)
+_KEY_FILE_LOCK = threading.Lock()
+_STORE_INIT_LOCK = threading.Lock()
 
 # Secrets that should never round-trip into os.environ as real exports (the
 # password hash and session secret are read via DAX_ env names, so they DO need
@@ -59,9 +61,10 @@ class SecretStore:
         self._write_lock = threading.RLock()
         self._transaction_connection: sqlite3.Connection | None = None
         self._pending_env: dict[str, str | None] | None = None
-        self._fernet = Fernet(self._load_or_create_key())
-        self._ensure_table()
-        self._validate_existing_material()
+        with _STORE_INIT_LOCK:
+            self._fernet = Fernet(self._load_or_create_key())
+            self._ensure_table()
+            self._validate_existing_material()
 
     # -- key management --
 
@@ -69,27 +72,25 @@ class SecretStore:
         external_key = os.environ.get("DAX_MASTER_KEY")
         if external_key:
             return external_key.encode("ascii")
-        self._db_path.parent.mkdir(parents=True, exist_ok=True)
-        if self._key_path.exists():
-            return self._key_path.read_bytes().strip()
-        if self._has_encrypted_material():
-            raise SecretStoreError(
-                f"Secret key is unavailable for existing encrypted data: {self._key_path}"
-            )
-        key = Fernet.generate_key()
-        # Write with restrictive perms from the start (0600).
-        try:
+        with _KEY_FILE_LOCK:
+            self._db_path.parent.mkdir(parents=True, exist_ok=True)
+            if self._key_path.exists():
+                return self._key_path.read_bytes().strip()
+            if self._has_encrypted_material():
+                raise SecretStoreError(
+                    f"Secret key is unavailable for existing encrypted data: {self._key_path}"
+                )
+            key = Fernet.generate_key()
+            # O_EXCL and the process lock prevent replacement or concurrent creation.
             fd = os.open(
                 self._key_path,
                 os.O_WRONLY | os.O_CREAT | os.O_EXCL,
                 stat.S_IRUSR | stat.S_IWUSR,
             )
-        except FileExistsError:
-            return self._key_path.read_bytes().strip()
-        with os.fdopen(fd, "wb") as f:
-            f.write(key)
-        logger.info("Generated new secret key at %s", self._key_path)
-        return key
+            with os.fdopen(fd, "wb") as f:
+                f.write(key)
+            logger.info("Generated new secret key at %s", self._key_path)
+            return key
 
     def _has_encrypted_material(self) -> bool:
         if not self._db_path.exists():

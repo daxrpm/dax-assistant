@@ -1,6 +1,11 @@
 import { act, renderHook } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { shouldAcceptChatFrame, useChatSocket } from "./useChatSocket";
+import {
+  CHAT_MESSAGE_LIMIT,
+  boundChatMessages,
+  shouldAcceptChatFrame,
+  useChatSocket,
+} from "./useChatSocket";
 
 class FakeWebSocket {
   static instances: FakeWebSocket[] = [];
@@ -35,6 +40,18 @@ describe("useChatSocket session protocol", () => {
     expect(shouldAcceptChatFrame({ session_id: "active" }, "active")).toBe(true);
     expect(shouldAcceptChatFrame({ session_id: "other" }, "active")).toBe(false);
     expect(shouldAcceptChatFrame({}, "active")).toBe(false);
+  });
+
+  it("retains only the newest bounded message window", () => {
+    const messages = Array.from({ length: CHAT_MESSAGE_LIMIT + 2 }, (_, index) => ({
+      id: String(index),
+      role: "user" as const,
+      content: String(index),
+      timestamp: "2026-01-01T00:00:00Z",
+    }));
+    const bounded = boundChatMessages(messages);
+    expect(bounded).toHaveLength(CHAT_MESSAGE_LIMIT);
+    expect(bounded[0]?.id).toBe("2");
   });
 
   it("subscribes on open and transfers ownership when the session changes", () => {
@@ -91,9 +108,10 @@ describe("useChatSocket session protocol", () => {
 
   it("does not reconnect after an authentication failure", () => {
     vi.useFakeTimers();
-    const { unmount } = renderHook(() => useChatSocket("active"));
+    const { result, unmount } = renderHook(() => useChatSocket("active"));
     const socket = FakeWebSocket.instances[0]!;
     act(() => socket.onclose?.({ code: 1008 } as CloseEvent));
+    expect(result.current.authFailed).toBe(true);
     act(() => vi.advanceTimersByTime(10_000));
 
     expect(FakeWebSocket.instances).toHaveLength(1);

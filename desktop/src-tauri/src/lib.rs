@@ -36,18 +36,11 @@ fn authorize_label(label: &str, allowed: &[&str]) -> Result<(), String> {
 }
 
 fn authorize_token_origin(
-    window: &tauri::WebviewWindow,
     state: &BackendState,
     requested: &str,
+    instance_id: &str,
 ) -> Result<String, String> {
-    let origin = state.token_origin(requested)?;
-    if window.label() == HUD_WINDOW {
-        let active = state.settings()?.active_url;
-        if origin != state.token_origin(&active)? {
-            return Err("voice HUD may only access the active backend token".into());
-        }
-    }
-    Ok(origin)
+    state.token_authority(requested, instance_id)
 }
 
 /* ---------------- session token ---------------- */
@@ -57,9 +50,11 @@ fn session_token_get(
     window: tauri::WebviewWindow,
     state: tauri::State<'_, BackendState>,
     origin: String,
+    instance_id: String,
 ) -> Result<Option<String>, String> {
     authorize_caller(&window, &[MAIN_WINDOW, HUD_WINDOW])?;
-    secrets::get(&authorize_token_origin(&window, &state, &origin)?)
+    let origin = authorize_token_origin(&state, &origin, &instance_id)?;
+    secrets::get(&origin, &instance_id)
 }
 
 #[tauri::command]
@@ -67,10 +62,12 @@ fn session_token_set(
     window: tauri::WebviewWindow,
     state: tauri::State<'_, BackendState>,
     origin: String,
+    instance_id: String,
     token: String,
 ) -> Result<(), String> {
     authorize_caller(&window, &[MAIN_WINDOW])?;
-    secrets::set(&state.token_origin(&origin)?, &token)
+    let origin = state.token_authority(&origin, &instance_id)?;
+    secrets::set(&origin, &instance_id, &token)
 }
 
 #[tauri::command]
@@ -78,9 +75,11 @@ fn session_token_clear(
     window: tauri::WebviewWindow,
     state: tauri::State<'_, BackendState>,
     origin: String,
+    instance_id: String,
 ) -> Result<(), String> {
     authorize_caller(&window, &[MAIN_WINDOW])?;
-    secrets::clear(&state.token_origin(&origin)?)
+    let origin = state.token_authority(&origin, &instance_id)?;
+    secrets::clear(&origin, &instance_id)
 }
 
 /* ---------------- backend ---------------- */
@@ -91,7 +90,10 @@ async fn backend_resolve(
     state: tauri::State<'_, BackendState>,
     allow_service_start: bool,
 ) -> Result<BackendResolution, String> {
-    authorize_caller(&window, &[MAIN_WINDOW])?;
+    authorize_caller(&window, &[MAIN_WINDOW, HUD_WINDOW])?;
+    if window.label() == HUD_WINDOW && allow_service_start {
+        return Err("voice HUD may not start the backend service".into());
+    }
     backend::resolve(&state, allow_service_start).await
 }
 
@@ -105,6 +107,20 @@ fn backend_settings_set(
     onboarding_complete: bool,
 ) -> Result<BackendSettings, String> {
     authorize_caller(&window, &[MAIN_WINDOW])?;
+    let current = state.settings()?;
+    let next_url = match strategy {
+        BackendStrategy::Local => backend::validate_local_url(&local_url)?,
+        BackendStrategy::Remote => backend::validate_remote_url(
+            remote_url
+                .as_deref()
+                .ok_or_else(|| "remote_url is required for the remote strategy".to_string())?,
+        )?,
+    };
+    if backend::token_origin(&current.active_url)? != backend::token_origin(&next_url)? {
+        if let Some(instance_id) = current.active_server_id.as_deref() {
+            secrets::clear(&backend::token_origin(&current.active_url)?, instance_id)?;
+        }
+    }
     state.set(strategy, local_url, remote_url, onboarding_complete)
 }
 
@@ -115,6 +131,15 @@ fn backend_settings_get(
 ) -> Result<BackendSettings, String> {
     authorize_caller(&window, &[MAIN_WINDOW, HUD_WINDOW])?;
     state.settings()
+}
+
+#[tauri::command]
+fn backend_authority_replace_confirmed(
+    window: tauri::WebviewWindow,
+    state: tauri::State<'_, BackendState>,
+) -> Result<BackendSettings, String> {
+    authorize_caller(&window, &[MAIN_WINDOW])?;
+    state.reset_authority_pin(secrets::clear_authority)
 }
 
 #[tauri::command]
@@ -181,10 +206,11 @@ fn media_spectrum_stop(
 #[tauri::command]
 async fn service_control(
     window: tauri::WebviewWindow,
+    target: service::ServiceTarget,
     action: service::ServiceAction,
 ) -> Result<service::ServiceStatus, String> {
     authorize_caller(&window, &[MAIN_WINDOW])?;
-    service::control(action).await
+    service::control_target(target, action).await
 }
 
 #[tauri::command]
@@ -284,6 +310,7 @@ pub fn run() {
             backend_resolve,
             backend_settings_set,
             backend_settings_get,
+            backend_authority_replace_confirmed,
             system_metrics,
             media_status,
             media_control,

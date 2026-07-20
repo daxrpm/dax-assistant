@@ -30,6 +30,12 @@ export interface ConfirmationRequest {
 
 type Status = "connecting" | "open" | "closed";
 
+export const CHAT_MESSAGE_LIMIT = 500;
+export const CHAT_EVENT_LIMIT = 200;
+
+export const boundChatMessages = (messages: ChatMessage[]) =>
+  messages.slice(-CHAT_MESSAGE_LIMIT);
+
 function wsUrl(): string {
   const proto = window.location.protocol === "https:" ? "wss" : "ws";
   return `${proto}://${window.location.host}/ws/chat`;
@@ -46,8 +52,9 @@ export function shouldAcceptChatFrame(
 }
 
 export function useChatSocket(sessionId: string, initialMessages: ChatMessage[] = []) {
-  const [messages, setMessages] = useState<ChatMessage[]>(initialMessages);
+  const [messages, setMessages] = useState<ChatMessage[]>(boundChatMessages(initialMessages));
   const [status, setStatus] = useState<Status>("connecting");
+  const [authFailed, setAuthFailed] = useState(false);
   const [thinking, setThinking] = useState(false);
   const [confirmation, setConfirmation] = useState<ConfirmationRequest | null>(null);
   // Live events for the in-flight response — exposed as STATE so the UI shows
@@ -71,7 +78,7 @@ export function useChatSocket(sessionId: string, initialMessages: ChatMessage[] 
       }));
       ws.send(JSON.stringify({ type: "session_subscribe", session_ids: [sessionId] }));
     }
-    setMessages(initialMessages);
+    setMessages(boundChatMessages(initialMessages));
     setThinking(false);
     pendingEvents.current = [];
     setLiveEvents([]);
@@ -90,11 +97,13 @@ export function useChatSocket(sessionId: string, initialMessages: ChatMessage[] 
         session_ids: [sessionIdRef.current],
       }));
       setStatus("open");
+      setAuthFailed(false);
     };
     ws.onclose = (event) => {
       if (socketRef.current !== ws) return;
       socketRef.current = null;
       setStatus("closed");
+      setAuthFailed(event.code === 1008);
       if (event.code !== 1008 && shouldReconnectRef.current) {
         retryRef.current = setTimeout(connect, 2000);
       }
@@ -124,7 +133,7 @@ export function useChatSocket(sessionId: string, initialMessages: ChatMessage[] 
         } else if (ev.type === "done") {
           thinkingElapsed.current = ev.elapsed_s;
         } else {
-          pendingEvents.current = [...pendingEvents.current, ev];
+          pendingEvents.current = [...pendingEvents.current, ev].slice(-CHAT_EVENT_LIMIT);
           setLiveEvents(pendingEvents.current); // live update for the UI
         }
         return;
@@ -138,7 +147,7 @@ export function useChatSocket(sessionId: string, initialMessages: ChatMessage[] 
         thinkingElapsed.current = undefined;
         setThinking(false);
         setLiveEvents([]);
-        setMessages((prev) => [
+        setMessages((prev) => boundChatMessages([
           ...prev,
           {
             id: nextId(),
@@ -148,14 +157,14 @@ export function useChatSocket(sessionId: string, initialMessages: ChatMessage[] 
             agentEvents: events.length > 0 ? events : undefined,
             thinkingElapsed: elapsed,
           },
-        ]);
+        ]));
         return;
       }
 
       // Legacy format (no type field) — backward compat
       if (!data.type && data.role === "assistant" && typeof data.content === "string") {
         setThinking(false);
-        setMessages((prev) => [
+        setMessages((prev) => boundChatMessages([
           ...prev,
           {
             id: nextId(),
@@ -163,7 +172,7 @@ export function useChatSocket(sessionId: string, initialMessages: ChatMessage[] 
             content: data.content as string,
             timestamp: (data.timestamp as string) ?? new Date().toISOString(),
           },
-        ]);
+        ]));
       }
     };
   }, []);
@@ -193,10 +202,10 @@ export function useChatSocket(sessionId: string, initialMessages: ChatMessage[] 
     pendingEvents.current = [];
     thinkingElapsed.current = undefined;
     setLiveEvents([]);
-    setMessages((prev) => [
+    setMessages((prev) => boundChatMessages([
       ...prev,
       { id: nextId(), role: "user", content, timestamp: new Date().toISOString() },
-    ]);
+    ]));
     setThinking(true);
     ws.send(
       JSON.stringify({ content, language: "auto", session_id: sessionIdRef.current }),
@@ -211,13 +220,17 @@ export function useChatSocket(sessionId: string, initialMessages: ChatMessage[] 
     setConfirmation(null);
   }, []);
 
+  const expireConfirmation = useCallback(() => setConfirmation(null), []);
+
   return {
     messages,
     status,
+    authFailed,
     thinking,
     liveEvents,
     confirmation,
     send,
     respondConfirmation,
+    expireConfirmation,
   };
 }

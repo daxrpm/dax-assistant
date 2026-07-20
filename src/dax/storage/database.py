@@ -19,7 +19,7 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
-SCHEMA_VERSION = 5
+SCHEMA_VERSION = 6
 
 _PROCESS_LOCKS: dict[Path, tuple[int, IO[bytes]]] = {}
 _PROCESS_LOCKS_GUARD = threading.Lock()
@@ -115,7 +115,8 @@ CREATE TABLE IF NOT EXISTS devices (
     secret_hash TEXT NOT NULL,
     created_at TEXT NOT NULL,
     last_seen_at TEXT NOT NULL DEFAULT '',
-    revoked_at TEXT NOT NULL DEFAULT ''
+    revoked_at TEXT NOT NULL DEFAULT '',
+    kind TEXT NOT NULL DEFAULT 'client'
 );
 """
 
@@ -233,3 +234,10 @@ class Database:
             "CREATE INDEX IF NOT EXISTS idx_conversations_channel_session "
             "ON conversations(channel, session_key)"
         )
+        cursor = await conn.execute("PRAGMA table_info(devices)")
+        device_columns = {row["name"] for row in await cursor.fetchall()}
+        if "kind" not in device_columns:
+            await conn.execute(
+                "ALTER TABLE devices ADD COLUMN kind TEXT NOT NULL DEFAULT 'client'"
+            )
+            logger.info("Migrated devices: added kind column")

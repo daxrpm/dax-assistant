@@ -1,70 +1,73 @@
 # Dax Desktop
 
-Cliente nativo de Dax para Linux, construido con Tauri v2, React 19 y
-TypeScript. Se conecta directamente por HTTP/WebSocket al backend Python y no
-incluye un sidecar Python. [`../docs/desktop-architecture.md`](../docs/desktop-architecture.md)
-es la referencia principal de límites e invariantes.
+The first-class Linux client, built with Tauri v2, React 19, and TypeScript. It
+calls the authoritative Python backend directly over HTTP/WebSocket and does not
+embed a Python sidecar or proxy application traffic through Rust. See
+[`../docs/desktop-architecture.md`](../docs/desktop-architecture.md) for the
+architectural invariants.
 
-## Implementación
+## Implemented Surface
 
-- Chat completo con conversaciones persistidas, Markdown, eventos del agente,
-  confirmaciones y correlación estricta mediante `session_id`.
-- Settings 6.0 declarativo y buscable: Voz, Inteligencia, Capacidades, Memoria,
-  Canales, Acceso y Sistema. Un test compara el registro con todas las hojas de
-  `DaxConfig`.
-- HUD de voz separado, tray, `Super+Shift+D` para enfocar Dax y `Ctrl+Space`
-  press/release para PTT.
-- Orb pseudo-3D en Canvas 2D con esfera, órbitas y partículas. Waves separadas
-  para micrófono y TTS reciben RMS, peak y spectrum mediante refs imperativas y
-  buffers acotados; los level frames no pasan por React state.
-- Paleta oscura azul-negra con surface steps y elevación suave. El frame custom
-  de 31 px es el predeterminado; Settings permite cambiar en vivo a decoraciones
-  nativas sin alterar el HUD.
-- Voz local mediante el micrófono del host del backend y voz remota PTT mediante
-  PCM mono de 16 kHz por `/ws/voice`. El TTS remoto se reproduce en los altavoces
-  del servidor, no vuelve como audio al cliente.
-- Texto Kokoro sincronizado por frase en el command deck y el HUD. El evento se
-  emite después de sintetizar y justo antes de reproducir audio.
-- Card MPRIS con espectro PipeWire de 40 bandas, artwork validado y ducking
-  configurable por dispositivo; restaura exactamente el volumen original.
-- Métricas nativas de CPU, memoria, uptime y discos; control allowlisted de
-  `dax-assistant.service` con `systemctl --user`.
-- Autostart y notificaciones nativas configurables. La notificación de
-  desconexión se emite después de tres health checks fallidos.
-- Interfaz ES/EN, preferencia persistida, layout responsive a 900/720 px,
-  pantallas pesadas en lazy chunks y stores WebSocket compartidos por demanda.
-- URLs remotas únicamente por HTTPS/WSS; HTTP/WS sólo se admite para loopback.
-  Los tokens se guardan por origen en el keyring del SO.
+- Session-isolated chat with persisted conversations, Markdown, agent activity,
+  tool approvals, and strict `session_id` correlation.
+- Searchable declarative Settings covering every `DaxConfig` leaf, MCP and
+  devices, logs, host metrics, and allowlisted systemd controls.
+- Command-deck home, command palette, tray, global shortcuts, autostart, native
+  notifications, custom/native main-window chrome, and a separate voice HUD.
+- Canvas 2D voice rendering with imperative, bounded input/output level buffers;
+  high-rate frames do not pass through React state.
+- Local backend-host voice and remote PTT microphone input as PCM16LE 16 kHz mono
+  over `/ws/voice`. Default server output plays on the backend host. A
+  `client_text` lease emits text and suppresses server synthesis/playback; the
+  desktop currently uses server output. Streaming synthesized audio back to the
+  desktop is not implemented.
+- Spanish and English UI, responsive layouts, lazy screen chunks, and
+  demand-managed realtime stores.
 
-## Primera ejecución y conexión
+The browser, desktop, and Android surfaces share backend capabilities and wire
+contracts, but they are not pixel-identical. Desktop intentionally owns Linux
+windowing, tray, shortcuts, keyring, host metrics, local systemd controls, media
+integration, and the voice HUD. Business logic and persisted state remain on the
+backend.
 
-El onboarding nativo se completa antes de autenticar. Explica privacidad,
-permite elegir `local`, `remote` o `hybrid`, valida las URLs y comprueba la
-conectividad. Detectar `dax-assistant.service` no implica iniciarlo: la app pide
-consentimiento explícito antes de ejecutar el `systemctl --user start`
-allowlisted.
+## First Run And Authority
 
-La configuración nativa usa el esquema v2; el documento v1 `{mode,url}` se
-migra al leerlo y se reescribe de forma atómica. En `hybrid`, remoto se intenta
-primero y sólo se hace fallback a loopback tras tres fallos confirmados. No hay
-failback automático durante una sesión activa. Cambiar de origen cierra los
-stores realtime y carga únicamente el token de ese origen. Desktop Settings y
-la pantalla de backend inaccesible permiten reconfigurar la estrategia después
-del onboarding.
+Native onboarding completes before authentication. It explains processing and
+privacy, selects `local` or `remote`, validates connectivity, and asks before
+starting the existing local `dax-assistant.service`.
 
-## Requisitos
+- `local` deliberately selects the laptop's validated loopback service as the
+  one authoritative backend. It is not a fallback target.
+- `remote` selects one validated HTTPS backend. It never falls back to loopback.
+- Remote HTTP/WS is rejected; non-loopback connections require HTTPS/WSS.
 
-Fedora 44:
+Rust connection settings use schema v3. Schema-v2 local and remote settings keep
+their meaning; historical schema-v2 `hybrid` settings migrate to `remote` using
+their configured `remote_url`, with no fallback behavior. Legacy v1 settings are
+also migrated and rewritten atomically.
+
+Health resolution accepts only a ready Dax API reporting `role=authoritative`,
+`api_protocol=dax`, a compatible API version, and a non-empty `instance_id`.
+Tokens are stored in the OS keyring by normalized origin plus `instance_id`.
+Changing either identity closes realtime stores and never reuses the previous
+credential.
+
+The optional laptop capability node is independent from connection strategy.
+Create its enrollment code in the paired-devices UI, then follow
+[`../docs/capability-nodes.md`](../docs/capability-nodes.md). Running a node does
+not make this desktop a backend.
+
+## Requirements And Development
+
+Fedora build dependencies:
 
 ```bash
 sudo dnf install webkit2gtk4.1-devel openssl-devel curl wget file \
   libappindicator-gtk3-devel librsvg2-devel libxdo-devel gcc gcc-c++ make
 ```
 
-También se requieren Rust stable y Node 22 LTS para compilar. El backend se
-instala y opera por separado según el `README.md` raíz.
-
-## Desarrollo
+Rust stable and Node 22 LTS are also required. Install and operate the backend
+separately as described in the root `README.md`.
 
 ```bash
 cd desktop
@@ -72,23 +75,19 @@ npm install
 npm run tauri dev
 ```
 
-El backend añade automáticamente `tauri://localhost` y
-`http://tauri.localhost` a CORS. No hay que editar `web.cors_origins` para la app
-empaquetada. En desarrollo, Vite usa `http://localhost:5273`; si se ejecuta la UI
-contra un backend separado, añada ese origen a la configuración de desarrollo.
+Packaged webviews use trusted Tauri origins configured by the backend. The Vite
+development origin is `http://localhost:5273` and may need an explicit
+development CORS entry. A plain `cargo build` does not embed `dist/`; use
+`npm run tauri dev` or `npm run tauri build`.
 
-Un `cargo build` normal no embebe `dist/`: el binario debug espera el `devUrl` y
-muestra una ventana vacía si Vite no está ejecutándose. Use `npm run tauri dev`
-o `npm run tauri build`.
+## Verification
 
-## Verificación reproducible
-
-Desde la raíz del repositorio:
+From the repository root:
 
 ```bash
-~/.local/bin/uv run pytest -q
-~/.local/bin/uv run ruff check src tests
-~/.local/bin/uv run mypy src
+uv run pytest
+uv run ruff check src tests
+uv run mypy src
 
 cd desktop
 npm run typecheck
@@ -102,45 +101,21 @@ cargo test --all-targets --all-features
 cargo clippy --all-targets --all-features -- -D warnings
 ```
 
-Última ejecución registrada, 2026-07-19: 316 tests backend, 61 frontend y 26
-Rust; `npm audit --omit=dev` informó 0 vulnerabilidades, y build, ruff, mypy y
-clippy quedaron limpios.
+Do not infer hardware or packaging success from automated checks. Real
+microphone/speaker/wake-word behavior, two-host remote PTT, visual/accessibility
+review, Wayland HUD placement, final CPU/PSS profiling, signing, and clean RPM or
+deb install/uninstall are separate gates.
 
-## Paquetes
+## Packages
 
 ```bash
 cd desktop
 npm run tauri build
-# o sólo uno:
 npm run tauri build -- --bundles rpm
 npm run tauri build -- --bundles deb
 ```
 
-Targets soportados: RPM y deb. No se configura AppImage ni Flatpak. La build del
-2026-07-19 produjo:
-
-| Artefacto | Tamaño exacto |
-| --- | ---: |
-| `src-tauri/target/release/dax-desktop` | 7,363,440 bytes |
-| `bundle/rpm/Dax-0.1.0-1.x86_64.rpm` | 3,426,926 bytes |
-| `bundle/deb/Dax_0.1.0_amd64.deb` | 3,425,614 bytes |
-
-Estos artefactos se compilaron correctamente, pero no consta una instalación en
-un Fedora limpio.
-
-## Límites verificados
-
-- GNOME/Wayland crea el HUD transparente y always-on-top, pero puede ignorar su
-  posición y tamaño solicitados. El compositor decide la colocación; el clipping
-  visual de sombras aún requiere inspección humana.
-- Las pruebas automatizadas no sustituyen una revisión visual humana, una prueba
-  real de micrófono/altavoces/PTT/wake word ni una comprobación completa de
-  teclado y accesibilidad.
-- Siguen pendientes la validación de audio y visualización con hardware, la
-  revisión visual completa, Wayland interactivo, PTT remoto entre dos hosts y
-  la instalación/desinstalación en un sistema limpio.
-- El modo sidecar no se distribuye. La app controla el servicio de usuario local
-  o se conecta a un backend remoto HTTPS.
-
-`PLAN.md` conserva las decisiones cerradas y el registro detallado de hitos;
-`docs/desktop-architecture.md` es la referencia arquitectónica principal.
+RPM and deb are the supported desktop targets; AppImage and Flatpak are not
+configured. Linux packages do not contain or install the Android APK. Tagged
+release artifacts and their attestation flow are documented in
+[`../docs/releases.md`](../docs/releases.md).

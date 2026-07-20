@@ -1,5 +1,9 @@
 package com.dax.assistant.ui.assistant
 
+import android.database.ContentObserver
+import android.os.Handler
+import android.os.Looper
+import android.provider.Settings
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
@@ -7,6 +11,7 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -16,7 +21,8 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.layout.systemBarsPadding
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.CircleShape
@@ -27,10 +33,18 @@ import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material3.Icon
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.platform.LocalHapticFeedback
+import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.contentDescription
@@ -43,9 +57,12 @@ import com.dax.assistant.assistant.AgentActivity
 import com.dax.assistant.assistant.AssistantError
 import com.dax.assistant.assistant.AssistantState
 import com.dax.assistant.assistant.Turn
+import com.dax.assistant.R
 import com.dax.assistant.audio.AudioRouteKind
 import com.dax.assistant.ui.design.Orbita
 import com.dax.assistant.ui.design.OrbitaType
+import com.dax.assistant.ui.MicrophonePermissionState
+import kotlinx.coroutines.flow.StateFlow
 
 /**
  * The assistant surface.
@@ -62,21 +79,44 @@ import com.dax.assistant.ui.design.OrbitaType
 @Composable
 fun AssistantScreen(
     state: AssistantState,
+    inputLevel: StateFlow<Float>,
     history: List<Turn>,
     onTrigger: () -> Unit,
     onCancel: () -> Unit,
     onApprove: (String) -> Unit,
+    microphonePermission: MicrophonePermissionState,
+    onRequestMicrophone: () -> Unit,
     onOpenSettings: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
     val haptics = LocalHapticFeedback.current
+    val orbDescription = describeForAccessibility(state)
+    val reduceMotion = rememberReduceMotion()
+    val fontScale = LocalDensity.current.fontScale
 
-    Box(
+    BoxWithConstraints(
         modifier = modifier
             .fillMaxSize()
-            .background(Orbita.colors.bgWindow)
-            .systemBarsPadding(),
+            .background(Orbita.colors.bgWindow),
     ) {
+        val shortHeight = maxHeight < 620.dp || (fontScale >= 1.5f && maxHeight < 760.dp)
+        val compactHeight = maxHeight < 620.dp
+        val compactOrb = compactHeight || maxWidth < 340.dp
+        if (shortHeight) {
+            Column(
+                Modifier.fillMaxSize().verticalScroll(rememberScrollState())
+                    .padding(horizontal = Orbita.spacing.edge),
+                horizontalAlignment = Alignment.CenterHorizontally,
+            ) {
+                TopBar(state = state, onOpenSettings = onOpenSettings)
+                LiveText(state, compact = true)
+                VoiceControls(
+                    state, inputLevel, compactOrb, reduceMotion, microphonePermission,
+                    orbDescription, onTrigger, onCancel, onRequestMicrophone,
+                )
+                Spacer(Modifier.height(Orbita.spacing.x3))
+            }
+        } else {
         Column(
             modifier = Modifier
                 .fillMaxSize()
@@ -85,7 +125,7 @@ fun AssistantScreen(
         ) {
             TopBar(state = state, onOpenSettings = onOpenSettings)
 
-            Spacer(Modifier.height(Orbita.spacing.x4))
+            Spacer(Modifier.height(if (compactHeight) Orbita.spacing.x1 else Orbita.spacing.x4))
 
             // History sits above the orb and shrinks as the live area grows,
             // so the thing currently happening always owns the centre.
@@ -97,40 +137,50 @@ fun AssistantScreen(
                 }
             }
 
-            LiveText(state)
+            LiveText(state, compact = false)
 
             Spacer(Modifier.height(Orbita.spacing.x5))
 
             VoiceOrb(
                 state = state,
+                inputLevel = inputLevel,
+                compact = compactOrb,
+                reduceMotion = reduceMotion,
                 modifier = Modifier
                     .clip(CircleShape)
                     .clickable(
                         enabled = state.canStartTurn,
                         role = Role.Button,
                         onClickLabel = if (state is AssistantState.Idle) {
-                            "Start listening"
+                            stringResource(R.string.assistant_start_listening)
                         } else {
-                            "Interrupt and start listening"
+                            stringResource(R.string.assistant_interrupt)
                         },
                     ) {
                         haptics.performHapticFeedback(HapticFeedbackType.LongPress)
-                        onTrigger()
+                        if (microphonePermission == MicrophonePermissionState.Granted) {
+                            onTrigger()
+                        } else {
+                            onRequestMicrophone()
+                        }
                     }
                     .semantics {
-                        contentDescription = describeForAccessibility(state)
+                        contentDescription = orbDescription
                     },
             )
 
-            Spacer(Modifier.height(Orbita.spacing.x4))
+            Spacer(Modifier.height(if (compactHeight) Orbita.spacing.x2 else Orbita.spacing.x4))
 
             StatusLine(state)
 
-            Spacer(Modifier.height(Orbita.spacing.x5))
+            VoicePermissionNotice(microphonePermission, onRequestMicrophone)
+
+            Spacer(Modifier.height(if (compactHeight) Orbita.spacing.x2 else Orbita.spacing.x5))
 
             CancelControl(state = state, onCancel = onCancel)
 
-            Spacer(Modifier.height(Orbita.spacing.x6))
+            Spacer(Modifier.height(if (compactHeight) Orbita.spacing.x2 else Orbita.spacing.x6))
+        }
         }
 
         // The approval sheet is modal on purpose. A gated tool is an
@@ -150,7 +200,78 @@ fun AssistantScreen(
 }
 
 @Composable
+private fun VoiceControls(
+    state: AssistantState,
+    inputLevel: StateFlow<Float>,
+    compact: Boolean,
+    reduceMotion: Boolean,
+    microphonePermission: MicrophonePermissionState,
+    orbDescription: String,
+    onTrigger: () -> Unit,
+    onCancel: () -> Unit,
+    onRequestMicrophone: () -> Unit,
+) {
+    val haptics = LocalHapticFeedback.current
+    VoiceOrb(
+        state = state,
+        inputLevel = inputLevel,
+        compact = compact,
+        reduceMotion = reduceMotion,
+        modifier = Modifier.clip(CircleShape).clickable(
+            enabled = state.canStartTurn,
+            role = Role.Button,
+        ) {
+            haptics.performHapticFeedback(HapticFeedbackType.LongPress)
+            if (microphonePermission == MicrophonePermissionState.Granted) onTrigger()
+            else onRequestMicrophone()
+        }.semantics { contentDescription = orbDescription },
+    )
+    Spacer(Modifier.height(Orbita.spacing.x1))
+    StatusLine(state)
+    VoicePermissionNotice(microphonePermission, onRequestMicrophone)
+    Spacer(Modifier.height(Orbita.spacing.x1))
+    CancelControl(state, onCancel)
+}
+
+@Composable
+private fun VoicePermissionNotice(
+    permission: MicrophonePermissionState,
+    onAction: () -> Unit,
+) {
+    if (permission == MicrophonePermissionState.Granted) return
+    Column(horizontalAlignment = Alignment.CenterHorizontally) {
+        Text(
+            stringResource(
+                if (permission == MicrophonePermissionState.PermanentlyDenied) {
+                    R.string.assistant_mic_settings_rationale
+                } else {
+                    R.string.assistant_mic_rationale
+                },
+            ),
+            style = OrbitaType.footnote,
+            color = Orbita.colors.fgTertiary,
+            textAlign = TextAlign.Center,
+        )
+        Text(
+            stringResource(
+                if (permission == MicrophonePermissionState.PermanentlyDenied) {
+                    R.string.assistant_open_app_settings
+                } else {
+                    R.string.assistant_allow_microphone
+                },
+            ),
+            style = OrbitaType.callout,
+            color = Orbita.colors.accent,
+            modifier = Modifier.clip(RoundedCornerShape(Orbita.radii.md))
+                .clickable(role = Role.Button, onClick = onAction)
+                .padding(horizontal = Orbita.spacing.x3, vertical = Orbita.spacing.x2),
+        )
+    }
+}
+
+@Composable
 private fun TopBar(state: AssistantState, onOpenSettings: () -> Unit) {
+    val settingsDescription = stringResource(R.string.assistant_settings)
     Row(
         modifier = Modifier.fillMaxWidth().padding(top = Orbita.spacing.x3),
         verticalAlignment = Alignment.CenterVertically,
@@ -162,7 +283,7 @@ private fun TopBar(state: AssistantState, onOpenSettings: () -> Unit) {
                 .size(Orbita.sizing.minTouchTarget)
                 .clip(CircleShape)
                 .clickable(role = Role.Button, onClick = onOpenSettings)
-                .semantics { contentDescription = "Settings and diagnostics" },
+                .semantics { contentDescription = settingsDescription },
             contentAlignment = Alignment.Center,
         ) {
             Icon(
@@ -185,11 +306,11 @@ private fun RouteChip(state: AssistantState) {
         else -> null
     }
     val label = when {
-        state is AssistantState.Disconnected -> "Offline"
-        route == null -> "Phone"
+        state is AssistantState.Disconnected -> stringResource(R.string.assistant_offline)
+        route == null -> stringResource(R.string.assistant_phone)
         route.kind == AudioRouteKind.BLUETOOTH_SCO -> route.productName
-        route.kind == AudioRouteKind.WIRED -> "Wired"
-        else -> "Phone"
+        route.kind == AudioRouteKind.WIRED -> stringResource(R.string.assistant_wired)
+        else -> stringResource(R.string.assistant_phone)
     }
     val tone =
         if (state is AssistantState.Disconnected) Orbita.colors.danger else Orbita.colors.fgTertiary
@@ -209,13 +330,13 @@ private fun EmptyState(state: AssistantState) {
         modifier = Modifier.padding(bottom = Orbita.spacing.x6),
     ) {
         Text(
-            text = "Tap to talk to Dax",
+            text = stringResource(R.string.assistant_empty_title),
             style = OrbitaType.title2,
             color = Orbita.colors.fgSecondary,
         )
         Spacer(Modifier.height(Orbita.spacing.x2))
         Text(
-            text = "Or use the assistant gesture, or a headset button.",
+            text = stringResource(R.string.assistant_empty_body),
             style = OrbitaType.callout,
             color = Orbita.colors.fgQuaternary,
             textAlign = TextAlign.Center,
@@ -255,7 +376,7 @@ private fun History(history: List<Turn>) {
 
 /** Live transcription and streamed reply — the text that changes as you speak. */
 @Composable
-private fun LiveText(state: AssistantState) {
+private fun LiveText(state: AssistantState, compact: Boolean) {
     val text = when (state) {
         is AssistantState.Listening -> state.partialTranscript
         is AssistantState.Transcribing -> state.partialTranscript
@@ -265,7 +386,7 @@ private fun LiveText(state: AssistantState) {
         else -> ""
     }
     Box(
-        modifier = Modifier.fillMaxWidth().heightIn(min = 64.dp),
+        modifier = Modifier.fillMaxWidth().heightIn(min = if (compact) 36.dp else 64.dp),
         contentAlignment = Alignment.Center,
     ) {
         if (text.isNotBlank()) {
@@ -287,19 +408,43 @@ private fun LiveText(state: AssistantState) {
 }
 
 @Composable
+private fun rememberReduceMotion(): Boolean {
+    val context = LocalContext.current
+    val resolver = context.contentResolver
+    fun readScale() = runCatching {
+        Settings.Global.getFloat(resolver, Settings.Global.ANIMATOR_DURATION_SCALE) == 0f
+    }.getOrDefault(false)
+    var reduceMotion by remember(resolver) { mutableStateOf(readScale()) }
+    DisposableEffect(resolver) {
+        val observer = object : ContentObserver(Handler(Looper.getMainLooper())) {
+            override fun onChange(selfChange: Boolean) {
+                reduceMotion = readScale()
+            }
+        }
+        resolver.registerContentObserver(
+            Settings.Global.getUriFor(Settings.Global.ANIMATOR_DURATION_SCALE),
+            false,
+            observer,
+        )
+        onDispose { resolver.unregisterContentObserver(observer) }
+    }
+    return reduceMotion
+}
+
+@Composable
 private fun StatusLine(state: AssistantState) {
     val (label, tone) = when (state) {
         is AssistantState.Idle -> "" to Orbita.colors.fgTertiary
-        is AssistantState.ConnectingAudio -> "Opening the microphone" to Orbita.colors.fgTertiary
+        is AssistantState.ConnectingAudio -> stringResource(R.string.status_connecting_audio) to Orbita.colors.fgTertiary
         is AssistantState.Listening ->
-            (if (state.speechDetected) "Listening" else "Go ahead") to Orbita.colors.accent
+            stringResource(if (state.speechDetected) R.string.status_listening else R.string.assistant_go_ahead) to Orbita.colors.accent
 
-        is AssistantState.Transcribing -> "Transcribing" to Orbita.colors.purple
+        is AssistantState.Transcribing -> stringResource(R.string.status_transcribing) to Orbita.colors.purple
         is AssistantState.Processing -> describeActivity(state.activity) to Orbita.colors.purple
-        is AssistantState.AwaitingApproval -> "Needs your approval" to Orbita.colors.warning
-        is AssistantState.Speaking -> "Speaking" to Orbita.colors.success
+        is AssistantState.AwaitingApproval -> stringResource(R.string.status_needs_approval) to Orbita.colors.warning
+        is AssistantState.Speaking -> stringResource(R.string.status_speaking) to Orbita.colors.success
         is AssistantState.Disconnected ->
-            (if (state.reconnecting) "Reconnecting…" else state.reason) to Orbita.colors.danger
+            (if (state.reconnecting) stringResource(R.string.chat_reconnecting) else state.reason) to Orbita.colors.danger
 
         is AssistantState.Failed -> describeError(state.error) to Orbita.colors.danger
     }
@@ -337,35 +482,38 @@ private fun CancelControl(state: AssistantState, onCancel: () -> Unit) {
                 modifier = Modifier.size(16.dp),
             )
             Spacer(Modifier.size(Orbita.spacing.x2))
-            Text(text = "Cancel", style = OrbitaType.callout, color = Orbita.colors.fgSecondary)
+            Text(text = stringResource(R.string.assistant_cancel), style = OrbitaType.callout, color = Orbita.colors.fgSecondary)
         }
     }
 }
 
+@Composable
 private fun describeActivity(activity: AgentActivity?): String = when (activity) {
-    null, AgentActivity.Thinking -> "Thinking"
-    is AgentActivity.RunningTool -> "Running ${activity.toolName}"
-    is AgentActivity.ToolFinished -> if (activity.ok) "Thinking" else "Tool failed"
+    null, AgentActivity.Thinking -> stringResource(R.string.status_thinking)
+    is AgentActivity.RunningTool -> stringResource(R.string.assistant_running_tool, activity.toolName)
+    is AgentActivity.ToolFinished -> if (activity.ok) stringResource(R.string.status_thinking) else stringResource(R.string.assistant_tool_failed)
 }
 
+@Composable
 private fun describeError(error: AssistantError): String = when (error) {
     is AssistantError.Network -> error.detail
     is AssistantError.Authentication -> error.detail
     is AssistantError.Audio -> error.detail
     is AssistantError.Recognition -> error.detail
     is AssistantError.Backend -> error.detail
-    AssistantError.PermissionDenied -> "Microphone permission needed"
-    AssistantError.Cancelled -> "Cancelled"
+    AssistantError.PermissionDenied -> stringResource(R.string.assistant_mic_permission)
+    AssistantError.Cancelled -> stringResource(R.string.assistant_cancelled)
 }
 
+@Composable
 private fun describeForAccessibility(state: AssistantState): String = when (state) {
-    is AssistantState.Idle -> "Start talking to Dax"
-    is AssistantState.ConnectingAudio -> "Opening the microphone. Tap to cancel."
-    is AssistantState.Listening -> "Listening. Tap to cancel."
-    is AssistantState.Transcribing -> "Transcribing. Tap to cancel."
-    is AssistantState.Processing -> "Dax is thinking. Tap to cancel."
-    is AssistantState.AwaitingApproval -> "Waiting for your approval"
-    is AssistantState.Speaking -> "Dax is speaking. Tap to interrupt."
-    is AssistantState.Disconnected -> "Not connected to Dax"
-    is AssistantState.Failed -> "Something went wrong. Tap to try again."
+    is AssistantState.Idle -> stringResource(R.string.assistant_a11y_idle)
+    is AssistantState.ConnectingAudio -> stringResource(R.string.assistant_a11y_connecting)
+    is AssistantState.Listening -> stringResource(R.string.assistant_a11y_listening)
+    is AssistantState.Transcribing -> stringResource(R.string.assistant_a11y_transcribing)
+    is AssistantState.Processing -> stringResource(R.string.assistant_a11y_processing)
+    is AssistantState.AwaitingApproval -> stringResource(R.string.status_needs_approval)
+    is AssistantState.Speaking -> stringResource(R.string.assistant_a11y_speaking)
+    is AssistantState.Disconnected -> stringResource(R.string.status_disconnected)
+    is AssistantState.Failed -> stringResource(R.string.assistant_a11y_failed)
 }

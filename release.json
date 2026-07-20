@@ -1,0 +1,9 @@
+{
+  "version": "0.1.0",
+  "api_compatibility": {
+    "backend": "1",
+    "desktop": "1",
+    "android": "1",
+    "capability_node": "1"
+  }
+}

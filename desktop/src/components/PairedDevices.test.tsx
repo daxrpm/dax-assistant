@@ -1,4 +1,4 @@
-import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { api } from "../api/client";
@@ -10,6 +10,7 @@ vi.mock("../api/client", () => ({
     devices: vi.fn(),
     pairDevice: vi.fn(),
     revokeDevice: vi.fn(),
+    deleteDevice: vi.fn(),
   },
 }));
 
@@ -25,6 +26,7 @@ function device(overrides: Partial<Record<string, unknown>> = {}) {
     revoked_at: null,
     revoked: false,
     connected: false,
+    kind: "client",
     ...overrides,
   };
 }
@@ -59,7 +61,7 @@ describe("PairedDevices", () => {
     } as never);
     renderPane();
 
-    fireEvent.click(await screen.findByRole("button"));
+    fireEvent.click(await screen.findByRole("button", { name: /pair a phone|vincular un teléfono/i }));
 
     // Rendered with separators so it can be read off one screen and typed
     // into another without losing place.
@@ -76,7 +78,7 @@ describe("PairedDevices", () => {
     } as never);
     renderPane();
 
-    fireEvent.click(await screen.findByRole("button"));
+    fireEvent.click(await screen.findByRole("button", { name: /pair a phone|vincular un teléfono/i }));
 
     expect(await screen.findByText(/300|299/)).toBeTruthy();
   });
@@ -102,15 +104,14 @@ describe("PairedDevices", () => {
     expect(await screen.findByText(/connected now|conectado ahora/i)).toBeTruthy();
   });
 
-  it("hides revoked devices from the deck", async () => {
+  it("keeps revoked devices visible so they can be deleted", async () => {
     mockApi.devices.mockResolvedValue({
       devices: [device({ revoked: true, revoked_at: new Date().toISOString() })],
     } as never);
     renderPane();
 
-    await waitFor(() => {
-      expect(screen.queryByText("23129RA5FL")).toBeNull();
-    });
+    expect(await screen.findByText("23129RA5FL")).toBeTruthy();
+    expect(screen.getByText(/revoked|revocado/i)).toBeTruthy();
   });
 
   it("revokes and refreshes", async () => {
@@ -119,9 +120,8 @@ describe("PairedDevices", () => {
     renderPane();
 
     await screen.findByText("23129RA5FL");
-    const revoke = screen.getAllByRole("button").at(-1);
-    if (!revoke) throw new Error("no revoke control rendered");
-    fireEvent.click(revoke);
+    fireEvent.click(screen.getByRole("button", { name: /revoke|revocar/i }));
+    fireEvent.click(within(await screen.findByRole("dialog")).getByRole("button", { name: /revoke|revocar/i }));
 
     await waitFor(() => expect(mockApi.revokeDevice).toHaveBeenCalledWith("d1"));
   });
@@ -130,7 +130,7 @@ describe("PairedDevices", () => {
     mockApi.pairDevice.mockRejectedValue(new Error("nope"));
     renderPane();
 
-    fireEvent.click(await screen.findByRole("button"));
+    fireEvent.click(await screen.findByRole("button", { name: /pair a phone|vincular un teléfono/i }));
 
     expect(await screen.findByText(/could not generate|no se pudo generar/i)).toBeTruthy();
   });
@@ -142,5 +142,40 @@ describe("PairedDevices", () => {
     renderPane();
 
     expect(await screen.findByText(/no phone paired|ningún teléfono/i)).toBeTruthy();
+  });
+
+  it("mints a separate capability-node code and renders the exact secret-free command", async () => {
+    mockApi.pairDevice.mockResolvedValue({
+      code: "NODE2345",
+      expires_in_seconds: 300,
+      backend_url: "https://dax.example",
+      pairing_uri: "dax://pair?code=NODE2345",
+      kind: "capability_node",
+    } as never);
+    const writeText = vi.fn().mockResolvedValue(undefined);
+    Object.assign(navigator, { clipboard: { writeText } });
+    renderPane();
+
+    fireEvent.click(await screen.findByRole("button", { name: /capability|capacidad/i }));
+
+    const command = "dax edge enroll --server https://dax.example --code NODE2345 --name <name>";
+    expect(await screen.findByText(command)).toBeTruthy();
+    expect(mockApi.pairDevice).toHaveBeenCalledWith("capability_node");
+    fireEvent.click(screen.getByRole("button", { name: /copy|copiar/i }));
+    await waitFor(() => expect(writeText).toHaveBeenCalledWith(command));
+  });
+
+  it("confirms before permanently deleting an enrolled node", async () => {
+    mockApi.devices.mockResolvedValue({
+      devices: [device({ kind: "capability_node", name: "work-laptop" })],
+    } as never);
+    mockApi.deleteDevice.mockResolvedValue({ ok: true } as never);
+    renderPane();
+
+    await screen.findByText("work-laptop");
+    fireEvent.click(screen.getByRole("button", { name: /delete|eliminar/i }));
+    expect(mockApi.deleteDevice).not.toHaveBeenCalled();
+    fireEvent.click(within(await screen.findByRole("dialog")).getByRole("button", { name: /delete|eliminar/i }));
+    await waitFor(() => expect(mockApi.deleteDevice).toHaveBeenCalledWith("d1"));
   });
 });

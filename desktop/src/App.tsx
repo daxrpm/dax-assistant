@@ -13,8 +13,8 @@ import {
   clearToken,
   getConnectionSettings,
   loadConnectionSettings,
-  loadToken,
   resolveConnection,
+  validateCurrentAuthorityHealth,
 } from "./api/connection";
 import type { AuthStatus } from "./api/types";
 import { permitsAuthenticatedShell } from "./authState";
@@ -41,7 +41,6 @@ import {
 } from "./native/notifications";
 import { shutdownRealtimeStores } from "./stores/realtime";
 import { Commands } from "./screens/Commands";
-import { Dashboard } from "./screens/Dashboard";
 import { Login } from "./screens/Login";
 import s from "./App.module.css";
 
@@ -96,7 +95,6 @@ function AppInner() {
           return;
         }
       }
-      await loadToken();
       const status = await api.authStatus();
       if (generation !== authCheckGeneration.current) return;
       setAuthStatus(status);
@@ -131,19 +129,19 @@ function AppInner() {
   useEffect(() => {
     if (!isTauriRuntime() || phase !== "authenticated") return;
     const monitor = createDisconnectMonitor({
-      probe: api.health,
+      probe: async () => {
+        try {
+          return validateCurrentAuthorityHealth(await api.health());
+        } catch (error) {
+          await clearToken();
+          throw error;
+        }
+      },
       notify: () =>
         sendNativeNotification(
           "Dax backend disconnected",
           "The backend has not responded to three consecutive health checks.",
         ),
-      onDisconnected: async () => {
-        if (getConnectionSettings()?.strategy !== "hybrid") return;
-        const resolution = await resolveConnection(false, shutdownRealtimeStores);
-        if (!resolution.changed) return;
-        setPhase("booting");
-        await checkAuth(false);
-      },
     });
     const timer = window.setInterval(() => void monitor.check(), 15_000);
     return () => window.clearInterval(timer);
@@ -277,7 +275,9 @@ function AppInner() {
     />
   );
 
-  const isDeck = route === "/" || route === "";
+  const contentRoutes = ["/chat", "/mcp", "/marketplace", "/commands", "/logs", "/settings"];
+  // Unknown hashes fall back to the command deck rather than an otherwise hidden dashboard.
+  const isDeck = route === "/" || route === "" || !contentRoutes.includes(route);
 
   const screen =
     route === "/chat" ? (
@@ -292,9 +292,7 @@ function AppInner() {
       <Logs />
     ) : route === "/settings" ? (
       <Settings />
-    ) : (
-      <Dashboard onUnauthorized={() => setPhase("unauthenticated")} />
-    );
+    ) : null;
 
   return (
     <>
@@ -357,7 +355,7 @@ function HudApp() {
   const [ready, setReady] = useState(false);
   useEffect(() => {
     void loadConnectionSettings()
-      .then(loadToken)
+      .then(() => resolveConnection(false, shutdownRealtimeStores))
       .then(() => setReady(true));
   }, []);
   return ready ? <VoiceHud /> : null;

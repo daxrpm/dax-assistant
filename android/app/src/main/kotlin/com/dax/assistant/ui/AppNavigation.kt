@@ -27,9 +27,13 @@ import androidx.compose.material.icons.filled.ChatBubble
 import androidx.compose.material.icons.filled.GraphicEq
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material3.Icon
+import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.Alignment
@@ -83,31 +87,47 @@ fun MainNavigation(
     onTrigger: () -> Unit,
     onCancel: () -> Unit,
     onApprove: (String) -> Unit,
+    microphonePermission: MicrophonePermissionState,
     onRequestPermissions: () -> Unit,
     onForgetEverything: () -> Unit,
     onDeviceRecognition: Boolean,
+    inputLevel: kotlinx.coroutines.flow.StateFlow<Float>,
 ) {
     val navController = rememberNavController()
+    val route = navController.currentBackStackEntryAsState().value?.destination?.route
+    var conversationDetailVisible by remember { mutableStateOf(false) }
     BoxWithConstraints(Modifier.fillMaxSize()) {
         if (maxWidth >= 720.dp) {
-            Row(Modifier.fillMaxSize().background(Orbita.colors.bgWindow).padding(Orbita.spacing.x3)) {
-                DestinationRail(navController, Modifier.systemBarsPadding())
+            Row(
+                Modifier.fillMaxSize().background(Orbita.colors.bgWindow)
+                    .systemBarsPadding().padding(Orbita.spacing.x3),
+            ) {
+                if (route != DIAGNOSTICS_ROUTE) {
+                    DestinationRail(navController)
+                }
                 MainGraph(
                     navController, assistantState, history, diagnosticsState, diagnostics,
-                    onTrigger, onCancel, onApprove, onRequestPermissions,
-                    onForgetEverything, onDeviceRecognition,
+                    onTrigger, onCancel, onApprove, microphonePermission, onRequestPermissions,
+                    onForgetEverything, onDeviceRecognition, inputLevel,
+                    onConversationDetailChanged = { conversationDetailVisible = it },
                     Modifier.weight(1f).padding(start = Orbita.spacing.x3),
                 )
             }
         } else {
-            Box(Modifier.fillMaxSize().background(Orbita.colors.bgWindow)) {
+            val showNavigation = route != DIAGNOSTICS_ROUTE &&
+                !(route == MainDestination.Conversations.route && conversationDetailVisible)
+            Scaffold(
+                modifier = Modifier.fillMaxSize(),
+                containerColor = Orbita.colors.bgWindow,
+                bottomBar = { if (showNavigation) DestinationBar(navController) },
+            ) { contentPadding ->
                 MainGraph(
                     navController, assistantState, history, diagnosticsState, diagnostics,
-                    onTrigger, onCancel, onApprove, onRequestPermissions,
-                    onForgetEverything, onDeviceRecognition,
-                    Modifier.fillMaxSize().padding(bottom = 72.dp),
+                    onTrigger, onCancel, onApprove, microphonePermission, onRequestPermissions,
+                    onForgetEverything, onDeviceRecognition, inputLevel,
+                    onConversationDetailChanged = { conversationDetailVisible = it },
+                    Modifier.fillMaxSize().padding(contentPadding),
                 )
-                DestinationBar(navController, Modifier.align(Alignment.BottomCenter))
             }
         }
     }
@@ -123,20 +143,27 @@ private fun MainGraph(
     onTrigger: () -> Unit,
     onCancel: () -> Unit,
     onApprove: (String) -> Unit,
+    microphonePermission: MicrophonePermissionState,
     onRequestPermissions: () -> Unit,
     onForgetEverything: () -> Unit,
     onDeviceRecognition: Boolean,
+    inputLevel: kotlinx.coroutines.flow.StateFlow<Float>,
+    onConversationDetailChanged: (Boolean) -> Unit,
     modifier: Modifier,
 ) {
     val context = LocalContext.current
     NavHost(navController, startDestination = MainDestination.Assistant.route, modifier = modifier) {
         composable(MainDestination.Assistant.route) {
             AssistantScreen(
-                assistantState, history, onTrigger, onCancel, onApprove,
+                assistantState, inputLevel, history, onTrigger, onCancel, onApprove,
+                microphonePermission = microphonePermission,
+                onRequestMicrophone = onRequestPermissions,
                 onOpenSettings = { navController.navigate(MainDestination.SettingsPage.route) },
             )
         }
-        composable(MainDestination.Conversations.route) { ConversationsScreen() }
+        composable(MainDestination.Conversations.route) {
+            ConversationsScreen(onDetailChanged = onConversationDetailChanged)
+        }
         composable(MainDestination.SettingsPage.route) {
             val viewModel: SettingsViewModel = hiltViewModel()
             val state by viewModel.state.collectAsStateWithLifecycle()

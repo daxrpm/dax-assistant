@@ -2,9 +2,9 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
-Dax is a self-hosted, single-user personal AI assistant. A FastAPI backend runs an agent loop that routes user messages (from web chat, WhatsApp, Telegram, or voice) through a pluggable LLM and a set of MCP tools, then streams replies back. The frontend is a React + HeroUI + Tailwind v4 SPA built into `src/dax/web/static` and served by FastAPI.
+Dax is a self-hosted, single-user personal AI assistant. One always-on FastAPI backend is authoritative for SQLite, configuration, conversations, LLM routing, tools, policy, approvals, and voice. Web, desktop, and Android are clients. An optional laptop can run the outbound `dax edge` capability node, which contributes ephemeral tools but never becomes a backend or fallback authority.
 
-> Note: `README.md` says the UI is "React 19 + Mantine" — that is stale. The UI is **HeroUI v3 + Tailwind v4** with `.dark`-class theming.
+The web frontend is React + HeroUI v3 + Tailwind v4 with `.dark`-class theming. It is built into `src/dax/web/static` and served by FastAPI.
 
 ## Commands
 
@@ -67,6 +67,12 @@ The agent does **not** send all tools to the LLM. `registry.get_relevant_tools(q
 ### MCP (`mcp/`) and the bundled server
 
 `MCPManager` holds one persistent `MCPClient` session per server (stdio subprocess or streamable-HTTP). `mcp_servers/system/server.py` is the bundled **`dax-system`** server giving the assistant typed, path-confined, allowlisted PC-control tools. OAuth for remote MCP servers lives in `web/routes/oauth.py` (PKCE + dynamic client registration); after the callback it **reconnects** the server so the Bearer token takes effect without a restart, and refreshes expired tokens before reconnecting.
+
+`capabilities/` registers the trusted bundled inventory from authenticated edge nodes under canonical node-prefixed names; `edge/` is the outbound laptop daemon. Inventory is live-socket-only and removed on disconnect/revocation. Node execution remains policy/approval-gated, path-confined on the node, and argv-only for shell calls. Do not add arbitrary node MCP discovery, offline queues, state replication, or backend failover.
+
+### Desktop authority selection
+
+Desktop schema v3 supports only `local` and `remote`. Local intentionally selects loopback as the sole authority; remote selects exactly one HTTPS origin. Schema-v2 `hybrid` is accepted only as migration input and becomes remote using `remote_url`. Health must identify a ready `role=authoritative` Dax API, and tokens are scoped by normalized origin plus `instance_id`.
 
 ### Config & secrets (`core/config.py`, `core/config_io.py`)
 

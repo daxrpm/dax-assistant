@@ -26,6 +26,8 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.text.input.KeyboardCapitalization
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.semantics.heading
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.res.stringResource
 import com.dax.assistant.R
 import com.dax.assistant.ui.SetupUiState
@@ -58,7 +60,12 @@ fun SetupScreen(
             .verticalScroll(rememberScrollState())
             .padding(horizontal = Orbita.spacing.edge, vertical = Orbita.spacing.x8),
     ) {
-        Text(text = stringResource(R.string.setup_title), style = OrbitaType.largeTitle, color = Orbita.colors.fgPrimary)
+        Text(
+            text = stringResource(R.string.setup_title),
+            style = OrbitaType.largeTitle,
+            color = Orbita.colors.fgPrimary,
+            modifier = Modifier.semantics { heading() },
+        )
         Spacer(Modifier.height(Orbita.spacing.x2))
         Text(
             text = stringResource(R.string.setup_intro),
@@ -110,22 +117,23 @@ fun SetupScreen(
 
         Spacer(Modifier.height(Orbita.spacing.x8))
 
+        val formValid = state.backendUrl.isNotBlank() && isValidPairingCode(state.pairingCode)
         Box(
             modifier = Modifier
                 .fillMaxWidth()
                 .heightIn(min = Orbita.sizing.controlHeight)
                 .clip(RoundedCornerShape(Orbita.radii.pill))
                 .background(
-                    if (state.enrolling) Orbita.colors.bgElevated else Orbita.colors.accent,
+                    if (state.enrolling || !formValid) Orbita.colors.bgElevated else Orbita.colors.accent,
                 )
-                .clickable(enabled = !state.enrolling, role = Role.Button, onClick = onEnrol)
+                .clickable(enabled = !state.enrolling && formValid, role = Role.Button, onClick = onEnrol)
                 .padding(Orbita.spacing.x4),
             contentAlignment = Alignment.Center,
         ) {
             Text(
                 text = if (state.enrolling) stringResource(R.string.setup_pairing) else stringResource(R.string.setup_pair),
                 style = OrbitaType.title3,
-                color = if (state.enrolling) {
+                color = if (state.enrolling || !formValid) {
                     Orbita.colors.fgQuaternary
                 } else {
                     Orbita.colors.fgOnAccent
@@ -144,6 +152,50 @@ fun SetupScreen(
             contentAlignment = Alignment.Center,
         ) {
             Text(stringResource(R.string.setup_scan_qr), style = OrbitaType.title3, color = Orbita.colors.fgSecondary)
+        }
+    }
+}
+
+@Composable
+fun PermissionSetupScreen(onContinue: () -> Unit, modifier: Modifier = Modifier) {
+    Column(
+        modifier.fillMaxSize().background(Orbita.colors.bgWindow).systemBarsPadding()
+            .verticalScroll(rememberScrollState())
+            .padding(horizontal = Orbita.spacing.edge, vertical = Orbita.spacing.x8),
+        verticalArrangement = Arrangement.Center,
+    ) {
+        Text(
+            stringResource(R.string.setup_permissions_title),
+            style = OrbitaType.largeTitle,
+            color = Orbita.colors.fgPrimary,
+            modifier = Modifier.semantics { heading() },
+        )
+        Spacer(Modifier.height(Orbita.spacing.x3))
+        Text(
+            stringResource(R.string.setup_permissions_intro),
+            style = OrbitaType.callout,
+            color = Orbita.colors.fgSecondary,
+        )
+        Spacer(Modifier.height(Orbita.spacing.x6))
+        StepCard(number = "3", title = stringResource(R.string.setup_permissions_step)) {
+            Text(
+                stringResource(R.string.setup_permissions_detail),
+                style = OrbitaType.body,
+                color = Orbita.colors.fgTertiary,
+            )
+        }
+        Spacer(Modifier.height(Orbita.spacing.x8))
+        Box(
+            Modifier.fillMaxWidth().heightIn(min = Orbita.sizing.controlHeight)
+                .clip(RoundedCornerShape(Orbita.radii.pill)).background(Orbita.colors.accent)
+                .clickable(role = Role.Button, onClick = onContinue),
+            contentAlignment = Alignment.Center,
+        ) {
+            Text(
+                stringResource(R.string.setup_permissions_continue),
+                style = OrbitaType.title3,
+                color = Orbita.colors.fgOnAccent,
+            )
         }
     }
 }

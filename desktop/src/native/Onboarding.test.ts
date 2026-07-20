@@ -9,7 +9,7 @@ describe("onboarding flow", () => {
   it("blocks the configuration step until strategy URLs are valid", () => {
     expect(canAdvanceOnboarding(2, "local", "http://127.0.0.1:8420", "")).toBe(true);
     expect(canAdvanceOnboarding(2, "local", "https://example.com", "")).toBe(false);
-    expect(canAdvanceOnboarding(2, "hybrid", "http://127.0.0.1:8420", "http://remote.example")).toBe(false);
-    expect(canAdvanceOnboarding(2, "hybrid", "http://127.0.0.1:8420", "https://remote.example")).toBe(true);
+    expect(canAdvanceOnboarding(2, "remote", "http://127.0.0.1:8420", "http://remote.example")).toBe(false);
+    expect(canAdvanceOnboarding(2, "remote", "http://127.0.0.1:8420", "https://remote.example")).toBe(true);
   });
 });

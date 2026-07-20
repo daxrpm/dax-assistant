@@ -21,6 +21,8 @@ from dax.mcp.client import MCPClient
 from dax.mcp.registry import ToolRegistry
 
 if TYPE_CHECKING:
+    from collections.abc import Awaitable, Callable
+
     from dax.core.config import MCPConfig, MCPServerConfig
 
 logger = logging.getLogger(__name__)
@@ -104,6 +106,9 @@ class MCPManager:
     def __init__(self, config: MCPConfig) -> None:
         self._config = config
         self._clients: dict[str, MCPClient] = {}
+        self._dynamic_executors: dict[
+            str, Callable[[ToolCall], Awaitable[ToolResult]]
+        ] = {}
         self._registry = ToolRegistry()
         self._lock = asyncio.Lock()
         self._stopping = False
@@ -269,6 +274,7 @@ class MCPManager:
     async def _stop_now(self) -> None:
         clients = list(self._clients.items())
         self._clients.clear()
+        self._dynamic_executors.clear()
         self._registry.clear()
 
         for name, client in clients:
@@ -348,6 +354,25 @@ class MCPManager:
             )
         return statuses
 
+    def register_dynamic_provider(
+        self,
+        server_name: str,
+        tools: list[dict[str, Any]],
+        executor: Callable[[ToolCall], Awaitable[ToolResult]],
+    ) -> None:
+        """Atomically install an ephemeral, non-configured tool provider."""
+        if not server_name.startswith("capability-node:"):
+            raise ValueError("Dynamic provider name is not reserved")
+        if server_name in self._clients:
+            raise ValueError("Dynamic provider collides with a configured server")
+        self._registry.replace_server(server_name, tools, reject_collisions=True)
+        self._dynamic_executors[server_name] = executor
+
+    def unregister_dynamic_provider(self, server_name: str) -> None:
+        """Remove tools before future calls can resolve to this provider."""
+        self._registry.unregister_server(server_name)
+        self._dynamic_executors.pop(server_name, None)
+
     async def list_tools(self) -> list[dict[str, Any]]:
         """Return all available tool schemas across all servers."""
         return self._registry.all_tools
@@ -379,6 +404,23 @@ class MCPManager:
             raise ToolNotFoundError(
                 f"No server found for tool '{tool_call.tool_name}'"
             )
+
+        dynamic = self._dynamic_executors.get(server_name)
+        if dynamic is not None:
+            # Approval and execution can be separated by an inventory replacement.
+            # Revalidate the exact live owner immediately before dispatching.
+            if self._registry.get_server_for_tool(tool_call.tool_name) != server_name:
+                raise ToolNotFoundError(
+                    f"Tool '{tool_call.tool_name}' is no longer provided by "
+                    f"MCP server '{server_name}'"
+                )
+            resolved_call = ToolCall(
+                id=tool_call.id,
+                server_name=server_name,
+                tool_name=tool_call.tool_name,
+                arguments=tool_call.arguments,
+            )
+            return await dynamic(resolved_call)
 
         client = self._clients.get(server_name)
         if client is None:

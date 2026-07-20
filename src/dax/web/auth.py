@@ -33,6 +33,7 @@ if TYPE_CHECKING:
 
     from fastapi import Response, WebSocket
 
+    from dax.capabilities.hub import CapabilityHub
     from dax.core.config import SecurityConfig
     from dax.storage.devices import DeviceRegistry
 
@@ -50,6 +51,8 @@ _SESSION_SUBJECT = "dax-user"
 # both derive from the same session secret. Their lifetimes differ by orders of
 # magnitude, and that difference has to be unforgeable.
 _DEVICE_SALT = "dax.device.v1"
+_CAPABILITY_NODE_SALT = "dax.capability-node.v1"
+_CAPABILITY_NODE_AUDIENCE = "dax-capability-node"
 
 
 @dataclass(slots=True)
@@ -164,8 +167,12 @@ class AuthManager:
                 )
         self._serializer = URLSafeTimedSerializer(secret, salt=_SIGNER_SALT)
         self._device_serializer = URLSafeTimedSerializer(secret, salt=_DEVICE_SALT)
+        self._capability_serializer = URLSafeTimedSerializer(
+            secret, salt=_CAPABILITY_NODE_SALT
+        )
         self._device_ttl_seconds = max(60, config.device_token_ttl_minutes * 60)
         self._devices: DeviceRegistry | None = None
+        self.capability_hub: CapabilityHub | None = None
         self.attempt_limiter = AttemptLimiter()
         self.setup_lock = asyncio.Lock()
 
@@ -196,6 +203,9 @@ class AuthManager:
         """
         self._devices = devices
 
+    def attach_capability_hub(self, hub: CapabilityHub) -> None:
+        self.capability_hub = hub
+
     @property
     def devices(self) -> DeviceRegistry | None:
         return self._devices
@@ -209,7 +219,24 @@ class AuthManager:
 
     def issue_device_token(self, device_id: str) -> str:
         """Mint a short-lived access token for an enrolled device."""
+        from dax.storage.devices import CLIENT_KIND
+
+        if self._devices is not None and not self._devices.is_active_kind(
+            device_id, CLIENT_KIND
+        ):
+            raise ValueError("Device is not an active client")
         return self._device_serializer.dumps({"sub": device_id})
+
+    def issue_capability_token(self, device_id: str) -> str:
+        from dax.storage.devices import CAPABILITY_NODE_KIND
+
+        if self._devices is None or not self._devices.is_active_kind(
+            device_id, CAPABILITY_NODE_KIND
+        ):
+            raise ValueError("Device is not an active capability node")
+        return self._capability_serializer.dumps(
+            {"sub": device_id, "aud": _CAPABILITY_NODE_AUDIENCE}
+        )
 
     def validate_token(self, token: str | None) -> bool:
         """True when *token* is a live user session or a live device token."""
@@ -241,10 +268,45 @@ class AuthManager:
         device_id = payload.get("sub") if isinstance(payload, dict) else None
         if not isinstance(device_id, str) or not device_id:
             return None
-        if not self._devices.is_active(device_id):
+        from dax.storage.devices import CLIENT_KIND
+
+        if not self._devices.is_active_kind(device_id, CLIENT_KIND):
             logger.info("Rejected token for revoked or unknown device %s", device_id)
             return None
         return device_id
+
+    def capability_node_from_token(self, token: str | None) -> str | None:
+        if not token or self._devices is None:
+            return None
+        try:
+            payload = self._capability_serializer.loads(
+                token, max_age=self._device_ttl_seconds
+            )
+        except (BadSignature, SignatureExpired):
+            return None
+        if not isinstance(payload, dict) or payload.get("aud") != _CAPABILITY_NODE_AUDIENCE:
+            return None
+        node_id = payload.get("sub")
+        if not isinstance(node_id, str):
+            return None
+        from dax.storage.devices import CAPABILITY_NODE_KIND
+
+        return (
+            node_id
+            if self._devices.is_active_kind(node_id, CAPABILITY_NODE_KIND)
+            else None
+        )
+
+    def authenticate_capability_websocket(self, websocket: WebSocket) -> str | None:
+        candidates = [
+            websocket.query_params.get("token"),
+            self._bearer_token(websocket.headers.get("authorization")),
+        ]
+        for token in candidates:
+            node_id = self.capability_node_from_token(token)
+            if node_id is not None:
+                return node_id
+        return None
 
     def set_cookie(self, response: Response, token: str) -> None:
         response.set_cookie(
