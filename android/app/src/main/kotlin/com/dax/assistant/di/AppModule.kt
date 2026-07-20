@@ -3,6 +3,7 @@ package com.dax.assistant.di
 import android.content.Context
 import com.dax.assistant.assistant.AssistantController
 import com.dax.assistant.audio.AudioRouteManager
+import com.dax.assistant.audio.BackendSpeechClient
 import com.dax.assistant.audio.NativeAudioCapture
 import com.dax.assistant.audio.RemoteVoiceClient
 import com.dax.assistant.audio.Speaker
@@ -122,7 +123,20 @@ object AppModule {
 
     @Provides
     @Singleton
-    fun provideSpeaker(@ApplicationContext context: Context): Speaker = Speaker(context)
+    fun provideBackendSpeechClient(
+        client: OkHttpClient,
+        credentials: CredentialStore,
+        auth: BackendAuth,
+        @IoDispatcher io: CoroutineDispatcher,
+    ): BackendSpeechClient = BackendSpeechClient(client, credentials, auth, io)
+
+    @Provides
+    @Singleton
+    fun provideSpeaker(
+        @ApplicationContext context: Context,
+        backend: BackendSpeechClient,
+        preferences: AppPreferences,
+    ): Speaker = Speaker(context, backend, preferences)
 
     @Provides
     @Singleton

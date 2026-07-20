@@ -91,6 +91,13 @@ class KokoroTTS:
         return self._sample_rate
 
     @property
+    def engine_name(self) -> str:
+        return "kokoro"
+
+    def voice_name(self, language: str) -> str | None:
+        return self._voices.get(language, self._voices.get("en"))
+
+    @property
     def available_languages(self) -> list[str]:
         return list(self._voices.keys())
 

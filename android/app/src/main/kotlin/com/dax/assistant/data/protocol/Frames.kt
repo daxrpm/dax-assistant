@@ -33,6 +33,7 @@ sealed interface ServerFrame {
         val content: String,
         val role: String,
         val sessionId: String?,
+        val timestamp: String?,
     ) : ServerFrame
 
     /** Agent activity: thinking, tool_call, tool_result, done. */
@@ -42,6 +43,11 @@ sealed interface ServerFrame {
         val toolName: String?,
         val serverName: String?,
         val ok: Boolean?,
+        val args: JsonObject,
+        val preview: String?,
+        val error: Boolean?,
+        val elapsedSeconds: Double?,
+        val timestamp: String?,
     ) : ServerFrame
 
     /** A gated tool needs confirmation before it runs. */
@@ -49,10 +55,19 @@ sealed interface ServerFrame {
         val approvalId: String,
         val toolName: String,
         val serverName: String,
-        val arguments: Map<String, String>,
+        val arguments: JsonObject,
         val options: List<String>,
         val timeoutSeconds: Int,
         val sessionId: String?,
+        val timestamp: String?,
+    ) : ServerFrame
+
+    /** Optional acknowledgement for session subscription control frames. */
+    data class SessionSubscriptionAck(
+        val subscribed: Boolean,
+        val ok: Boolean,
+        val sessionIds: List<String>,
+        val error: String?,
     ) : ServerFrame
 
     data class Unknown(val type: String) : ServerFrame
@@ -70,6 +85,7 @@ object FrameParser {
                     content = content,
                     role = root.str("role") ?: "assistant",
                     sessionId = root.str("session_id"),
+                    timestamp = root.str("timestamp"),
                 )
             }
 
@@ -81,6 +97,11 @@ object FrameParser {
                     toolName = event.str("tool") ?: event.str("tool_name"),
                     serverName = event.str("server") ?: event.str("server_name"),
                     ok = event.bool("ok") ?: event.bool("error")?.not(),
+                    args = event["args"] as? JsonObject ?: JsonObject(emptyMap()),
+                    preview = event.str("preview"),
+                    error = event.bool("error"),
+                    elapsedSeconds = event.number("elapsed_s"),
+                    timestamp = root.str("timestamp") ?: event.str("timestamp"),
                 )
             }
 
@@ -88,15 +109,7 @@ object FrameParser {
                 approvalId = root.str("approval_id")?.takeIf { it.isNotBlank() } ?: return null,
                 toolName = root.str("tool_name").orEmpty(),
                 serverName = root.str("server_name").orEmpty(),
-                // Arguments are rendered verbatim in the confirmation sheet, so
-                // they are flattened to strings rather than interpreted. This
-                // is untrusted content — an agent talked into a destructive
-                // call by injected text produces exactly the same frame as a
-                // legitimate one, and the user is the only thing that can tell
-                // them apart.
-                arguments = root["arguments"]?.jsonObject?.mapValues { (_, v) ->
-                    v.asDisplayString()
-                }.orEmpty(),
+                arguments = root["arguments"] as? JsonObject ?: JsonObject(emptyMap()),
                 options = root["options"]
                     ?.let { element -> runCatching { element.jsonArray }.getOrNull() }
                     ?.map { it.asDisplayString() }
@@ -108,7 +121,19 @@ object FrameParser {
                 timeoutSeconds = root["timeout_seconds"]?.jsonPrimitive?.contentOrNull
                     ?.toIntOrNull() ?: 120,
                 sessionId = root.str("session_id"),
+                timestamp = root.str("timestamp"),
             )
+
+            type == "session_subscribe_ack" || type == "session_unsubscribe_ack" ->
+                ServerFrame.SessionSubscriptionAck(
+                    subscribed = type == "session_subscribe_ack",
+                    ok = root.bool("ok") ?: false,
+                    sessionIds = root["session_ids"]
+                        ?.let { runCatching { it.jsonArray }.getOrNull() }
+                        ?.mapNotNull { (it as? JsonPrimitive)?.contentOrNull }
+                        .orEmpty(),
+                    error = root.str("error"),
+                )
 
             else -> ServerFrame.Unknown(type.orEmpty())
         }
@@ -119,6 +144,9 @@ object FrameParser {
 
     private fun JsonObject.bool(key: String): Boolean? =
         (this[key] as? JsonPrimitive)?.contentOrNull?.toBooleanStrictOrNull()
+
+    private fun JsonObject.number(key: String): Double? =
+        (this[key] as? JsonPrimitive)?.contentOrNull?.toDoubleOrNull()
 
     private fun JsonElement.asDisplayString(): String =
         (this as? JsonPrimitive)?.contentOrNull ?: toString()
@@ -152,6 +180,18 @@ object ClientFrames {
                 put("approval_id", approvalId)
                 put("decision", decision)
                 if (sessionId != null) put("session_id", sessionId)
+            },
+        )
+
+    fun sessionSubscription(sessionIds: Collection<String>, subscribe: Boolean): String =
+        DaxJson.encodeToString(
+            JsonObject.serializer(),
+            buildJsonObject {
+                put("type", if (subscribe) "session_subscribe" else "session_unsubscribe")
+                put("ack", true)
+                put("session_ids", kotlinx.serialization.json.buildJsonArray {
+                    sessionIds.forEach { add(JsonPrimitive(it)) }
+                })
             },
         )
 }

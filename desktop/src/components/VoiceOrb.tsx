@@ -28,6 +28,26 @@ const SETTLE_EPSILON = 0.002;
 const VELOCITY_EPSILON = 0.003;
 const PARTICLES = 34;
 
+export interface OrbVisualProfile {
+  tone: "--accent" | "--purple" | "--success";
+  phaseRate: number;
+  pulse: number;
+}
+
+/** Motion cadence and tone carry state, rather than using one generic animation. */
+export function getOrbVisualProfile(state: OrbState): OrbVisualProfile {
+  switch (state) {
+    case "processing":
+      return { tone: "--purple", phaseRate: 1, pulse: 0.018 };
+    case "speaking":
+      return { tone: "--success", phaseRate: 0.62, pulse: 0.04 };
+    case "listening":
+      return { tone: "--accent", phaseRate: 0.42, pulse: 0.026 };
+    case "idle":
+      return { tone: "--accent", phaseRate: 0.24, pulse: 0.012 };
+  }
+}
+
 export function createSignalBuffers(): Record<LevelSource, SignalBuffer> {
   const create = (): SignalBuffer => ({
     rms: new Float32Array(HISTORY_SIZE),
@@ -69,9 +89,9 @@ export function advanceSpring(
   return [value + nextVelocity * dt, nextVelocity];
 }
 
-function readAccent(): string {
+function readTone(variable: OrbVisualProfile["tone"]): string {
   return (
-    getComputedStyle(document.documentElement).getPropertyValue("--accent").trim() ||
+    getComputedStyle(document.documentElement).getPropertyValue(variable).trim() ||
     "#6e8bff"
   );
 }
@@ -200,7 +220,9 @@ export const VoiceOrb = forwardRef<VoiceOrbHandle, VoiceOrbProps>(function Voice
     let outputAmplitude = 0;
     let inputVelocity = 0;
     let outputVelocity = 0;
-    const rgb = toRgb(readAccent());
+    let visualState = stateRef.current;
+    let visual = getOrbVisualProfile(visualState);
+    let rgb = toRgb(readTone(visual.tone));
 
     const resize = () => {
       const bounds = canvas.getBoundingClientRect();
@@ -226,11 +248,17 @@ export const VoiceOrb = forwardRef<VoiceOrbHandle, VoiceOrbProps>(function Voice
     };
 
     const paint = () => {
+      if (visualState !== stateRef.current) {
+        visualState = stateRef.current;
+        visual = getOrbVisualProfile(visualState);
+        rgb = toRgb(readTone(visual.tone));
+      }
       const cx = width / 2;
       const cy = height / 2;
       const scale = Math.min(width, height);
       const core = scale * 0.22;
       const activity = Math.max(inputAmplitude, outputAmplitude);
+      const breath = Math.sin(phase * Math.PI * 2) * visual.pulse;
       context.clearRect(0, 0, width, height);
 
       const shadow = context.createRadialGradient(cx, cy + core * 0.72, core * 0.15, cx, cy + core * 0.72, core * 1.55);
@@ -295,7 +323,7 @@ export const VoiceOrb = forwardRef<VoiceOrbHandle, VoiceOrbProps>(function Voice
       sphere.addColorStop(0.62, rgba(rgb, 0.18 + activity * 0.12));
       sphere.addColorStop(1, "rgba(5,8,20,0.94)");
       context.beginPath();
-      context.arc(cx, cy, core * (1 + activity * 0.035), 0, Math.PI * 2);
+      context.arc(cx, cy, core * (1 + activity * 0.035 + breath), 0, Math.PI * 2);
       context.fillStyle = sphere;
       context.shadowColor = rgba(rgb, 0.36 + activity * 0.25);
       context.shadowBlur = core * (0.28 + activity * 0.35);
@@ -343,7 +371,7 @@ export const VoiceOrb = forwardRef<VoiceOrbHandle, VoiceOrbProps>(function Voice
       } else {
         [inputAmplitude, inputVelocity] = advanceSpring(inputAmplitude, inputVelocity, inputTarget, delta);
         [outputAmplitude, outputVelocity] = advanceSpring(outputAmplitude, outputVelocity, outputTarget, delta);
-        phase += delta;
+        phase += delta * visual.phaseRate;
       }
       paint();
       const settled =

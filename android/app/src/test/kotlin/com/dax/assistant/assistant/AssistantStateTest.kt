@@ -23,24 +23,21 @@ class AssistantStateTest {
     }
 
     @Test
-    fun `a turn may not start while one is already in flight`() {
+    fun `a turn may not start while capture or transcription is in flight`() {
         assertFalse(AssistantState.ConnectingAudio(phone).canStartTurn)
         assertFalse(AssistantState.Listening(phone).canStartTurn)
         assertFalse(AssistantState.Transcribing().canStartTurn)
-        assertFalse(AssistantState.Processing("x").canStartTurn)
     }
 
     @Test
-    fun `a turn may not start while a confirmation is pending`() {
+    fun `processing and approval allow delivery interruption into a new turn`() {
         val state = AssistantState.AwaitingApproval(
             request = approval(),
             transcript = "borra el archivo",
         )
 
-        assertFalse(
-            "starting a new turn would abandon a gated tool decision",
-            state.canStartTurn,
-        )
+        assertTrue(AssistantState.Processing("x").canStartTurn)
+        assertTrue(state.canStartTurn)
     }
 
     @Test

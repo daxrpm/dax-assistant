@@ -44,7 +44,7 @@ from dax.voice.audio_io import CHUNK_SIZE, SAMPLE_RATE, AudioCapture, AudioPlaye
 from dax.voice.events import emit_level
 from dax.voice.speaker import SpeakerVerifier
 from dax.voice.stt import build_stt
-from dax.voice.tts import build_tts
+from dax.voice.tts_service import TTSService
 from dax.voice.vad import VAD_CHUNK_SIZE, VoiceActivityDetector
 from dax.voice.wakeword import WakeWordDetector
 
@@ -170,6 +170,7 @@ class VoicePipeline:
         models_path: str = "models/",
         approval: ApprovalManager | None = None,
         events: VoiceEventHub | None = None,
+        tts_service: TTSService | None = None,
     ) -> None:
         self._config = config
         self._bus = bus
@@ -202,6 +203,10 @@ class VoicePipeline:
         # Lease id of the client that owns spoken output, or None when the
         # backend host's own speakers do. See set_output_owner().
         self._output_owner: str | None = None
+        # A remote lease owns input, output and every event as one exclusive
+        # context. Only one pipeline exists; leases never create another one.
+        self._input_owner: str | None = None
+        self._owner_generation = 0
         self._wakeword = WakeWordDetector(
             model_names=[config.wake_word_model] if config.wake_word_model else None,
             threshold=config.wake_word_threshold,
@@ -211,7 +216,7 @@ class VoicePipeline:
             silence_duration_ms=config.silence_duration_ms,
         )
         self._stt = build_stt(config)
-        self._tts = build_tts(config, models_path)
+        self._tts = tts_service if tts_service is not None else TTSService(config, models_path)
 
         # Speaker verification (Voice ID) — only constructed when enabled. Fails
         # open at runtime if the model/profile is missing.
@@ -268,6 +273,7 @@ class VoicePipeline:
         # Monotonic per-utterance id used to correlate responses and drop stale
         # ones that arrive late from a previous (timed-out) turn.
         self._turn = 0
+        self._response_future: object | None = None
         # One ephemeral conversation id per wake-word activation. It scopes the
         # persisted history so each "Hey Jarvis…" starts fresh (no bleed from
         # past conversations), while follow-up turns within the same activation
@@ -282,6 +288,9 @@ class VoicePipeline:
         # Whether Dax's last reply ended in a question. When he asks something,
         # he has invited an answer, so the follow-up window stays open longer.
         self._last_reply_was_question = False
+        # Armed by a manual activation and consumed when its single automatic
+        # follow-up starts. A follow-up response can therefore never self-chain.
+        self._followup_armed = False
         # Recent turn text, oldest first, used to bias the next transcription
         # toward the vocabulary already in play.
         self._recent_turns: deque[str] = deque(maxlen=_STT_CONTEXT_TURNS)
@@ -386,6 +395,26 @@ class VoicePipeline:
         """Abort an incomplete PTT utterance without sending it to STT."""
         return self._request_ptt("cancel", timeout)
 
+    def interrupt_remote_turn(self) -> PipelineState:
+        """Invalidate remote delivery and make the pipeline accept a new turn.
+
+        This deliberately does not claim to cancel agent or tool execution;
+        that work may finish in the background. It only cancels the response
+        waiter and advances the correlation id so its late output is never
+        spoken or treated as the next turn.
+        """
+        if self._output_owner is None:
+            raise VoiceError("Remote output is not owned")
+        self._turn += 1
+        future = self._response_future
+        if future is not None:
+            cancel = getattr(future, "cancel", None)
+            if cancel is not None:
+                cancel()
+        self._ptt_active = False
+        self._state = PipelineState.IDLE
+        return self._state
+
     def set_output_owner(self, owner: str | None) -> None:
         """Hand spoken output to a remote client, or take it back with ``None``.
 
@@ -404,6 +433,39 @@ class VoicePipeline:
     @property
     def output_owner(self) -> str | None:
         return self._output_owner
+
+    @property
+    def input_owner(self) -> str | None:
+        return self._input_owner
+
+    @property
+    def owner_generation(self) -> int:
+        return self._owner_generation
+
+    def acquire_remote_owner(self, owner: str) -> int:
+        """Exclusively isolate the existing pipeline for one remote lease."""
+        if self._state != PipelineState.IDLE or self._ptt_active:
+            raise VoiceError(f"Voice pipeline is busy ({self._state})")
+        if self._input_owner is not None and self._input_owner != owner:
+            raise VoiceError("Remote voice is owned by another client")
+        self._input_owner = owner
+        self._output_owner = owner
+        self._owner_generation = self._events.set_event_owner(owner)
+        logger.info("Voice input, output and events owned by %s", owner)
+        return self._owner_generation
+
+    def release_remote_owner(self, owner: str) -> None:
+        """Restore host I/O after an idle remote lease has fully settled."""
+        if self._input_owner != owner:
+            return
+        if self._state != PipelineState.IDLE or self._ptt_active:
+            raise VoiceError(f"Cannot release remote voice while pipeline is {self._state}")
+        with self._source_lock:
+            self._audio_source = self._capture
+        self._input_owner = None
+        self._output_owner = None
+        self._owner_generation = self._events.set_event_owner(None)
+        logger.info("Voice input, output and events restored to the backend host")
 
     def select_audio_source(self, source: AudioSource | None) -> None:
         """Select a source while idle; ``None`` restores the local microphone."""
@@ -484,6 +546,7 @@ class VoicePipeline:
                         command.error = f"Voice pipeline is busy ({self._state})"
                     else:
                         self._ptt_active = True
+                        self._followup_armed = True
                         self._resume_or_start_session()
                         self._enter_listening()
                         logger.info("Push-to-talk capture started")
@@ -532,6 +595,11 @@ class VoicePipeline:
         :meth:`_resume_or_start_session` decides on the next wake word whether
         enough time has passed to warrant forgetting.
         """
+        # A remote output lease means the user is at that client, not beside
+        # this machine. Never sample the host microphone while it is held.
+        if self._output_owner is not None:
+            time.sleep(0.05)
+            return
         chunk = self._read_metered_chunk(timeout=0.5)
         if chunk is None:
             return
@@ -539,6 +607,7 @@ class VoicePipeline:
         if detected is not None:
             logger.info("Wake word detected: %s", detected)
             self._resume_or_start_session()
+            self._followup_armed = True
             # Immediate audible acknowledgement (like Alexa's tone) so the user
             # knows Dax is listening before they start speaking. Mic is muted
             # during the chime so the tone is never captured as speech.
@@ -705,6 +774,7 @@ class VoicePipeline:
         if self._followup_voiced_ms >= self._followup_activation_ms:
             logger.info("Sustained follow-up speech detected, continuing conversation")
             pre_roll = list(self._followup_buffer)
+            self._followup_armed = False
             self._enter_listening()
             self._speech_buffer = pre_roll
             self._speech_started_at = time.monotonic()
@@ -816,6 +886,7 @@ class VoicePipeline:
                 ),
                 self._loop,
             )
+            self._response_future = future
             response: Message | None = future.result(timeout=self._response_timeout + 10)
 
             if response is None:
@@ -833,6 +904,7 @@ class VoicePipeline:
             if language == Language.SPANISH or response.language == Language.SPANISH:
                 tts_lang = "es"
 
+            remote_turn = self._output_owner is not None
             interrupted = self._speak(response.content, tts_lang)
             # Restart the inactivity clock from the end of the reply, not from
             # when the turn was published — a slow tool call must not eat into
@@ -863,17 +935,27 @@ class VoicePipeline:
                 # is done — drop the session so the next wake word starts clean.
                 self._end_session()
                 self._state = PipelineState.IDLE
-            elif self._require_wake_each_turn:
+            elif self._output_owner is not None:
+                # Remote follow-up is client-driven. Entering CONVERSING here
+                # would silently switch input to the backend host microphone.
+                logger.info("Remote reply complete — returning to IDLE for client follow-up")
+                self._state = PipelineState.IDLE
+            elif self._require_wake_each_turn or not self._followup_armed:
                 # No hands-free follow-up: wait for the wake word again. Logged
                 # because a silent exit here is indistinguishable from a broken
                 # follow-up — this branch hid a config problem for three
                 # debugging rounds.
                 logger.info(
-                    "require_wake_word_each_turn is set — skipping follow-up, returning to IDLE"
+                    "Automatic follow-up unavailable — returning to IDLE"
                 )
                 self._state = PipelineState.IDLE
             else:
                 self._enter_conversing()
+
+            if remote_turn:
+                # Completion is the client's permission to release its lease.
+                # Emit it only after the state is IDLE, never while SPEAKING.
+                self._events.emit_turn_completed(str(self._turn))
 
         except TTSError:
             logger.exception("TTS synthesis failed")
@@ -881,6 +963,8 @@ class VoicePipeline:
         except Exception:
             logger.exception("Error during speech playback")
             self._state = PipelineState.IDLE
+        finally:
+            self._response_future = None
 
     def _speak(self, text: str, tts_lang: str) -> bool:
         """Synthesise and play *text*. Returns True if interrupted (barge-in)."""
@@ -901,9 +985,9 @@ class VoicePipeline:
             self._drain_mic_buffer()
             try:
                 for sentence in sentences:
-                    audio = self._tts.synthesize(sentence, language=tts_lang)
+                    result = self._tts.synthesize(sentence, language=tts_lang)
                     self._events.emit_speech(sentence, tts_lang)
-                    self._player.play(audio, sample_rate=self._tts.sample_rate)
+                    self._player.play(result.audio, sample_rate=result.sample_rate)
             finally:
                 time.sleep(0.3)
                 self._capture.start()
@@ -914,11 +998,11 @@ class VoicePipeline:
         self._wakeword.reset()
         interrupted = False
         for sentence in sentences:
-            audio = self._tts.synthesize(sentence, language=tts_lang)
+            result = self._tts.synthesize(sentence, language=tts_lang)
             self._events.emit_speech(sentence, tts_lang)
             interrupted = self._player.play_blocks(
-                audio,
-                sample_rate=self._tts.sample_rate,
+                result.audio,
+                sample_rate=result.sample_rate,
                 should_stop=self._bargein_detected,
                 on_block=self._emit_output_level,
             )
@@ -951,17 +1035,29 @@ class VoicePipeline:
     async def _voice_approve(
         self,
         *,
+        approval_id: str,
         tool_name: str,
         server_name: str | None = None,
         arguments: dict[str, object] | None = None,
         options: list[str] | None = None,
-    ) -> str:
+        timeout_seconds: int = 120,
+    ) -> str | None:
         """Ask the user to confirm a tool by voice; return the decision.
 
         Runs the blocking speak+listen cycle in a worker thread so the event
         loop (and the rest of the agent) isn't stalled. Called by the
         ApprovalManager when a gated tool originates from the voice channel.
         """
+        if self._output_owner is not None:
+            self._events.emit_approval_request(
+                approval_id=approval_id,
+                tool_name=tool_name,
+                server_name=server_name or "",
+                arguments=dict(arguments or {}),
+                options=options or ["approve"],
+                timeout_seconds=timeout_seconds,
+            )
+            return None
         return await self._loop.run_in_executor(
             None,
             self._confirm_blocking,
@@ -1004,8 +1100,8 @@ class VoicePipeline:
         self._capture.stop()
         self._drain_mic_buffer()
         try:
-            audio = self._tts.synthesize(text, language=lang)
-            self._player.play(audio, sample_rate=self._tts.sample_rate)
+            result = self._tts.synthesize(text, language=lang)
+            self._player.play(result.audio, sample_rate=result.sample_rate)
         finally:
             time.sleep(0.2)
             self._capture.start()

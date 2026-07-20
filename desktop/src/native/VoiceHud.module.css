@@ -22,9 +22,24 @@
 }
 
 .status {
-  color: var(--fg-primary);
-  font-size: var(--text-title3);
+  color: var(--fg-tertiary);
+  font-size: var(--text-caption);
+  line-height: var(--text-caption-lh);
   font-weight: 500;
+  letter-spacing: var(--tracking-label);
+  text-transform: uppercase;
+}
+
+.hud[data-state="listening"] .status {
+  color: var(--accent-hover);
+}
+
+.hud[data-state="processing"] .status {
+  color: var(--purple);
+}
+
+.hud[data-state="speaking"] .status {
+  color: var(--success);
 }
 
 .waveform {
@@ -35,8 +50,10 @@
 
 .transcript {
   overflow: hidden;
-  color: var(--fg-secondary);
-  font-size: var(--text-callout);
+  color: var(--fg-primary);
+  font-size: var(--text-body);
+  line-height: var(--text-body-lh);
+  letter-spacing: var(--tracking-tight);
   text-overflow: ellipsis;
   white-space: nowrap;
 }

@@ -16,7 +16,7 @@ import okio.ByteString.Companion.toByteString
 
 sealed interface VoiceSocketEvent {
     data class Frame(val frame: VoiceFrame) : VoiceSocketEvent
-    data class Closed(val reason: String) : VoiceSocketEvent
+    data class Closed(val code: Int, val reason: String) : VoiceSocketEvent
 }
 
 class VoiceSocket(private val client: OkHttpClient) {
@@ -24,7 +24,9 @@ class VoiceSocket(private val client: OkHttpClient) {
 
     private val phase = AtomicReference(Phase.NEW)
     private val opened = CompletableDeferred<Unit>()
-    private val buffer = Channel<VoiceSocketEvent>(64)
+    // Control and content frames are sparse but must never be lost while audio
+    // capture owns the caller. Level telemetry is deliberately discarded below.
+    private val buffer = Channel<VoiceSocketEvent>(Channel.UNLIMITED)
     val events: ReceiveChannel<VoiceSocketEvent> = buffer
     private var socket: WebSocket? = null
 
@@ -46,6 +48,15 @@ class VoiceSocket(private val client: OkHttpClient) {
     fun start() = sendControl(Phase.ACQUIRED, Phase.STARTING, VoiceFrames.start())
     fun stop() = sendControl(Phase.STREAMING, Phase.STOPPING, VoiceFrames.stop())
     fun release() = sendControl(Phase.STOPPED, Phase.RELEASING, VoiceFrames.release())
+    fun interrupt() {
+        check(phase.get() == Phase.STOPPED) { "Voice turn is not interruptible" }
+        send(VoiceFrames.interrupt())
+    }
+
+    fun approve(approvalId: String, decision: String) {
+        check(phase.get() == Phase.STOPPED) { "Voice approval is not active" }
+        send(VoiceFrames.approval(approvalId, decision))
+    }
 
     fun sendAudio(bytes: ByteArray) {
         check(bytes.isNotEmpty() && bytes.size <= MAX_FRAME_BYTES) { "PCM frame exceeds 3200 bytes" }
@@ -67,22 +78,34 @@ class VoiceSocket(private val client: OkHttpClient) {
         check(socket?.send(payload) == true) { "Voice socket rejected control frame" }
     }
 
-    private fun accept(frame: VoiceFrame) {
+    private fun send(payload: String) {
+        check(socket?.send(payload) == true) { "Voice socket rejected control frame" }
+    }
+
+    internal fun accept(frame: VoiceFrame) {
         val valid = when (frame) {
             is VoiceFrame.Acquired -> phase.compareAndSet(Phase.ACQUIRING, Phase.ACQUIRED)
             is VoiceFrame.Started -> phase.compareAndSet(Phase.STARTING, Phase.STREAMING)
             is VoiceFrame.Stopped -> phase.compareAndSet(Phase.STOPPING, Phase.STOPPED)
             VoiceFrame.Released -> phase.compareAndSet(Phase.RELEASING, Phase.OPEN)
             is VoiceFrame.State, is VoiceFrame.Transcript, is VoiceFrame.Speech,
+            is VoiceFrame.TurnComplete,
+            is VoiceFrame.ApprovalRequest, is VoiceFrame.Interrupted,
             is VoiceFrame.Error, is VoiceFrame.Level, is VoiceFrame.Speaker -> true
         }
-        if (!valid || !buffer.trySend(VoiceSocketEvent.Frame(frame)).isSuccess) {
-            protocolFailure("Unexpected or overflowing voice frame: ${frame::class.simpleName}")
+        if (!valid) {
+            protocolFailure("Unexpected voice frame: ${frame::class.simpleName}")
+            return
+        }
+        // Input levels are produced locally during capture and backend levels
+        // are best-effort telemetry. They must not consume the reliable queue.
+        if (frame !is VoiceFrame.Level) {
+            buffer.trySend(VoiceSocketEvent.Frame(frame))
         }
     }
 
     private fun protocolFailure(reason: String) {
-        buffer.trySend(VoiceSocketEvent.Closed(reason))
+        buffer.trySend(VoiceSocketEvent.Closed(PROTOCOL_ERROR, reason))
         socket?.close(PROTOCOL_ERROR, reason.take(123))
         phase.set(Phase.CLOSED)
     }
@@ -106,13 +129,13 @@ class VoiceSocket(private val client: OkHttpClient) {
             }
             opened.completeExceptionally(IllegalStateException(reason, error))
             phase.set(Phase.CLOSED)
-            buffer.trySend(VoiceSocketEvent.Closed(reason))
+            buffer.trySend(VoiceSocketEvent.Closed(response?.code ?: ABNORMAL_CLOSURE, reason))
             buffer.close()
         }
 
         override fun onClosed(webSocket: WebSocket, code: Int, reason: String) {
             phase.set(Phase.CLOSED)
-            buffer.trySend(VoiceSocketEvent.Closed(reason.ifBlank { "Voice socket closed ($code)" }))
+            buffer.trySend(VoiceSocketEvent.Closed(code, reason.ifBlank { "Voice socket closed ($code)" }))
             buffer.close()
         }
     }
@@ -123,5 +146,6 @@ class VoiceSocket(private val client: OkHttpClient) {
         const val CONNECT_TIMEOUT_MILLIS = 15_000L
         const val NORMAL_CLOSURE = 1000
         const val PROTOCOL_ERROR = 1002
+        const val ABNORMAL_CLOSURE = 1006
     }
 }

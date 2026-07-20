@@ -5,6 +5,7 @@ import com.dax.assistant.data.auth.AuthResult
 import com.dax.assistant.data.auth.BackendAuth
 import com.dax.assistant.data.auth.CredentialStore
 import com.dax.assistant.data.protocol.FrameParser
+import com.dax.assistant.data.protocol.ClientFrames
 import com.dax.assistant.data.protocol.ServerFrame
 import java.util.concurrent.atomic.AtomicBoolean
 import kotlin.math.min
@@ -13,13 +14,15 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
-import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.SharedFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
-import kotlinx.coroutines.flow.receiveAsFlow
+import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
+import kotlin.random.Random
 import okhttp3.OkHttpClient
 import okhttp3.Request
 import okhttp3.Response
@@ -56,15 +59,25 @@ class ChatSocket(
     private val _state = MutableStateFlow<ConnectionState>(ConnectionState.Disconnected)
     val state: StateFlow<ConnectionState> = _state.asStateFlow()
 
-    // OkHttp callbacks cannot suspend. An unbounded channel preserves replies
-    // and authorization requests until the single controller consumes them.
+    // Callbacks feed one ordered pump; SharedFlow then broadcasts every frame
+    // independently to voice and any number of conversation collectors.
     private val frameBuffer = Channel<ServerFrame>(Channel.UNLIMITED)
-    val frames: Flow<ServerFrame> = frameBuffer.receiveAsFlow()
+    private val _frames = MutableSharedFlow<ServerFrame>(extraBufferCapacity = 64)
+    val frames: SharedFlow<ServerFrame> = _frames.asSharedFlow()
+
+    private val sessionLock = Any()
+    private val retainedSessions = linkedMapOf<String, Int>()
 
     private var socket: WebSocket? = null
     private var connectJob: Job? = null
     private val shouldRun = AtomicBoolean(false)
     private var attempt = 0
+
+    init {
+        scope.launch {
+            for (frame in frameBuffer) _frames.emit(frame)
+        }
+    }
 
     fun connect() {
         if (!shouldRun.compareAndSet(false, true)) return
@@ -82,6 +95,33 @@ class ChatSocket(
     /** Queues text for the backend. False when the socket is not up. */
     fun send(payload: String): Boolean = socket?.send(payload) ?: false
 
+    /** Retains a routed session. The backend allows at most 32 per socket. */
+    fun retainSession(sessionId: String): Boolean {
+        if (sessionId.isBlank()) return false
+        val shouldSubscribe = synchronized(sessionLock) {
+            val count = retainedSessions[sessionId]
+            if (count == null && retainedSessions.size >= MAX_SESSIONS) return false
+            retainedSessions[sessionId] = (count ?: 0) + 1
+            count == null
+        }
+        if (shouldSubscribe) send(ClientFrames.sessionSubscription(listOf(sessionId), true))
+        return true
+    }
+
+    fun releaseSession(sessionId: String) {
+        val shouldUnsubscribe = synchronized(sessionLock) {
+            val count = retainedSessions[sessionId] ?: return
+            if (count > 1) {
+                retainedSessions[sessionId] = count - 1
+                false
+            } else {
+                retainedSessions.remove(sessionId)
+                true
+            }
+        }
+        if (shouldUnsubscribe) send(ClientFrames.sessionSubscription(listOf(sessionId), false))
+    }
+
     private suspend fun runConnectionLoop() {
         while (scope.isActive && shouldRun.get()) {
             _state.value = ConnectionState.Connecting
@@ -97,7 +137,7 @@ class ChatSocket(
                 is AuthResult.Failed -> {
                     val wait = backoffSeconds(++attempt)
                     _state.value = ConnectionState.Failed(token.reason, wait)
-                    delay(wait * 1_000L)
+                    delay(jitteredDelayMillis(wait))
                     continue
                 }
 
@@ -106,7 +146,7 @@ class ChatSocket(
                     if (!shouldRun.get()) return
                     val wait = backoffSeconds(++attempt)
                     _state.value = ConnectionState.Failed(closed, wait)
-                    delay(wait * 1_000L)
+                    delay(jitteredDelayMillis(wait))
                 }
             }
         }
@@ -133,6 +173,10 @@ class ChatSocket(
                     DaxLog.i(TAG, "Chat socket open")
                     attempt = 0
                     _state.value = ConnectionState.Connected
+                    val sessions = synchronized(sessionLock) { retainedSessions.keys.toList() }
+                    if (sessions.isNotEmpty()) {
+                        webSocket.send(ClientFrames.sessionSubscription(sessions, true))
+                    }
                 }
 
                 override fun onMessage(webSocket: WebSocket, text: String) {
@@ -170,10 +214,14 @@ class ChatSocket(
     private fun backoffSeconds(attempt: Int): Int =
         min(MAX_BACKOFF_SECONDS, 2.0.pow((attempt - 1).coerceIn(0, 10)).toInt())
 
+    private fun jitteredDelayMillis(seconds: Int): Long =
+        (seconds * 1_000L * Random.nextDouble(0.8, 1.2)).toLong()
+
     private companion object {
         const val TAG = "ChatSocket"
         const val NORMAL_CLOSURE = 1000
         const val POLICY_VIOLATION = 1008
         const val MAX_BACKOFF_SECONDS = 30
+        const val MAX_SESSIONS = 32
     }
 }

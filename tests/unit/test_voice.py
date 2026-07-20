@@ -12,7 +12,7 @@ import threading
 import time
 import wave
 from types import SimpleNamespace
-from unittest.mock import MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import numpy as np
 import pytest
@@ -142,7 +142,7 @@ class TestPipelineEnabled:
             patch("dax.voice.pipeline.WakeWordDetector"),
             patch("dax.voice.pipeline.VoiceActivityDetector"),
             patch("dax.voice.pipeline.build_stt"),
-            patch("dax.voice.pipeline.build_tts"),
+            patch("dax.voice.pipeline.TTSService"),
         ):
             pipeline = VoicePipeline(
                 config=config,
@@ -197,10 +197,13 @@ class TestPipelineEnabled:
         pipeline._barge_in = False
         pipeline._events = MagicMock()
         pipeline._capture.read_chunk.return_value = None
-        pipeline._tts.synthesize.return_value = np.zeros(20, dtype=np.int16)
+        pipeline._tts.synthesize.return_value = SimpleNamespace(
+            audio=np.zeros(20, dtype=np.int16), sample_rate=24_000
+        )
         order: list[str] = []
         pipeline._tts.synthesize.side_effect = lambda *_args, **_kwargs: (
-            order.append("synthesize") or np.zeros(20, dtype=np.int16)
+            order.append("synthesize")
+            or SimpleNamespace(audio=np.zeros(20, dtype=np.int16), sample_rate=24_000)
         )
         pipeline._events.emit_speech.side_effect = lambda *_args: order.append("speech")
         pipeline._player.play.side_effect = lambda *_args, **_kwargs: order.append("play")
@@ -213,6 +216,110 @@ class TestPipelineEnabled:
             "Esta primera frase tiene suficiente longitud para mantenerse sola.",
             "es",
         )
+
+    def test_client_text_speak_emits_every_sentence_without_host_audio(self):
+        pipeline = self._make_pipeline()
+        pipeline._events = MagicMock()
+        pipeline._output_owner = "mobile"
+        pipeline._turn = 4
+
+        pipeline._speak(
+            "Esta primera frase tiene suficiente longitud para mantenerse sola. Segunda frase.",
+            "es",
+        )
+
+        calls = pipeline._events.method_calls
+        assert [call[0] for call in calls] == [
+            "emit_speech",
+            "emit_speech",
+        ]
+        pipeline._tts.synthesize.assert_not_called()
+
+    def test_remote_output_never_samples_host_microphone_while_idle(self):
+        pipeline = self._make_pipeline()
+        pipeline._output_owner = "mobile"
+
+        pipeline._handle_idle()
+
+        pipeline._capture.read_chunk.assert_not_called()
+
+    def test_remote_lease_suppresses_host_input_and_output_and_restores_when_idle(self):
+        pipeline = self._make_pipeline()
+        generation = pipeline.acquire_remote_owner("mobile")
+
+        pipeline._handle_idle()
+
+        assert generation > 0
+        assert pipeline.input_owner == "mobile"
+        assert pipeline.output_owner == "mobile"
+        pipeline._capture.read_chunk.assert_not_called()
+        pipeline.release_remote_owner("mobile")
+        assert pipeline.input_owner is None
+        assert pipeline.output_owner is None
+        assert pipeline._audio_source is pipeline._capture
+
+    def test_remote_lease_cannot_be_released_before_idle(self):
+        pipeline = self._make_pipeline()
+        pipeline.acquire_remote_owner("mobile")
+        pipeline._state = PipelineState.PROCESSING
+
+        with pytest.raises(VoiceError, match="Cannot release"):
+            pipeline.release_remote_owner("mobile")
+
+        assert pipeline.input_owner == "mobile"
+
+    async def test_remote_approval_emits_managed_request_without_host_microphone(self):
+        pipeline = self._make_pipeline()
+        pipeline._events = MagicMock()
+        pipeline._output_owner = "mobile"
+        pipeline._record_utterance = MagicMock()
+
+        decision = await pipeline._voice_approve(
+            approval_id="approval-1",
+            tool_name="shell_run",
+            server_name="dax-system",
+            arguments={"command": "date"},
+            options=["once", "save"],
+            timeout_seconds=30,
+        )
+
+        assert decision is None
+        pipeline._events.emit_approval_request.assert_called_once_with(
+            approval_id="approval-1",
+            tool_name="shell_run",
+            server_name="dax-system",
+            arguments={"command": "date"},
+            options=["once", "save"],
+            timeout_seconds=30,
+        )
+        pipeline._record_utterance.assert_not_called()
+        pipeline._capture.read_chunk.assert_not_called()
+
+    def test_remote_reply_returns_idle_instead_of_host_followup(self):
+        pipeline = self._make_pipeline()
+        pipeline._events = MagicMock()
+        pipeline._output_owner = "mobile"
+        pipeline._turn = 2
+        pipeline._voice_channel.get_response = AsyncMock(
+            return_value=Message(
+                role=MessageRole.ASSISTANT,
+                content="Respuesta remota.",
+                channel=ChannelType.VOICE,
+            )
+        )
+        pipeline._loop = asyncio.new_event_loop()
+        thread = threading.Thread(target=pipeline._loop.run_forever)
+        thread.start()
+        try:
+            pipeline._wait_and_speak(Language.SPANISH)
+        finally:
+            pipeline._loop.call_soon_threadsafe(pipeline._loop.stop)
+            thread.join(timeout=1)
+            pipeline._loop.close()
+
+        assert pipeline.state == PipelineState.IDLE
+        pipeline._events.emit_turn_completed.assert_called_once_with("2")
+        pipeline._capture.read_chunk.assert_not_called()
 
     def test_followup_requires_sustained_speech(self):
         pipeline = self._make_pipeline()
@@ -392,6 +499,55 @@ class TestBuildTTS:
         assert kwargs["instructions"] == "Habla natural."
 
 
+class TestTTSService:
+    def test_serializes_synthesis_across_callers(self, monkeypatch):
+        from dax.core.config import VoiceConfig
+        from dax.voice.tts_service import TTSService
+
+        class Engine:
+            sample_rate = 24_000
+            engine_name = "test"
+
+            def __init__(self) -> None:
+                self.active = 0
+                self.max_active = 0
+
+            def start(self) -> None:
+                pass
+
+            def stop(self) -> None:
+                pass
+
+            def synthesize(self, text: str, language: str = "en") -> np.ndarray:
+                self.active += 1
+                self.max_active = max(self.max_active, self.active)
+                time.sleep(0.03)
+                self.active -= 1
+                return np.ones(10, dtype=np.int16)
+
+            def voice_name(self, language: str) -> str | None:
+                return "test-voice"
+
+        engine = Engine()
+        monkeypatch.setattr("dax.voice.tts_service.build_tts", lambda *_: engine)
+        service = TTSService(VoiceConfig(), "models")
+        barrier = threading.Barrier(3)
+
+        def synthesize() -> None:
+            barrier.wait()
+            service.synthesize("hello", "en")
+
+        workers = [threading.Thread(target=synthesize) for _ in range(2)]
+        for worker in workers:
+            worker.start()
+        barrier.wait()
+        for worker in workers:
+            worker.join(timeout=1)
+
+        assert all(not worker.is_alive() for worker in workers)
+        assert engine.max_active == 1
+
+
 class TestSpeakerVerifier:
     """Voice ID must fail open when no profile/encoder is available."""
 
@@ -434,7 +590,7 @@ class TestVoiceSession:
             patch("dax.voice.pipeline.WakeWordDetector"),
             patch("dax.voice.pipeline.VoiceActivityDetector"),
             patch("dax.voice.pipeline.build_stt"),
-            patch("dax.voice.pipeline.build_tts"),
+            patch("dax.voice.pipeline.TTSService"),
         ):
             pipeline = VoicePipeline(
                 config=config,
@@ -532,7 +688,7 @@ class TestPushToTalk:
             patch("dax.voice.pipeline.WakeWordDetector"),
             patch("dax.voice.pipeline.VoiceActivityDetector"),
             patch("dax.voice.pipeline.build_stt"),
-            patch("dax.voice.pipeline.build_tts"),
+            patch("dax.voice.pipeline.TTSService"),
         ):
             pipeline = VoicePipeline(VoiceConfig(), bus, VoiceChannel(), loop)
         pipeline._running = True
@@ -642,7 +798,7 @@ class TestFollowUpDetection:
             patch("dax.voice.pipeline.WakeWordDetector"),
             patch("dax.voice.pipeline.VoiceActivityDetector"),
             patch("dax.voice.pipeline.build_stt"),
-            patch("dax.voice.pipeline.build_tts"),
+            patch("dax.voice.pipeline.TTSService"),
         ):
             pipeline = VoicePipeline(
                 config=VoiceConfig(),
@@ -695,3 +851,21 @@ class TestFollowUpDetection:
         assert pipeline.state == PipelineState.CONVERSING
         assert pipeline._followup_buffer == []
         assert pipeline._followup_voiced_ms == 0
+
+    def test_automatic_followup_is_consumed_once(self):
+        pipeline = self._make_pipeline()
+        pipeline._followup_armed = True
+
+        self._drive(pipeline, [True, True, True, True])
+
+        assert pipeline.state == PipelineState.LISTENING
+        assert pipeline._followup_armed is False
+
+    def test_followup_silence_returns_idle(self):
+        pipeline = self._make_pipeline()
+        pipeline._conversation_start = time.monotonic() - pipeline._conv_timeout - 1
+        pipeline._state = PipelineState.CONVERSING
+
+        pipeline._handle_conversing()
+
+        assert pipeline.state == PipelineState.IDLE

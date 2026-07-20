@@ -4,6 +4,8 @@ import com.dax.assistant.audio.AudioRouteManager
 import com.dax.assistant.audio.RecognitionEvent
 import com.dax.assistant.audio.RemoteVoiceClient
 import com.dax.assistant.audio.RemoteVoiceEvent
+import com.dax.assistant.audio.RemoteNoSpeechException
+import com.dax.assistant.audio.RemoteTurnInterruptedException
 import com.dax.assistant.audio.Speaker
 import com.dax.assistant.audio.SpeechRecognition
 import com.dax.assistant.core.log.DaxLog
@@ -17,11 +19,14 @@ import java.util.UUID
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.cancelAndJoin
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
+import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withTimeoutOrNull
 
 /** One settled exchange, for the compact history. */
 data class Turn(
@@ -62,35 +67,84 @@ class AssistantController(
     val history: StateFlow<List<Turn>> = _history.asStateFlow()
 
     private var turnJob: Job? = null
-    private var playbackJob: Job? = null
+    private val playbackQueue = Channel<PlaybackRequest>(Channel.UNLIMITED)
+    private var playbackGeneration = 0L
     private var pendingUserText: String = ""
     private var streamedReply: String = ""
     private var acceptingResponse = false
 
     init {
+        check(socket.retainSession(sessionId)) { "Unable to retain assistant session" }
         scope.launch { collectFrames() }
         scope.launch { watchConnection() }
+        scope.launch {
+            for (request in playbackQueue) {
+                if (request.generation != playbackGeneration) continue
+                if (request.text != null) {
+                    speaker.setLanguage(request.language)
+                    speaker.speak(request.text)
+                }
+                if (request.finish && request.generation == playbackGeneration) {
+                    _state.update { if (it is AssistantState.Speaking) AssistantState.Idle else it }
+                    if (request.followUp && _state.value is AssistantState.Idle) {
+                        startTurn(followUp = true)
+                    }
+                }
+            }
+        }
     }
 
     /** Begins a turn. Ignored unless the machine is at rest. */
     fun startTurn() {
+        startTurn(followUp = false)
+    }
+
+    private fun startTurn(followUp: Boolean) {
         if (!_state.value.canStartTurn) {
             DaxLog.d(TAG, "Ignoring trigger in state ${_state.value::class.simpleName}")
             return
         }
-        // Barge-in: a trigger during playback interrupts the reply.
+        val interrupted = _state.value
+        if (interrupted is AssistantState.AwaitingApproval) {
+            resolveApproval("deny")
+        }
+        val remoteInterruption = preferences.state.value.recognitionMode == RecognitionMode.SERVER &&
+            (interrupted is AssistantState.Processing ||
+                interrupted is AssistantState.AwaitingApproval ||
+                interrupted is AssistantState.Speaking) &&
+            remoteVoice.interruptCurrent()
+        if (remoteInterruption) {
+            // This invalidates delivery only. The backend does not pretend that
+            // an agent or a tool already executing was cancelled.
+            DaxLog.d(TAG, "Waiting for backend to accept remote delivery interruption")
+        }
+        acceptingResponse = false
         speaker.stop()
-        playbackJob?.cancel()
-        turnJob?.cancel()
-        turnJob = scope.launch { runTurn() }
+        playbackGeneration++
+        val previous = turnJob
+        turnJob = scope.launch {
+            if (remoteInterruption && previous != null) {
+                val accepted = withTimeoutOrNull(INTERRUPT_TIMEOUT_MILLIS) {
+                    previous.join()
+                    true
+                } == true
+                if (!accepted) {
+                    previous.cancelAndJoin()
+                    fail(AssistantError.Network("Backend did not accept the voice interruption"))
+                    return@launch
+                }
+            } else {
+                previous?.cancelAndJoin()
+            }
+            runTurn(followUp)
+        }
     }
 
     /** Cancels whatever is in flight and returns to rest. */
     fun cancel() {
         turnJob?.cancel()
         turnJob = null
-        playbackJob?.cancel()
-        playbackJob = null
+        playbackGeneration++
         speaker.stop()
         routes.release()
         streamedReply = ""
@@ -102,9 +156,12 @@ class AssistantController(
     /** Answers a pending tool confirmation. */
     fun resolveApproval(decision: String) {
         val current = _state.value as? AssistantState.AwaitingApproval ?: return
-        val sent = socket.send(
-            ClientFrames.toolConfirmation(current.request.approvalId, decision, sessionId),
-        )
+        val sent = when (current.request.transport) {
+            ApprovalTransport.VOICE -> remoteVoice.resolveApproval(current.request.approvalId, decision)
+            ApprovalTransport.CHAT -> socket.send(
+                ClientFrames.toolConfirmation(current.request.approvalId, decision, sessionId),
+            )
+        }
         if (!sent) {
             // The backend denies on timeout, so a lost confirmation fails
             // closed rather than silently running the tool.
@@ -120,7 +177,7 @@ class AssistantController(
         )
     }
 
-    private suspend fun runTurn() {
+    private suspend fun runTurn(followUp: Boolean) {
         val route = try {
             _state.value = AssistantState.ConnectingAudio(routes.activeRoute.value)
             routes.acquireBestRoute()
@@ -136,10 +193,18 @@ class AssistantController(
         try {
             when (preferences.state.value.recognitionMode) {
                 RecognitionMode.ANDROID -> runAndroidTurn()
-                RecognitionMode.SERVER -> runRemoteTurn(route)
+                RecognitionMode.SERVER -> runRemoteTurn(route, followUp)
             }
         } catch (cancelled: CancellationException) {
             throw cancelled
+        } catch (_: RemoteNoSpeechException) {
+            if (followUp) {
+                _state.value = AssistantState.Idle
+            } else {
+                fail(AssistantError.Recognition("I didn't hear anything"))
+            }
+        } catch (_: RemoteTurnInterruptedException) {
+            _state.value = AssistantState.Idle
         } catch (error: Exception) {
             fail(AssistantError.Backend(error.message ?: "Remote voice failed"))
         } finally {
@@ -205,8 +270,13 @@ class AssistantController(
         }
     }
 
-    private suspend fun runRemoteTurn(route: com.dax.assistant.audio.AudioRoute) {
+    private suspend fun runRemoteTurn(
+        route: com.dax.assistant.audio.AudioRoute,
+        automaticFollowUp: Boolean,
+    ) {
+        val generation = playbackGeneration
         remoteVoice.runTurn { event ->
+            if (generation != playbackGeneration) return@runTurn
             when (event) {
                 is RemoteVoiceEvent.Listening -> _state.update { current ->
                     (current as? AssistantState.Listening)?.copy(
@@ -236,8 +306,26 @@ class AssistantController(
                         spokenText = sentence,
                         route = routes.activeRoute.value,
                     )
-                    speaker.setLanguage(event.language?.takeIf { it.isNotBlank() } ?: currentLanguageTag())
-                    speaker.speak(sentence)
+                    enqueuePlayback(
+                        sentence,
+                        event.language?.takeIf { it.isNotBlank() } ?: currentLanguageTag(),
+                    )
+                }
+                is RemoteVoiceEvent.Approval -> {
+                    _state.value = AssistantState.AwaitingApproval(
+                        request = ApprovalRequest(
+                            approvalId = event.approvalId,
+                            toolName = event.toolName,
+                            serverName = event.serverName,
+                            arguments = event.arguments,
+                            options = event.options,
+                            timeoutSeconds = event.timeoutSeconds,
+                            requestedAtEpochMillis = System.currentTimeMillis(),
+                            transport = ApprovalTransport.VOICE,
+                        ),
+                        transcript = pendingUserText,
+                        streamedReply = streamedReply,
+                    )
                 }
                 RemoteVoiceEvent.Completed -> {
                     if (pendingUserText.isNotBlank() && streamedReply.isNotBlank()) {
@@ -245,7 +333,15 @@ class AssistantController(
                     }
                     pendingUserText = ""
                     streamedReply = ""
-                    _state.value = AssistantState.Idle
+                    enqueuePlayback(
+                        null,
+                        currentLanguageTag(),
+                        finish = true,
+                        followUp = shouldStartAutomaticFollowUp(
+                            completedAutomaticFollowUp = automaticFollowUp,
+                            enabled = preferences.state.value.followUpEnabled,
+                        ),
+                    )
                 }
             }
         }
@@ -257,6 +353,7 @@ class AssistantController(
                 is ServerFrame.Message -> onAssistantMessage(frame)
                 is ServerFrame.AgentEvent -> onAgentEvent(frame)
                 is ServerFrame.ToolConfirmation -> onConfirmation(frame)
+                is ServerFrame.SessionSubscriptionAck -> Unit
                 is ServerFrame.Unknown -> Unit
             }
         }
@@ -272,14 +369,8 @@ class AssistantController(
 
         val route = routes.activeRoute.value
         _state.value = AssistantState.Speaking(fullReply = reply, spokenText = reply, route = route)
-        speaker.setLanguage(currentLanguageTag())
         pendingUserText = ""
-        playbackJob?.cancel()
-        playbackJob = scope.launch {
-            speaker.speak(reply)
-            // Barge-in may already have moved the machine to the next turn.
-            _state.update { if (it is AssistantState.Speaking) AssistantState.Idle else it }
-        }
+        enqueuePlayback(reply, currentLanguageTag(), finish = true)
     }
 
     private fun onAgentEvent(frame: ServerFrame.AgentEvent) {
@@ -293,7 +384,7 @@ class AssistantController(
 
             "tool_result" -> AgentActivity.ToolFinished(
                 frame.toolName.orEmpty(),
-                frame.ok ?: true,
+                frame.ok ?: frame.error?.not() ?: true,
             )
 
             else -> null
@@ -320,6 +411,17 @@ class AssistantController(
         }
     }
 
+    private fun enqueuePlayback(
+        text: String?,
+        language: String,
+        finish: Boolean = false,
+        followUp: Boolean = false,
+    ) {
+        playbackQueue.trySend(
+            PlaybackRequest(text, language, finish, playbackGeneration, followUp),
+        )
+    }
+
     private fun onConfirmation(frame: ServerFrame.ToolConfirmation) {
         if (frame.sessionId != sessionId || !acceptingResponse) return
         _state.value = AssistantState.AwaitingApproval(
@@ -327,7 +429,9 @@ class AssistantController(
                 approvalId = frame.approvalId,
                 toolName = frame.toolName,
                 serverName = frame.serverName,
-                arguments = frame.arguments,
+                arguments = frame.arguments.mapValues { (_, value) ->
+                    (value as? kotlinx.serialization.json.JsonPrimitive)?.content ?: value.toString()
+                },
                 options = frame.options,
                 timeoutSeconds = frame.timeoutSeconds,
                 requestedAtEpochMillis = System.currentTimeMillis(),
@@ -366,8 +470,22 @@ class AssistantController(
     private companion object {
         const val TAG = "AssistantController"
         const val MAX_HISTORY = 40
+        const val INTERRUPT_TIMEOUT_MILLIS = 15_000L
         // The backend detects language per turn; pinning it here would break
         // the mixed Spanish/English use the agent already handles.
         const val LANGUAGE_AUTO = "auto"
     }
+
+    private data class PlaybackRequest(
+        val text: String?,
+        val language: String,
+        val finish: Boolean,
+        val generation: Long,
+        val followUp: Boolean,
+    )
 }
+
+internal fun shouldStartAutomaticFollowUp(
+    completedAutomaticFollowUp: Boolean,
+    enabled: Boolean,
+): Boolean = enabled && !completedAutomaticFollowUp

@@ -113,3 +113,44 @@ class TestApprovalManager:
         decision = await m.request(tool_name="read", server_name="s", arguments={})
 
         assert decision == "approve"
+
+    async def test_voice_approver_gets_managed_id_and_resolves_once(self):
+        m = ApprovalManager(timeout_seconds=5)
+        seen: dict[str, Any] = {}
+
+        async def approver(**payload: Any) -> None:
+            seen.update(payload)
+            assert m.resolve(payload["approval_id"], "once") is True
+            assert m.resolve(payload["approval_id"], "once") is False
+
+        m.set_voice_approver(approver)
+        decision = await m.request(
+            tool_name="shell_run",
+            server_name="dax-system",
+            arguments={"command": "touch x"},
+            options=["once", "save"],
+            channel="voice",
+        )
+
+        assert decision == "once"
+        assert seen["options"] == ["once", "save"]
+        assert seen["timeout_seconds"] == 5
+        assert seen["approval_id"]
+
+    async def test_pending_request_exposes_its_originating_channel(self):
+        m = ApprovalManager(timeout_seconds=5)
+        seen: dict[str, Any] = {}
+
+        async def approver(**payload: Any) -> None:
+            seen.update(payload)
+            assert m.channel_for(payload["approval_id"]) == "voice"
+            m.resolve(payload["approval_id"], "deny")
+
+        m.set_voice_approver(approver)
+        assert await m.request(
+            tool_name="read",
+            server_name="s",
+            arguments={},
+            channel="voice",
+        ) == "deny"
+        assert m.channel_for(seen["approval_id"]) is None

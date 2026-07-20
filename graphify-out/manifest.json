@@ -50,8 +50,8 @@
     "semantic_hash": "f97b8bddb6870334c7571d45db9d296f"
   },
   "src/dax/app.py": {
-    "mtime": 1784496943.8077555,
-    "ast_hash": "d26f6d37f81807a493698f52c9ad4cd0",
+    "mtime": 1784510486.9406781,
+    "ast_hash": "8904d9f57818bbbe7cd7e7dcae0a6954",
     "semantic_hash": ""
   },
   "src/dax/channels/__init__.py": {
@@ -225,8 +225,8 @@
     "semantic_hash": "2f19940d85a39e44f7d846ec5c7e5d8b"
   },
   "src/dax/orchestrator/approval.py": {
-    "mtime": 1784506778.1752224,
-    "ast_hash": "92b4e1519ee49a1505659f0db4532e21",
+    "mtime": 1784510890.420408,
+    "ast_hash": "2610912851fa992315a660215dcc6fd4",
     "semantic_hash": ""
   },
   "src/dax/orchestrator/bus.py": {
@@ -280,8 +280,8 @@
     "semantic_hash": "c6aa55a8f9240604bd842fc1308ced2d"
   },
   "src/dax/voice/pipeline.py": {
-    "mtime": 1784497252.8675013,
-    "ast_hash": "33553fb181e297048f7470a3eb80ccc1",
+    "mtime": 1784512466.9929805,
+    "ast_hash": "120a6e8da8685ae76a5237505df9da44",
     "semantic_hash": ""
   },
   "src/dax/voice/speaker.py": {
@@ -295,14 +295,14 @@
     "semantic_hash": "f41186ca0809fd10644283790a1fc233"
   },
   "src/dax/voice/tts.py": {
-    "mtime": 1784395811.848097,
-    "ast_hash": "a31c6d4647efcfd6bd2327838b23acdf",
-    "semantic_hash": "a31c6d4647efcfd6bd2327838b23acdf"
+    "mtime": 1784508300.4271135,
+    "ast_hash": "ca34a21cbd1733b626ff90fb29d48a53",
+    "semantic_hash": ""
   },
   "src/dax/voice/tts_kokoro.py": {
-    "mtime": 1782862528.8911796,
-    "ast_hash": "5c8b92ce09027c8619534029f6fb723b",
-    "semantic_hash": "5c8b92ce09027c8619534029f6fb723b"
+    "mtime": 1784508300.4281135,
+    "ast_hash": "07a1ffa775b6e973771b3a605555064a",
+    "semantic_hash": ""
   },
   "src/dax/voice/vad.py": {
     "mtime": 1782863416.122943,
@@ -340,8 +340,8 @@
     "semantic_hash": "bf1492f56946081038016478c751ccbd"
   },
   "src/dax/web/routes/chat.py": {
-    "mtime": 1784502733.182315,
-    "ast_hash": "ec94e497ee7c337500edc1675a49d1d2",
+    "mtime": 1784508500.111074,
+    "ast_hash": "4e477a5b9e7a5b1888d3fb1fab88adc8",
     "semantic_hash": ""
   },
   "src/dax/web/routes/config.py": {
@@ -435,13 +435,13 @@
     "semantic_hash": "0ca371d388d2b58f0bcf2fe6e30c77a8"
   },
   "tests/unit/test_api.py": {
-    "mtime": 1784496737.615258,
-    "ast_hash": "5a2b99335aedadb2f83db8e112fc363c",
+    "mtime": 1784508431.5167782,
+    "ast_hash": "b64975af32933bcb9e5ad9d5763fb3c1",
     "semantic_hash": ""
   },
   "tests/unit/test_approval.py": {
-    "mtime": 1784506778.1762223,
-    "ast_hash": "30437e4f677d4814a99dcf7cf2d67dff",
+    "mtime": 1784510906.4914365,
+    "ast_hash": "c409d59e3431c49ab3bcb0799ae6ae9b",
     "semantic_hash": ""
   },
   "tests/unit/test_auth.py": {
@@ -510,8 +510,8 @@
     "semantic_hash": "91a051a42950d8fb6d404927ca32ad33"
   },
   "tests/unit/test_voice.py": {
-    "mtime": 1784495005.9110794,
-    "ast_hash": "99fe6547da9230280f1e0548e717aa4b",
+    "mtime": 1784512466.9929805,
+    "ast_hash": "eb8b5f487d2c35ef2923ce9cececac2c",
     "semantic_hash": ""
   },
   "tests/unit/test_webhooks.py": {
@@ -565,9 +565,9 @@
     "semantic_hash": "86259eb828d4d1e213fa35a04361d918"
   },
   "web/src/hooks/useChatSocket.ts": {
-    "mtime": 1782493575.5865724,
-    "ast_hash": "d2b31abbbe9d8fd3376cd46317c6bdd3",
-    "semantic_hash": "d2b31abbbe9d8fd3376cd46317c6bdd3"
+    "mtime": 1784508302.4411125,
+    "ast_hash": "5a651f9856ecfdf358222ea183e52127",
+    "semantic_hash": ""
   },
   "web/src/hooks/useConfig.ts": {
     "mtime": 1773976378.359553,
@@ -715,8 +715,8 @@
     "semantic_hash": ""
   },
   "src/dax/web/static/index.html": {
-    "mtime": 1784507062.5067933,
-    "ast_hash": "c9e836484160e092fc5a3b06681e4077",
+    "mtime": 1784512540.9360797,
+    "ast_hash": "a00bf078032c47e886e948bb116c84d5",
     "semantic_hash": ""
   },
   "web/index.html": {
@@ -725,12 +725,12 @@
     "semantic_hash": "647271aabf0d04a8ba029b5b8ed54f36"
   },
   "src/dax/web/static/favicon.svg": {
-    "mtime": 1784507062.098828,
+    "mtime": 1784512540.682849,
     "ast_hash": "7e840862161341271697daa99a40d76b",
     "semantic_hash": "7e840862161341271697daa99a40d76b"
   },
   "src/dax/web/static/icons.svg": {
-    "mtime": 1784507062.0990002,
+    "mtime": 1784512540.6829643,
     "ast_hash": "3b4fcfcf393eca4d264dca4a4663bc37",
     "semantic_hash": "3b4fcfcf393eca4d264dca4a4663bc37"
   },
@@ -745,9 +745,9 @@
     "semantic_hash": "3b4fcfcf393eca4d264dca4a4663bc37"
   },
   "src/dax/web/routes/voice.py": {
-    "mtime": 1784491915.6639884,
-    "ast_hash": "a27ce3c3f43212b4224fe01c29f683a9",
-    "semantic_hash": "a27ce3c3f43212b4224fe01c29f683a9"
+    "mtime": 1784508474.918868,
+    "ast_hash": "7aad69d06f47c2a2dd947152409bb164",
+    "semantic_hash": ""
   },
   "web/src/pages/settings/VoiceEnrollment.tsx": {
     "mtime": 1784397149.014776,
@@ -855,8 +855,8 @@
     "semantic_hash": ""
   },
   "desktop/src/components/CommandDeck.tsx": {
-    "mtime": 1784502864.8798857,
-    "ast_hash": "1973e72cf5ea706f3df4770e07ddcf15",
+    "mtime": 1784508322.7551026,
+    "ast_hash": "2a60f335c1ff507c04817af579894210",
     "semantic_hash": ""
   },
   "desktop/src/components/CommandPalette.tsx": {
@@ -875,8 +875,8 @@
     "semantic_hash": ""
   },
   "desktop/src/components/VoiceOrb.tsx": {
-    "mtime": 1784502496.7298326,
-    "ast_hash": "0983cc2db6ad94948a4744fe516930e5",
+    "mtime": 1784508280.770123,
+    "ast_hash": "34579f6d0a28524db05c8b2f3d8a39f1",
     "semantic_hash": ""
   },
   "desktop/src/components/icons.tsx": {
@@ -935,13 +935,13 @@
     "semantic_hash": "44b5096bac038bdce295de31f8935467"
   },
   "desktop/src/hooks/useChatSocket.test.ts": {
-    "mtime": 1784502565.3589725,
-    "ast_hash": "3b1750a307139b6f04bb44aed792f6b8",
+    "mtime": 1784508278.970124,
+    "ast_hash": "a090d07260fddde5d46480d7ccd4f2dd",
     "semantic_hash": ""
   },
   "desktop/src/hooks/useChatSocket.ts": {
-    "mtime": 1784502496.7289827,
-    "ast_hash": "4e1b2308ffd6859944dd2ea59cafe3fc",
+    "mtime": 1784508278.969124,
+    "ast_hash": "07f7cde0f775ef437d733c0ea9e315f3",
     "semantic_hash": ""
   },
   "desktop/src/hooks/useConfig.ts": {
@@ -1105,8 +1105,8 @@
     "semantic_hash": "8de219d039c972e82e275a99b3aa8f3e"
   },
   "src/dax/core/voice_events.py": {
-    "mtime": 1784493618.4857316,
-    "ast_hash": "a7865d55276f006a4ad73aa4a2b94467",
+    "mtime": 1784512146.7605374,
+    "ast_hash": "943526046c3b86d30889c503849120b1",
     "semantic_hash": ""
   },
   "src/dax/voice/events.py": {
@@ -1115,13 +1115,13 @@
     "semantic_hash": "9228a4ae28e727cbc6b1896e67e1e4ca"
   },
   "src/dax/web/routes/voice_ws.py": {
-    "mtime": 1784497298.5076113,
-    "ast_hash": "2cdf92a3dbf97c1d02e29f3dcbc82836",
+    "mtime": 1784512252.7126932,
+    "ast_hash": "59bbcef371a03df9726c60bd43a20180",
     "semantic_hash": ""
   },
   "tests/unit/test_voice_ws.py": {
-    "mtime": 1784497344.387722,
-    "ast_hash": "2788c67b0bb0032d215e8a9c4c2f291b",
+    "mtime": 1784512252.7136931,
+    "ast_hash": "c1480c9c3efda81d8fb23f9dda059d4f",
     "semantic_hash": ""
   },
   "desktop/PLAN.md": {
@@ -1170,8 +1170,8 @@
     "semantic_hash": ""
   },
   "desktop/src/native/VoiceHud.tsx": {
-    "mtime": 1784493618.4877317,
-    "ast_hash": "c3027830f1df83da330daeaf7c62987c",
+    "mtime": 1784508280.772123,
+    "ast_hash": "05aab8d1eb0fcec12a234b6803f03680",
     "semantic_hash": ""
   },
   "desktop/src/native/backend.ts": {
@@ -1255,8 +1255,8 @@
     "semantic_hash": "8308b0dd1b3e781c7c912b13501ef5eb"
   },
   "desktop/src/i18n/catalog.ts": {
-    "mtime": 1784506613.7868922,
-    "ast_hash": "dff2a130542817c50509849004c25cee",
+    "mtime": 1784508280.773123,
+    "ast_hash": "c5c5f4fba3d429603004f6948be1f39c",
     "semantic_hash": ""
   },
   "desktop/src/screens/settings/registry.en.ts": {
@@ -1265,9 +1265,9 @@
     "semantic_hash": "52dcbf577f55b27978133f7cac05c53b"
   },
   "desktop/src/components/VoiceOrb.test.tsx": {
-    "mtime": 1784491915.6419375,
-    "ast_hash": "e0c10862fa088cbd8d946cf50125d973",
-    "semantic_hash": "e0c10862fa088cbd8d946cf50125d973"
+    "mtime": 1784508280.773123,
+    "ast_hash": "634465af37a8e5e8a7187cbd41291cc2",
+    "semantic_hash": ""
   },
   "desktop/src/native/environment.ts": {
     "mtime": 1784491915.644069,
@@ -1425,8 +1425,8 @@
     "semantic_hash": ""
   },
   "tests/unit/test_multiclient.py": {
-    "mtime": 1784496764.7963235,
-    "ast_hash": "b6725339907edf44d03e55b0330d5086",
+    "mtime": 1784508415.7758682,
+    "ast_hash": "41deeca090a8d71aec1d1aa4b1b13f6b",
     "semantic_hash": ""
   },
   "android/app/build.gradle.kts": {
@@ -1440,8 +1440,8 @@
     "semantic_hash": ""
   },
   "android/app/src/main/kotlin/com/dax/assistant/assistant/AssistantState.kt": {
-    "mtime": 1784506315.7572937,
-    "ast_hash": "966d741f82ee4775bf94eedb8011500a",
+    "mtime": 1784510590.772871,
+    "ast_hash": "ff723bfa424330d0c14666ba342d589f",
     "semantic_hash": ""
   },
   "android/app/src/main/kotlin/com/dax/assistant/audio/AudioRoute.kt": {
@@ -1470,13 +1470,13 @@
     "semantic_hash": ""
   },
   "android/app/src/main/kotlin/com/dax/assistant/ui/design/Theme.kt": {
-    "mtime": 1784498035.9593575,
-    "ast_hash": "3fa9ff223b6d3dd6b2d324dbdb5d0148",
+    "mtime": 1784512144.9105346,
+    "ast_hash": "5780b98c5f2756e354614949636740f6",
     "semantic_hash": ""
   },
   "android/app/src/main/kotlin/com/dax/assistant/ui/design/Tokens.kt": {
-    "mtime": 1784497992.3202558,
-    "ast_hash": "bca5d7f27609a1ee96caa705b36556f2",
+    "mtime": 1784508296.1821156,
+    "ast_hash": "654e47757c51b658296d477c94970e2f",
     "semantic_hash": ""
   },
   "android/build.gradle.kts": {
@@ -1495,8 +1495,8 @@
     "semantic_hash": ""
   },
   "android/app/src/test/kotlin/com/dax/assistant/assistant/AssistantStateTest.kt": {
-    "mtime": 1784498554.7045653,
-    "ast_hash": "23a1c79c5b8cbc2b23968a38d28d0402",
+    "mtime": 1784510961.3365338,
+    "ast_hash": "77fffb81ebc24ae63b5f6f0c1639ca71",
     "semantic_hash": ""
   },
   "android/app/src/test/kotlin/com/dax/assistant/core/log/DaxLogTest.kt": {
@@ -1515,8 +1515,8 @@
     "semantic_hash": ""
   },
   "android/app/src/main/kotlin/com/dax/assistant/assistant/AssistantController.kt": {
-    "mtime": 1784506402.7194684,
-    "ast_hash": "32182d06d05229db06b244280e37725e",
+    "mtime": 1784512293.3857477,
+    "ast_hash": "80e9434fa8faf6d43a15fdfe0d8595ff",
     "semantic_hash": ""
   },
   "android/app/src/main/kotlin/com/dax/assistant/audio/AudioRouteManager.kt": {
@@ -1525,8 +1525,8 @@
     "semantic_hash": ""
   },
   "android/app/src/main/kotlin/com/dax/assistant/audio/Speaker.kt": {
-    "mtime": 1784505036.053723,
-    "ast_hash": "7d6c65e7831cb0bf76a7d242536a2971",
+    "mtime": 1784509383.0716395,
+    "ast_hash": "37bfc101b5f3a3166ac728f807fff2f9",
     "semantic_hash": ""
   },
   "android/app/src/main/kotlin/com/dax/assistant/audio/SpeechRecognition.kt": {
@@ -1535,8 +1535,8 @@
     "semantic_hash": ""
   },
   "android/app/src/main/kotlin/com/dax/assistant/di/AppModule.kt": {
-    "mtime": 1784506315.7572937,
-    "ast_hash": "4c0e057d589eb0c5f2c4c43362ee897c",
+    "mtime": 1784509093.37013,
+    "ast_hash": "135c732812a38bd8ac905e04c204ad9b",
     "semantic_hash": ""
   },
   "android/app/src/main/kotlin/com/dax/assistant/diagnostics/DiagnosticsViewModel.kt": {
@@ -1575,8 +1575,8 @@
     "semantic_hash": ""
   },
   "android/app/src/main/kotlin/com/dax/assistant/ui/assistant/AssistantScreen.kt": {
-    "mtime": 1784501807.4994261,
-    "ast_hash": "5d462ececd0b5fa530363ce6cc7d3aa6",
+    "mtime": 1784510648.2049775,
+    "ast_hash": "330a368720d285f575edf5c7964b2080",
     "semantic_hash": ""
   },
   "android/app/src/main/kotlin/com/dax/assistant/ui/assistant/VoiceOrb.kt": {
@@ -1980,13 +1980,13 @@
     "semantic_hash": ""
   },
   "android/app/src/main/kotlin/com/dax/assistant/data/protocol/Frames.kt": {
-    "mtime": 1784504930.8975117,
-    "ast_hash": "e6fa2b7524c49477a6e2176c3c84a989",
+    "mtime": 1784508747.0565228,
+    "ast_hash": "3147b1ca6d76c3c5aa159491261674bf",
     "semantic_hash": ""
   },
   "android/app/src/main/kotlin/com/dax/assistant/data/transport/ChatSocket.kt": {
-    "mtime": 1784504930.8975117,
-    "ast_hash": "8d384aafe58bc05dd470063b851f3ee3",
+    "mtime": 1784508747.0575228,
+    "ast_hash": "2b3e4c28dc4b5f11ee720c2c25337be1",
     "semantic_hash": ""
   },
   "android/app/src/main/kotlin/com/dax/assistant/mobileapi/MobileApiClient.kt": {
@@ -2010,23 +2010,23 @@
     "semantic_hash": ""
   },
   "android/app/src/main/kotlin/com/dax/assistant/ui/AppNavigation.kt": {
-    "mtime": 1784505894.762448,
-    "ast_hash": "4cf1aac4045e24c7f525978b767f9d3c",
+    "mtime": 1784511494.25448,
+    "ast_hash": "cc8bae20124d3bf012b1c504d9923505",
     "semantic_hash": ""
   },
   "android/app/src/main/kotlin/com/dax/assistant/ui/conversations/ConversationsScreen.kt": {
-    "mtime": 1784504977.388605,
-    "ast_hash": "dba0d626547c9202e28b662694e7f81b",
+    "mtime": 1784512202.7606244,
+    "ast_hash": "698c8be14f1c72aed5db32ac12390988",
     "semantic_hash": ""
   },
   "android/app/src/main/kotlin/com/dax/assistant/ui/settings/SettingsScreen.kt": {
-    "mtime": 1784506715.9390974,
-    "ast_hash": "58011372e69094a30a5962da25b52ee4",
+    "mtime": 1784512144.9115345,
+    "ast_hash": "58512d192f4b36e6543c97deb46fd378",
     "semantic_hash": ""
   },
   "android/app/src/main/kotlin/com/dax/assistant/ui/settings/SettingsViewModel.kt": {
-    "mtime": 1784505689.3640354,
-    "ast_hash": "ca0b9b909362efa31fcd9f480e6a1f08",
+    "mtime": 1784510648.2059774,
+    "ast_hash": "cfc3ef231ca604a918b2089a5a069912",
     "semantic_hash": ""
   },
   "android/app/src/test/kotlin/com/dax/assistant/mobileapi/MobileConfigTest.kt": {
@@ -2045,8 +2045,8 @@
     "semantic_hash": ""
   },
   "android/app/src/main/kotlin/com/dax/assistant/audio/RemoteVoiceClient.kt": {
-    "mtime": 1784506509.7576833,
-    "ast_hash": "ed2e4f1fe06dfe2bd53bfbcd898c5c20",
+    "mtime": 1784512194.3276112,
+    "ast_hash": "469aad52b593ab7528e032bba5b05cf3",
     "semantic_hash": ""
   },
   "android/app/src/main/kotlin/com/dax/assistant/audio/SpeechEndpointDetector.kt": {
@@ -2055,18 +2055,18 @@
     "semantic_hash": ""
   },
   "android/app/src/main/kotlin/com/dax/assistant/data/protocol/VoiceFrames.kt": {
-    "mtime": 1784506402.7184682,
-    "ast_hash": "ad81e5dcf69e1e64f801ba03f5211d1f",
+    "mtime": 1784510590.7718709,
+    "ast_hash": "b3ec251eba229ff2a8b448a6ca01d5c7",
     "semantic_hash": ""
   },
   "android/app/src/main/kotlin/com/dax/assistant/data/transport/VoiceSocket.kt": {
-    "mtime": 1784506425.4315138,
-    "ast_hash": "6d5dce019cbce8daba707fd0bd8ecffe",
+    "mtime": 1784510590.772871,
+    "ast_hash": "5875419fbc4c36b7d157a0ce84c26101",
     "semantic_hash": ""
   },
   "android/app/src/main/kotlin/com/dax/assistant/preferences/AppPreferences.kt": {
-    "mtime": 1784505650.4669573,
-    "ast_hash": "6c3ab47b997d4cb403696f9c432866e8",
+    "mtime": 1784510590.773871,
+    "ast_hash": "17f32b08f233d70ac33f7b99aabb68d6",
     "semantic_hash": ""
   },
   "android/app/src/test/kotlin/com/dax/assistant/audio/SpeechEndpointDetectorTest.kt": {
@@ -2075,13 +2075,93 @@
     "semantic_hash": ""
   },
   "android/app/src/test/kotlin/com/dax/assistant/preferences/AppPreferencesTest.kt": {
-    "mtime": 1784505650.4679573,
-    "ast_hash": "6ba47701b3ed933e230c7be3b5bd1543",
+    "mtime": 1784510648.2079775,
+    "ast_hash": "5e116afab245d535e30056eeea885e8f",
     "semantic_hash": ""
   },
-  "src/dax/web/static/assets/index-Z_8JFh70.js": {
-    "mtime": 1784507062.5057933,
-    "ast_hash": "7ef9e1dcc1bbf6d2d090de9b37f38690",
+  "android/app/src/test/kotlin/com/dax/assistant/ui/design/OrbitaColorsContrastTest.kt": {
+    "mtime": 1784512144.9115345,
+    "ast_hash": "e424e43faa3af2a2c3c6d5f626c1b360",
+    "semantic_hash": ""
+  },
+  "src/dax/voice/tts_service.py": {
+    "mtime": 1784508554.2241757,
+    "ast_hash": "9b0b4070c1fa1834ab48143aed7b1367",
+    "semantic_hash": ""
+  },
+  "web/src/hooks/useChatSocket.test.ts": {
+    "mtime": 1784508449.7650368,
+    "ast_hash": "e2a842f59a29e1c98f377e4976a82d4d",
+    "semantic_hash": ""
+  },
+  "android/app/src/main/kotlin/com/dax/assistant/audio/BackendSpeechClient.kt": {
+    "mtime": 1784509297.0374863,
+    "ast_hash": "9186a4082c0dcba22eb5dc1e1030f79e",
+    "semantic_hash": ""
+  },
+  "android/app/src/main/kotlin/com/dax/assistant/data/conversations/ChatRepository.kt": {
+    "mtime": 1784511347.1322186,
+    "ast_hash": "54dc915e19b6408f32a500fc851b2078",
+    "semantic_hash": ""
+  },
+  "android/app/src/main/kotlin/com/dax/assistant/data/conversations/ConversationApi.kt": {
+    "mtime": 1784511347.1312187,
+    "ast_hash": "1c09ad40b5d0d9f3ead03f1723c1c3c5",
+    "semantic_hash": ""
+  },
+  "android/app/src/main/kotlin/com/dax/assistant/data/conversations/ConversationModels.kt": {
+    "mtime": 1784511347.1302187,
+    "ast_hash": "bb2ba15a0e487502ba3022a53ed8ccd0",
+    "semantic_hash": ""
+  },
+  "android/app/src/main/kotlin/com/dax/assistant/ui/conversations/ConversationsViewModel.kt": {
+    "mtime": 1784511347.1322186,
+    "ast_hash": "7a0747c8bb0dc47d3227c0ad02b11cbe",
+    "semantic_hash": ""
+  },
+  "android/app/src/main/kotlin/com/dax/assistant/ui/conversations/SafeMarkdown.kt": {
+    "mtime": 1784511469.5804362,
+    "ast_hash": "91ea76b48e7dc2051467c58bdca55fb8",
+    "semantic_hash": ""
+  },
+  "android/app/src/test/kotlin/com/dax/assistant/assistant/AssistantControllerFollowUpTest.kt": {
+    "mtime": 1784512293.3867476,
+    "ast_hash": "e1fecf818d02f9219dfb683bc4bcc330",
+    "semantic_hash": ""
+  },
+  "android/app/src/test/kotlin/com/dax/assistant/audio/BackendSpeechClientTest.kt": {
+    "mtime": 1784509245.7413967,
+    "ast_hash": "4414ede0ae91391aa3716a958ec8f804",
+    "semantic_hash": ""
+  },
+  "android/app/src/test/kotlin/com/dax/assistant/audio/RemoteVoiceClientTest.kt": {
+    "mtime": 1784512293.3867476,
+    "ast_hash": "79d2f9843a37c5ad5e7ada87197bc6d6",
+    "semantic_hash": ""
+  },
+  "android/app/src/test/kotlin/com/dax/assistant/ui/conversations/ConversationsViewModelTest.kt": {
+    "mtime": 1784511746.7759163,
+    "ast_hash": "91cf1bce6cd31bed38eba4b6f098df64",
+    "semantic_hash": ""
+  },
+  "android/app/src/test/kotlin/com/dax/assistant/ui/conversations/SafeMarkdownTest.kt": {
+    "mtime": 1784511567.6746106,
+    "ast_hash": "0d027cdf6f57e1cdc2c132e9e3892cb3",
+    "semantic_hash": ""
+  },
+  "android/app/src/test/kotlin/com/dax/assistant/voice/VoiceFramesTest.kt": {
+    "mtime": 1784511023.7296445,
+    "ast_hash": "7ed56f56735e11525e3ea2c01d629235",
+    "semantic_hash": ""
+  },
+  "android/app/src/test/kotlin/com/dax/assistant/voice/VoiceSocketTest.kt": {
+    "mtime": 1784509383.0706396,
+    "ast_hash": "4d2dc767bd8ec5303db24941f1be2d99",
+    "semantic_hash": ""
+  },
+  "src/dax/web/static/assets/index-DNUImnmJ.js": {
+    "mtime": 1784512540.9350798,
+    "ast_hash": "3d1441439cb83f223a893cd2a0e47f58",
     "semantic_hash": ""
   }
 }

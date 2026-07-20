@@ -304,6 +304,13 @@ export function CommandDeck({ onOpenPalette }: { onOpenPalette: () => void }) {
   const connectedServers = servers.filter((server) => server.connected).length;
   const tail = logs.slice(-14);
   const lastAssistant = [...chat.messages].reverse().find((m) => m.role === "assistant");
+  const transcriptKind = voice.state === "speaking" && voice.speech?.text
+    ? "response"
+    : voice.transcript?.text
+      ? "transcript"
+      : lastAssistant
+        ? "response"
+        : "prompt";
 
   function submit(event: React.FormEvent) {
     event.preventDefault();
@@ -432,13 +439,11 @@ export function CommandDeck({ onOpenPalette }: { onOpenPalette: () => void }) {
 
       {/* ---------------- centre: the orb ---------------- */}
       <div className={s.stage}>
-        <div className={s.orbWrap}>
-          <LiveOrb state={voice.state} registerLevelSink={registerLevelSink} />
-        </div>
-
-        <div className={s.stageState}>{t(PIPELINE_KEY[voice.state])}</div>
-
-        <div className={s.transcript}>
+        <div
+          className={s.transcript}
+          data-kind={transcriptKind}
+          aria-live="polite"
+        >
           {voice.state === "speaking" && voice.speech?.text ? (
             <>
               <span className={s.transcriptLabel}>{t("deck.speakingNow")}</span>
@@ -459,6 +464,14 @@ export function CommandDeck({ onOpenPalette }: { onOpenPalette: () => void }) {
               {t("deck.prompt")}
             </p>
           )}
+        </div>
+
+        <div className={s.orbWrap}>
+          <LiveOrb state={voice.state} registerLevelSink={registerLevelSink} />
+        </div>
+
+        <div className={s.stageState} data-state={toOrbState(voice.state)} aria-live="polite">
+          {t(PIPELINE_KEY[voice.state])}
         </div>
 
         <NowPlaying />

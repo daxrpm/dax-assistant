@@ -17,6 +17,7 @@ from dax.core.config import DaxConfig
 from dax.core.models import ChannelType, Message, MessageRole
 from dax.orchestrator.bus import MessageBus
 from dax.voice.pipeline import PipelineState
+from dax.voice.tts_service import TTSService
 from dax.web.server import create_app
 
 if TYPE_CHECKING:
@@ -256,6 +257,125 @@ class TestVoiceStudio:
         assert response.content.startswith(b"RIFF")
         engine.start.assert_called_once()
         engine.stop.assert_called_once()
+
+
+class _FakeConfiguredTTS:
+    sample_rate = 24_000
+    engine_name = "kokoro"
+
+    def __init__(self) -> None:
+        self.started = 0
+        self.languages: list[str] = []
+
+    def start(self) -> None:
+        self.started += 1
+
+    def stop(self) -> None:
+        pass
+
+    def synthesize(self, text: str, language: str = "en") -> np.ndarray:
+        self.languages.append(language)
+        return np.arange(240, dtype=np.int16)
+
+    def voice_name(self, language: str) -> str | None:
+        return "em_alex" if language == "es" else "af_heart"
+
+
+class TestVoiceSynthesis:
+    def _wire_service(
+        self,
+        client: AsyncClient,
+        monkeypatch: pytest.MonkeyPatch,
+        *,
+        requests_per_minute: int = 30,
+    ) -> _FakeConfiguredTTS:
+        app = client._transport.app  # type: ignore[union-attr]
+        engine = _FakeConfiguredTTS()
+        monkeypatch.setattr("dax.voice.tts_service.build_tts", lambda *_: engine)
+        app.state.tts_service = TTSService(
+            app.state.config.voice,
+            app.state.config.storage.models_path,
+            mobile_requests_per_minute=requests_per_minute,
+        )
+        return engine
+
+    async def test_returns_complete_wav_with_active_engine_metadata(
+        self,
+        client: AsyncClient,
+        monkeypatch: pytest.MonkeyPatch,
+    ):
+        engine = self._wire_service(client, monkeypatch)
+
+        response = await client.post(
+            "/api/voice/synthesize",
+            json={"text": "Hola desde el móvil", "language": "auto"},
+        )
+
+        assert response.status_code == 200
+        assert response.headers["content-type"] == "audio/wav"
+        assert response.headers["x-dax-tts-engine"] == "kokoro"
+        assert response.headers["x-dax-tts-voice"] == "em_alex"
+        assert len(response.headers["x-dax-tts-fingerprint"]) == 16
+        assert engine.started == 1
+        assert engine.languages == ["es"]
+        with wave.open(io.BytesIO(response.content), "rb") as wav:
+            assert wav.getnchannels() == 1
+            assert wav.getsampwidth() == 2
+            assert wav.getframerate() == 24_000
+            assert wav.getnframes() == 240
+
+    async def test_reuses_resident_engine_and_rejects_engine_selection(
+        self,
+        client: AsyncClient,
+        monkeypatch: pytest.MonkeyPatch,
+    ):
+        engine = self._wire_service(client, monkeypatch)
+
+        first = await client.post(
+            "/api/voice/synthesize", json={"text": "Hello", "language": "en"}
+        )
+        second = await client.post(
+            "/api/voice/synthesize", json={"text": "Again", "language": "en"}
+        )
+        forbidden = await client.post(
+            "/api/voice/synthesize",
+            json={"text": "Hello", "language": "en", "engine": "piper"},
+        )
+
+        assert first.status_code == second.status_code == 200
+        assert engine.started == 1
+        assert first.headers["x-dax-tts-fingerprint"] == second.headers[
+            "x-dax-tts-fingerprint"
+        ]
+        assert forbidden.status_code == 422
+
+    @pytest.mark.parametrize(
+        "body",
+        [
+            {"text": "", "language": "es"},
+            {"text": "   ", "language": "es"},
+            {"text": "x" * 2001, "language": "es"},
+            {"text": "hello", "language": "fr"},
+        ],
+    )
+    async def test_validates_request_contract(self, client: AsyncClient, body: dict[str, str]):
+        response = await client.post("/api/voice/synthesize", json=body)
+        assert response.status_code == 422
+
+    async def test_rate_limit_returns_429(
+        self,
+        client: AsyncClient,
+        monkeypatch: pytest.MonkeyPatch,
+    ):
+        self._wire_service(client, monkeypatch, requests_per_minute=1)
+
+        assert (
+            await client.post("/api/voice/synthesize", json={"text": "one"})
+        ).status_code == 200
+        limited = await client.post("/api/voice/synthesize", json={"text": "two"})
+
+        assert limited.status_code == 429
+        assert limited.headers["retry-after"] == "60"
 
 
 class TestConfigEndpoint:

@@ -38,6 +38,13 @@ function wsUrl(): string {
 let idSeq = 0;
 const nextId = () => `m${Date.now()}-${++idSeq}`;
 
+export function shouldAcceptChatFrame(
+  frame: Record<string, unknown>,
+  sessionId: string,
+): boolean {
+  return frame.session_id === sessionId;
+}
+
 export function useChatSocket(sessionId: string, initialMessages: ChatMessage[] = []) {
   const [messages, setMessages] = useState<ChatMessage[]>(initialMessages);
   const [status, setStatus] = useState<Status>("connecting");
@@ -51,9 +58,19 @@ export function useChatSocket(sessionId: string, initialMessages: ChatMessage[] 
   const socketRef = useRef<WebSocket | null>(null);
   const retryRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const sessionIdRef = useRef(sessionId);
+  const shouldReconnectRef = useRef(false);
 
   useEffect(() => {
+    const previousSessionId = sessionIdRef.current;
     sessionIdRef.current = sessionId;
+    const ws = socketRef.current;
+    if (previousSessionId !== sessionId && ws?.readyState === WebSocket.OPEN) {
+      ws.send(JSON.stringify({
+        type: "session_unsubscribe",
+        session_ids: [previousSessionId],
+      }));
+      ws.send(JSON.stringify({ type: "session_subscribe", session_ids: [sessionId] }));
+    }
     setMessages(initialMessages);
     setThinking(false);
     pendingEvents.current = [];
@@ -66,10 +83,21 @@ export function useChatSocket(sessionId: string, initialMessages: ChatMessage[] 
     socketRef.current = ws;
     setStatus("connecting");
 
-    ws.onopen = () => setStatus("open");
-    ws.onclose = () => {
+    ws.onopen = () => {
+      if (socketRef.current !== ws) return;
+      ws.send(JSON.stringify({
+        type: "session_subscribe",
+        session_ids: [sessionIdRef.current],
+      }));
+      setStatus("open");
+    };
+    ws.onclose = (event) => {
+      if (socketRef.current !== ws) return;
+      socketRef.current = null;
       setStatus("closed");
-      retryRef.current = setTimeout(connect, 2000);
+      if (event.code !== 1008 && shouldReconnectRef.current) {
+        retryRef.current = setTimeout(connect, 2000);
+      }
     };
     ws.onerror = () => ws.close();
 
@@ -80,6 +108,7 @@ export function useChatSocket(sessionId: string, initialMessages: ChatMessage[] 
       } catch {
         return;
       }
+      if (!shouldAcceptChatFrame(data, sessionIdRef.current)) return;
 
       // Tool confirmation modal
       if (data.type === "tool_confirmation_request") {
@@ -140,10 +169,21 @@ export function useChatSocket(sessionId: string, initialMessages: ChatMessage[] 
   }, []);
 
   useEffect(() => {
+    shouldReconnectRef.current = true;
     connect();
     return () => {
+      shouldReconnectRef.current = false;
       if (retryRef.current) clearTimeout(retryRef.current);
-      socketRef.current?.close();
+      retryRef.current = null;
+      const ws = socketRef.current;
+      socketRef.current = null;
+      if (ws?.readyState === WebSocket.OPEN) {
+        ws.send(JSON.stringify({
+          type: "session_unsubscribe",
+          session_ids: [sessionIdRef.current],
+        }));
+      }
+      ws?.close();
     };
   }, [connect]);
 

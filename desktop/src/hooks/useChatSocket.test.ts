@@ -56,6 +56,15 @@ describe("chat session pool", () => {
     const unsubscribeB = b.subscribe(() => undefined);
     const socketA = FakeWebSocket.instances[0];
     const socketB = FakeWebSocket.instances[1];
+    socketA?.onopen?.();
+    socketB?.onopen?.();
+
+    expect(socketA?.send).toHaveBeenCalledWith(
+      JSON.stringify({ type: "session_subscribe", session_ids: ["a"] }),
+    );
+    expect(socketB?.send).toHaveBeenCalledWith(
+      JSON.stringify({ type: "session_subscribe", session_ids: ["b"] }),
+    );
 
     a.send("from a");
     b.send("from b");
@@ -87,6 +96,34 @@ describe("chat session pool", () => {
     unsubscribeB();
     a.shutdown();
     b.shutdown();
+    expect(socketA?.send).toHaveBeenCalledWith(
+      JSON.stringify({ type: "session_unsubscribe", session_ids: ["a"] }),
+    );
+    expect(socketB?.send).toHaveBeenCalledWith(
+      JSON.stringify({ type: "session_unsubscribe", session_ids: ["b"] }),
+    );
+  });
+
+  it("restores the subscription after reconnecting", () => {
+    vi.useFakeTimers();
+    const store = createChatStore("restored");
+    const unsubscribe = store.subscribe(() => undefined);
+    const first = FakeWebSocket.instances[0]!;
+    first.onopen?.();
+    first.onclose?.({ code: 1006 } as CloseEvent);
+    vi.advanceTimersByTime(2000);
+    const second = FakeWebSocket.instances[1]!;
+    second.onopen?.();
+
+    expect(first.send).toHaveBeenCalledWith(
+      JSON.stringify({ type: "session_subscribe", session_ids: ["restored"] }),
+    );
+    expect(second.send).toHaveBeenCalledWith(
+      JSON.stringify({ type: "session_subscribe", session_ids: ["restored"] }),
+    );
+    unsubscribe();
+    store.shutdown();
+    vi.useRealTimers();
   });
 
   it("ignores callbacks from a replaced socket", () => {

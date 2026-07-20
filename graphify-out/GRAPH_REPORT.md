@@ -1,16 +1,16 @@
 # Graph Report - dax-assistant  (2026-07-19)
 
 ## Corpus Check
-- 337 files · ~537,982 words
+- 353 files · ~548,453 words
 - Verdict: corpus is large enough that graph structure adds value.
 
 ## Summary
-- 5096 nodes · 13150 edges · 277 communities (196 shown, 81 thin omitted)
-- Extraction: 82% EXTRACTED · 18% INFERRED · 0% AMBIGUOUS · INFERRED: 2425 edges (avg confidence: 0.57)
+- 5385 nodes · 13851 edges · 294 communities (211 shown, 83 thin omitted)
+- Extraction: 81% EXTRACTED · 19% INFERRED · 0% AMBIGUOUS · INFERRED: 2595 edges (avg confidence: 0.57)
 - Token cost: 0 input · 0 output
 
 ## Graph Freshness
-- Built from commit: `37a6d4ec`
+- Built from commit: `28987d55`
 - Run `git rev-parse HEAD` and compare to check if the graph is stale.
 - Run `graphify update .` after code changes (no API cost).
 
@@ -272,30 +272,47 @@
 - AppPreferencesTest
 - ._process_loop
 - test_legacy_oauth_files_migrate_encrypted
+- ThemePreference
+- .assertContrast
+- ._load_voice
+- ._format_assistant_tool_calls
+- VoiceEnrollment.tsx
+- oauth_callback
+- Any
+- ApprovalSheet
+- VoiceFramesTest
+- RecognitionMode
+- SpeechOutputMode
+- .get_relevant_tools
+- .request
+- DaxApplication
+- test_legacy_oauth_files_migrate_encrypted
+- RemoteVoiceClientTest
+- .`level burst cannot close socket or displace turn completion`
 
 ## God Nodes (most connected - your core abstractions)
-1. `n()` - 171 edges
-2. `i()` - 165 edges
-3. `r()` - 140 edges
-4. `t()` - 138 edges
-5. `MessageBus` - 123 edges
-6. `a()` - 114 edges
-7. `Message` - 104 edges
-8. `s()` - 102 edges
-9. `push()` - 96 edges
-10. `VoicePipeline` - 87 edges
+1. `n()` - 181 edges
+2. `i()` - 171 edges
+3. `r()` - 147 edges
+4. `t()` - 142 edges
+5. `MessageBus` - 132 edges
+6. `a()` - 110 edges
+7. `Message` - 108 edges
+8. `s()` - 97 edges
+9. `push()` - 95 edges
+10. `VoicePipeline` - 94 edges
 
 ## Surprising Connections (you probably didn't know these)
 - `ModelSelector()` --indirect_call--> `m()`  [INFERRED]
-  web/src/pages/Chat.tsx → src/dax/web/static/assets/index-Z_8JFh70.js
+  web/src/pages/Chat.tsx → src/dax/web/static/assets/index-DNUImnmJ.js
 - `Production SPA Shell` --semantically_similar_to--> `Development SPA Shell`  [INFERRED] [semantically similar]
   src/dax/web/static/index.html → web/index.html
 - `Native Linux Client` --conceptually_related_to--> `Dax Blue App Icon Master`  [INFERRED]
   README.md → desktop/src-tauri/icons/icon.png
 - `CommandPalette()` --indirect_call--> `index()`  [INFERRED]
-  desktop/src/components/CommandPalette.tsx → src/dax/web/static/assets/index-Z_8JFh70.js
+  desktop/src/components/CommandPalette.tsx → src/dax/web/static/assets/index-DNUImnmJ.js
 - `CommandPalette()` --indirect_call--> `q()`  [INFERRED]
-  desktop/src/components/CommandPalette.tsx → src/dax/web/static/assets/index-Z_8JFh70.js
+  desktop/src/components/CommandPalette.tsx → src/dax/web/static/assets/index-DNUImnmJ.js
 
 ## Import Cycles
 - 1-file cycle: `desktop/src/screens/settings/registry.ts -> desktop/src/screens/settings/registry.ts`
@@ -308,63 +325,63 @@
 - **Remote Voice v1 Flow** — docs_voice_websocket_authenticated_voice_socket, docs_voice_websocket_exclusive_remote_audio_lease, docs_voice_websocket_bounded_pcm_protocol, readme_remote_voice_limit [EXTRACTED 1.00]
 - **Orbita Realtime Rendering** — docs_desktop_architecture_demand_managed_realtime_stores, docs_desktop_architecture_orbita_canvas_renderer, docs_voice_websocket_source_separated_level_frames, desktop_plan_voice_hud [EXTRACTED 1.00]
 
-## Communities (277 total, 81 thin omitted)
+## Communities (294 total, 83 thin omitted)
 
 ### Community 0 - "Bundle Collection Utilities"
 Cohesion: 0.01
-Nodes (180): Ab(), addChild(), addDescendants(), addNode(), addText(), addTreeNode(), ah(), ak() (+172 more)
+Nodes (171): Ab(), addChild(), addDescendants(), addNode(), addText(), addTreeNode(), ah(), ai() (+163 more)
 
 ### Community 1 - "Voice Processing Pipeline"
 Cohesion: 0.10
 Nodes (11): CallbackFlags, LocalAudioSource, ndarray, sounddevice callback — runs on the audio thread., Play a full audio buffer and block until playback finishes.          Args:, Play an int16 buffer in small blocks, stopping early on demand.          ``shoul, Play audio from an iterable of raw ``int16`` byte chunks.          Useful for lo, Capture audio from the default microphone in fixed-size chunks.      Chunks are (+3 more)
 
 ### Community 2 - "Frontend Runtime Internals"
-Cohesion: 0.08
-Nodes (124): a(), ac(), ae(), Aj(), AM(), ao(), ar(), Av() (+116 more)
+Cohesion: 0.03
+Nodes (54): Enum, Tool execution policy — allow / ask / deny per tool name.  The agent consults th, AudioSource, Protocol, Pluggable mono int16 input consumed by the voice pipeline., _clean_for_speech(), _ends_with_question(), ndarray (+46 more)
 
 ### Community 3 - "Agent Tool Policy"
-Cohesion: 0.09
-Nodes (30): generate_pairing_code(), _codes(), delete_device(), DeviceListResponse, enroll_device(), EnrollRequest, EnrollResponse, issue_device_token() (+22 more)
+Cohesion: 0.16
+Nodes (24): _codes(), delete_device(), DeviceListResponse, enroll_device(), EnrollRequest, EnrollResponse, issue_device_token(), list_devices() (+16 more)
 
 ### Community 4 - "Tree Collection Traversal"
-Cohesion: 0.04
-Nodes (121): ai(), as(), Au(), bf(), bh(), Bo(), bs(), bu() (+113 more)
+Cohesion: 0.06
+Nodes (107): ae(), af(), ao(), ap(), appendChild(), bc(), bf(), bh() (+99 more)
 
 ### Community 5 - "Tool Dispatch Interfaces"
 Cohesion: 0.09
 Nodes (49): AsyncMutex, AtomicU64, analyze_spectrum(), artwork_data_url(), browser_art_path(), CommandOutput, control(), current_player() (+41 more)
 
 ### Community 6 - "DOM Collection Mutation"
-Cohesion: 0.10
-Nodes (69): Aa(), Ad(), addEventListener(), al(), ba(), Bi(), cd(), Ce() (+61 more)
+Cohesion: 0.11
+Nodes (95): a(), ac(), aM(), Av(), b(), be(), Bj(), Bm() (+87 more)
 
 ### Community 7 - "Application Storage Lifecycle"
-Cohesion: 0.03
-Nodes (52): DaxApp, Apply the configured prompt to the live agent for its next turn., Expose FastAPI app for testing., Initialize all components in dependency order., Restart the Telegram channel to apply config changes without a full         app, Serialize live voice reloads so repeated UI saves remain safe., Restart the voice channel and pipeline with the live configuration., Shut down all components in reverse order. (+44 more)
+Cohesion: 0.04
+Nodes (55): Telegram bot channel using long-polling., TelegramChannel, ChannelType, Conversation, Language, Message, MessageRole, StrEnum (+47 more)
 
 ### Community 8 - "Agent Message Processing"
 Cohesion: 0.06
-Nodes (65): add(), __addSublanguage(), Ag(), bl(), canSelectItem(), canSelectItemIn(), clearSelection(), Dg() (+57 more)
+Nodes (63): Ag(), canSelectItem(), canSelectItemIn(), clearSelection(), extendSelection(), Fg(), findKey(), findNextNonDisabled() (+55 more)
 
 ### Community 9 - "OAuth Webhook Integration"
-Cohesion: 0.07
-Nodes (55): HTMLResponse, auth_logout(), auth_status(), _AuthStartResponse, _callback_html(), configure_oauth_store(), _delete_tokens(), _discover_auth() (+47 more)
+Cohesion: 0.11
+Nodes (31): auth_logout(), auth_status(), _AuthStartResponse, configure_oauth_store(), _delete_tokens(), get_access_token(), _load_all_clients(), _load_all_tokens() (+23 more)
 
 ### Community 10 - "MCP Tool Registry"
-Cohesion: 0.12
-Nodes (10): Tool registry — aggregates tools from all MCP servers.  Provides lookup by tool, Aggregates tool schemas from multiple MCP servers.      Maintains a mapping of t, Remove all tools belonging to a server (e.g. on disconnect)., Remove all registered tools., Return the tool_name → server_name mapping., Look up which server owns a tool., ToolRegistry, _make_tools() (+2 more)
+Cohesion: 0.05
+Nodes (26): filter_tools_by_relevance(), mcp_tools_to_openai(), parse_tool_calls_from_response(), Any, Maps MCP tool schemas to OpenAI function-calling format.  We use the OpenAI tool, Convert a list of MCP tool schemas to OpenAI function-calling format.      MCP f, Filter tools based on keyword relevance to the user's query.      Always include, Parse tool calls from a litellm response into our internal format.      Args: (+18 more)
 
 ### Community 11 - "Collection Cursor Operations"
 Cohesion: 0.03
-Nodes (50): Channel, LLMProvider, Message, Protocol, Protocol interfaces (ports) for the hexagonal architecture.  All adapters implem, Launch and connect to all configured MCP servers., Shut down all MCP server connections., Return all available tool schemas across all servers. (+42 more)
+Nodes (53): A request to execute an MCP tool., The result of an MCP tool execution., ToolCall, ToolResult, Channel, LLMProvider, Message, Protocol (+45 more)
 
 ### Community 12 - "Event Scheduling Runtime"
-Cohesion: 0.08
-Nodes (46): an(), bn(), cn(), cw(), dn(), dt(), en(), Ft() (+38 more)
+Cohesion: 0.09
+Nodes (61): Aa(), Ad(), addEventListener(), Au(), ba(), cd(), clear(), Cu() (+53 more)
 
 ### Community 13 - "Voice Conversation State"
-Cohesion: 0.04
-Nodes (36): _clean_for_speech(), _ends_with_question(), ndarray, True if *text* closes on a question.      Used to widen the follow-up window: wh, Record a single short utterance and return float32 audio.          Waits briefly, Map a spoken answer to a decision string (es/en)., Break *text* into sentence chunks, merging tiny fragments.      Sentence-at-a-ti, Reduce background noise before STT (best-effort; needs noisereduce). (+28 more)
+Cohesion: 0.07
+Nodes (59): an(), announce(), at(), bd(), bn(), cf(), cn(), constructor() (+51 more)
 
 ### Community 14 - "React Collection Rendering"
 Cohesion: 0.11
@@ -383,44 +400,44 @@ Cohesion: 0.08
 Nodes (14): Device, DeviceRegistry, generate_device_secret(), _now(), Enrolled client devices and their credentials.  A single password is the right e, True when the device exists and has not been revoked., Constant-time-ish check of a presented device secret., Create a device and return it with its one-time plaintext secret. (+6 more)
 
 ### Community 18 - "Configuration API Routes"
-Cohesion: 0.09
-Nodes (29): File, KokoroTTS, ndarray, Text-to-Speech via Kokoro (kokoro-onnx).  Kokoro is a small (82M) Apache-2.0 neu, Synthesise *text* into an ``int16`` buffer at 24 kHz., Synthesise speech with Kokoro, per-language voice selection., Load the Kokoro ONNX model and voice bank.          Raises:             TTSError, _build_preview_engine() (+21 more)
+Cohesion: 0.16
+Nodes (24): _build_preview_engine(), _decode_enrollment_wav(), delete_voice_profile(), _encode_wav(), enroll_voice(), get_voice_profile(), preview_voice(), _push_to_talk() (+16 more)
 
 ### Community 19 - "MCP Configuration Routes"
-Cohesion: 0.12
-Nodes (11): bus(), client(), _enroll(), AsyncClient, FastAPI, End-to-end device enrolment over the HTTP API.  Covers the gating each endpoint, With auth on, only a session may pair or manage devices., The whole point: a device token is a first-class credential. (+3 more)
+Cohesion: 0.10
+Nodes (16): app(), bus(), client(), _enroll(), AsyncClient, FastAPI, Path, End-to-end device enrolment over the HTTP API.  Covers the gating each endpoint (+8 more)
 
 ### Community 20 - "System API Tests"
-Cohesion: 0.06
-Nodes (23): Message, Web channel — delegates to WebSocket manager.  The actual WebSocket handling is, Web UI channel adapter.      Bridges between the dispatcher and the WebSocket ma, Broadcast a message to all connected WebSocket clients., WebChannel, app(), bus(), client() (+15 more)
+Cohesion: 0.05
+Nodes (26): Message, Web channel — delegates to WebSocket manager.  The actual WebSocket handling is, Web UI channel adapter.      Bridges between the dispatcher and the WebSocket ma, Broadcast a message to all connected WebSocket clients., WebChannel, app(), bus(), client() (+18 more)
 
 ### Community 21 - "Webhook API Tests"
-Cohesion: 0.10
-Nodes (23): app(), bus(), client(), _make_audio_webhook(), _make_extended_text_webhook(), _make_text_webhook(), AsyncClient, FastAPI (+15 more)
+Cohesion: 0.15
+Nodes (12): _make_text_webhook(), AsyncClient, Text messages should be published to the inbound bus., Extended text messages (with URL preview) should extract text., Audio messages should be queued with metadata., Messages sent by us (fromMe=True) should be ignored., Non-message events should be acknowledged but not processed., Unsupported message types (sticker, location, etc.) should be ignored. (+4 more)
 
 ### Community 22 - "System MCP Server"
 Cohesion: 0.09
 Nodes (17): FastMCP, main(), Run the dax-system MCP server over stdio: python -m dax.mcp_servers.system, allowed_roots(), build_server(), Path, `dax-system` — a local MCP server exposing safe, typed PC-control tools.  Runs a, Construct the FastMCP server with all dax-system tools registered. (+9 more)
 
 ### Community 23 - "Selection and Syntax Utilities"
-Cohesion: 0.05
-Nodes (51): Allow / ask / deny policy for tool execution (fnmatch patterns).      An empty `, ToolPolicyConfig, A request to execute an MCP tool., The result of an MCP tool execution., ToolCall, ToolResult, Decision, StrEnum (+43 more)
+Cohesion: 0.04
+Nodes (50): Allow / ask / deny policy for tool execution (fnmatch patterns).      An empty `, ToolPolicyConfig, Decision, StrEnum, Resolves an allow/ask/deny decision for a tool name., Update rules in place so the agent picks them up without a restart., ToolPolicy, Mutable, observable set of allowed shell binaries (order preserved). (+42 more)
 
 ### Community 24 - "Core Configuration Models"
 Cohesion: 0.08
-Nodes (41): AnthropicProviderConfig, _bootstrap_only(), _bootstrap_secrets(), CodexProviderConfig, DeepSeekProviderConfig, _flatten_toml(), GeminiProviderConfig, load_config() (+33 more)
+Nodes (39): AnthropicProviderConfig, _bootstrap_only(), _bootstrap_secrets(), CodexProviderConfig, DeepSeekProviderConfig, _flatten_toml(), GeminiProviderConfig, load_config() (+31 more)
 
 ### Community 25 - "Dashboard API Client"
-Cohesion: 0.14
-Nodes (17): envToText(), FormMode, headersToText(), parseEnv(), parseHeaders(), ServerFormModal(), FullConfig, GeneralConfig (+9 more)
+Cohesion: 0.13
+Nodes (16): useLogStream(), wsUrl(), LEVEL_COLOR, LEVELS, LogsPage(), GeneralConfig, LLMConfig, LogEntry (+8 more)
 
 ### Community 26 - "LLM Router Failover"
 Cohesion: 0.11
 Nodes (15): LLMError, LLMProviderUnavailableError, LLM provider communication failed., No LLM provider is available to handle the request., LLMRouter, Any, Message, LLM router — local-first fallback across decoupled providers.  Holds an ordered (+7 more)
 
 ### Community 27 - "Logging Event Buffer"
-Cohesion: 0.16
-Nodes (9): LogRecord, LogBuffer, AbstractEventLoop, Any, Queue, Stdlib log handler that retains recent records and fans them out live., Register the event loop used to deliver live records to subscribers., Return the most recent records (oldest first), capped at ``limit``. (+1 more)
+Cohesion: 0.08
+Nodes (19): datetime, LogRecord, LogBuffer, AbstractEventLoop, Any, Queue, In-memory log buffer + live fan-out for the web Logs viewer.  A single :class:`L, Stdlib log handler that retains recent records and fans them out live. (+11 more)
 
 ### Community 28 - "WhatsApp Channel Integration"
 Cohesion: 0.10
@@ -431,36 +448,36 @@ Cohesion: 0.08
 Nodes (25): compilerOptions, allowImportingTsExtensions, erasableSyntaxOnly, jsx, lib, module, moduleDetection, moduleResolution (+17 more)
 
 ### Community 30 - "Web Dependency Injection"
-Cohesion: 0.25
-Nodes (15): get_approval(), get_auth(), get_bus(), get_config(), get_llm_router(), get_mcp_manager(), get_repository(), get_secret_store() (+7 more)
+Cohesion: 0.14
+Nodes (24): approval_from_app(), auth_from_app(), bus_from_app(), get_approval(), get_auth(), get_bus(), get_config(), get_llm_router() (+16 more)
 
 ### Community 31 - "Human Approval Workflow"
 Cohesion: 0.08
-Nodes (14): ApprovalManager, Any, Human-in-the-loop approval gate for gated tool calls.  When the policy says a to, The session that raised ``approval_id``, or None if unscoped/unknown.          T, Resolve a pending request. Returns True if it matched a pending one.          Re, Tracks pending tool-confirmation requests and their resolutions., Register the async callback that delivers requests to the UI., Register the spoken-confirmation handler used for voice turns.          When a g (+6 more)
+Nodes (12): ApprovalManager, Human-in-the-loop approval gate for gated tool calls.  When the policy says a to, The session that raised ``approval_id``, or None if unscoped/unknown.          T, Return the originating channel for a currently pending request., Resolve a pending request. Returns True if it matched a pending one.          Re, Tracks pending tool-confirmation requests and their resolutions., Register the spoken-confirmation handler used for voice turns.          When a g, Tests for the human-in-the-loop approval manager. (+4 more)
 
 ### Community 32 - "System Status API"
 Cohesion: 0.12
 Nodes (28): get_host_metrics(), get_logs(), get_mcp_status(), get_status(), get_tool_audit(), get_tool_policy(), HostMetricsResponse, list_llm_models() (+20 more)
 
 ### Community 33 - "Keyboard Collection Navigation"
-Cohesion: 0.11
-Nodes (44): af(), announce(), ap(), appendChild(), at(), bd(), bt(), cf() (+36 more)
+Cohesion: 0.06
+Nodes (54): add(), __addSublanguage(), ak(), bu(), Bw(), ck(), currentNode(), cw() (+46 more)
 
 ### Community 34 - "MCP Lifecycle Manager"
-Cohesion: 0.11
-Nodes (13): MCPServerConfig, MCPManager, Any, Launch and connect to all enabled MCP servers., Connect to a server and register its tools live. Returns tool count.          Re, Disconnect a server (if connected) and drop its tools., Disconnect a server from the MCP lifecycle worker task., Disconnect from all MCP servers. (+5 more)
+Cohesion: 0.14
+Nodes (7): MCPServerConfig, Launch and connect to all enabled MCP servers., Connect to a server and register its tools live. Returns tool count.          Re, Disconnect a server (if connected) and drop its tools., Disconnect a server from the MCP lifecycle worker task., Disconnect from all MCP servers., Return all available tool schemas across all servers.
 
 ### Community 35 - "Secure Configuration Serialization"
 Cohesion: 0.11
 Nodes (29): Mirror the live shell allowlist into encrypted configuration., _del_path(), dump_config_toml(), _env_var_for_header(), _env_var_for_mcp_env(), _extract_secrets(), _get_path(), _is_sensitive_header() (+21 more)
 
 ### Community 36 - "Realtime Chat Interface"
-Cohesion: 0.13
-Nodes (15): ConversationSummary, Modal(), AgentEvent, ChatMessage, ConfirmationRequest, nextId(), Status, useChatSocket() (+7 more)
+Cohesion: 0.12
+Nodes (15): AgentEvent, ChatMessage, ConfirmationRequest, nextId(), shouldAcceptChatFrame(), Status, FakeWebSocket, useChatSocket() (+7 more)
 
 ### Community 37 - "Frontend Runtime Dependencies"
-Cohesion: 0.07
-Nodes (73): api, FullConfig, MemoryType, AlertIcon(), PlayIcon(), PlusIcon(), RefreshIcon(), TrashIcon() (+65 more)
+Cohesion: 0.05
+Nodes (95): MemoryType, RegistryServer, DesktopRuntimeError(), AlertIcon(), BrainIcon(), CheckIcon(), CopyIcon(), PlayIcon() (+87 more)
 
 ### Community 38 - "Memory File Management"
 Cohesion: 0.26
@@ -472,7 +489,7 @@ Nodes (15): LLMConfig, LLMConfig, LLM routing and provider configuration.      T
 
 ### Community 40 - "Token Authentication Manager"
 Cohesion: 0.07
-Nodes (22): SecurityConfig, AuthManager, _main(), Request, Response, WebSocket, Single-user authentication for the web UI and API.  Dax is a personal assistant:, True when a password is set (login is possible). (+14 more)
+Nodes (22): SecurityConfig, AuthManager, Request, Response, WebSocket, True when a password is set (login is possible)., Mint a short-lived access token for an enrolled device., True when *token* is a live user session or a live device token. (+14 more)
 
 ### Community 41 - "MCP Client Connections"
 Cohesion: 0.13
@@ -483,12 +500,12 @@ Cohesion: 0.12
 Nodes (18): Any, System-prompt assembly for the agent.  Builds the per-turn system prompt from th, Append a concrete live tool inventory to the base system prompt.      Grouping b, Assembles the per-turn system prompt (tools + memory + voice style)., Replace the editable base prompt for subsequent turns., Return the full system prompt for this turn., Read user-curated memory files and format them for the system prompt.          E, SystemPromptBuilder (+10 more)
 
 ### Community 43 - "Frontend Development Dependencies"
-Cohesion: 0.13
-Nodes (22): Bp(), dp(), Ef(), fp(), it(), Jx(), Kx(), nw() (+14 more)
+Cohesion: 0.07
+Nodes (46): ar(), as(), aw(), Bo(), bs(), consume(), cs(), eo() (+38 more)
 
 ### Community 44 - "Logs and Configuration Types"
-Cohesion: 0.08
-Nodes (48): browserDefaults(), clearToken(), connectionCandidates(), getWsUrl(), isLoopbackUrl(), isTauri(), loadConnectionSettings(), loadToken() (+40 more)
+Cohesion: 0.09
+Nodes (46): browserDefaults(), clearToken(), connectionCandidates(), getConnectionSettings(), getWsUrl(), isLoopbackUrl(), isTauri(), loadConnectionSettings() (+38 more)
 
 ### Community 45 - "Gemini Provider Adapter"
 Cohesion: 0.16
@@ -496,7 +513,7 @@ Nodes (8): Content, GeminiProvider, Any, Message, Google Gemini provider adapter
 
 ### Community 46 - "useToast"
 Cohesion: 0.12
-Nodes (6): _auth(), Device enrolment, short-lived tokens, and revocation., Salt separation: a browser session must not authenticate as a device., registry(), TestDeviceRegistry, TestDeviceTokens
+Nodes (8): Authentication and session security.      Secrets are supplied via environment v, SecurityConfig, _auth(), Device enrolment, short-lived tokens, and revocation., Salt separation: a browser session must not authenticate as a device., registry(), TestDeviceRegistry, TestDeviceTokens
 
 ### Community 47 - "Anthropic Provider Adapter"
 Cohesion: 0.18
@@ -511,28 +528,28 @@ Cohesion: 0.18
 Nodes (20): auth_status(), AuthStatus, health(), HealthResponse, login(), LoginRequest, LoginResponse, logout() (+12 more)
 
 ### Community 50 - "Shell Command Allowlist"
-Cohesion: 0.16
-Nodes (22): Bg(), ca(), dh(), dl(), El(), gc(), Gg(), gl() (+14 more)
+Cohesion: 0.13
+Nodes (34): al(), Bi(), bl(), ca(), Cl(), dh(), dl(), Dr() (+26 more)
 
 ### Community 51 - "Voice Activity Detection"
 Cohesion: 0.03
-Nodes (102): Enum, PipelineState, Voice channel adapter — bridges the dispatcher to the voice pipeline.  The voice, Voice channel adapter for the dispatcher.      Inbound messages are published by, No-op — the voice pipeline manages its own lifecycle., No-op — the voice pipeline manages its own lifecycle., Discard any queued responses left over from a previous turn.          The pipeli, VoiceChannel (+94 more)
+Nodes (90): PipelineState, Voice channel adapter — bridges the dispatcher to the voice pipeline.  The voice, Voice channel adapter for the dispatcher.      Inbound messages are published by, No-op — the voice pipeline manages its own lifecycle., No-op — the voice pipeline manages its own lifecycle., Discard any queued responses left over from a previous turn.          The pipeli, VoiceChannel, Voice pipeline configuration. (+82 more)
 
 ### Community 52 - "Audio Capture Playback"
 Cohesion: 0.07
-Nodes (42): ApiError, authHeaders(), request(), requestBlob(), requestForm(), responseError(), getBaseUrl(), AuthStatus (+34 more)
+Nodes (45): api, ApiError, authHeaders(), request(), requestBlob(), requestForm(), responseError(), getBaseUrl() (+37 more)
 
 ### Community 53 - "Shared Test Fixtures"
 Cohesion: 0.12
 Nodes (18): config_from_file(), database(), default_config(), isolate_config_env(), message_bus(), Message, MonkeyPatch, Path (+10 more)
 
 ### Community 54 - "filter_tools_by_relevance"
-Cohesion: 0.06
-Nodes (29): PiperVoice, Text-to-speech synthesis failed., TTSError, _build_local_tts(), _build_piper(), build_tts(), _FallbackSynthesizer, OpenAITextToSpeech (+21 more)
+Cohesion: 0.09
+Nodes (22): PiperVoice, Text-to-speech synthesis failed., TTSError, _PTTCommand, One cross-thread push-to-talk transition and its acknowledgement., ndarray, Synthesise *text* into an audio buffer.          Args:             text: The str, Stream synthesis — yields raw ``int16`` audio byte chunks.          Useful for l (+14 more)
 
 ### Community 55 - "Wake Word Detection"
 Cohesion: 0.05
-Nodes (66): AppIcon(), AppShell(), THEME_ORDER, CommandDeck(), LiveOrb(), Meter(), MetricsPane(), PIPELINE_KEY (+58 more)
+Nodes (62): AppShell(), THEME_ORDER, CommandPalette(), fold(), PALETTE_ROUTES, PaletteAction, PaletteRoute, ActivityIcon() (+54 more)
 
 ### Community 56 - "WebSocket Chat Server"
 Cohesion: 0.15
@@ -543,20 +560,20 @@ Cohesion: 0.24
 Nodes (5): Runtime allowlist of shell binaries the assistant may run on this PC.  This is t, Extract the bare binary name from a command string (``/bin/ls -l`` → ``ls``)., shell_binary(), Tests for the shell-command allowlist., TestShellBinary
 
 ### Community 58 - "Configuration Serialization Tests"
-Cohesion: 0.14
-Nodes (12): AppLanguage, ENGLISH, SPANISH, AppPreferences, AppPreferenceState, fromStored(), StateFlow, String (+4 more)
+Cohesion: 0.15
+Nodes (9): AppLanguage, ENGLISH, SPANISH, String, RecognitionLanguage, AUTO, ENGLISH_US, SPANISH_SPAIN (+1 more)
 
 ### Community 59 - "Domain Error Hierarchy"
 Cohesion: 0.12
 Nodes (17): Audio troubleshooting, Choosing / adding LLM providers, Configuration, Dax Assistant, Desktop client, Development, Development quick start, Highlights (+9 more)
 
 ### Community 60 - "Password Authentication Tests"
-Cohesion: 0.10
-Nodes (18): BaseSettings, PydanticBaseSettingsSource, DaxConfig, Root configuration for Dax Assistant.      Settings are loaded in order of prior, create_app(), FastAPI, FastAPI application factory.  Creates the web server with lifespan management, C, Create and configure the FastAPI application. (+10 more)
+Cohesion: 0.15
+Nodes (11): BaseSettings, PydanticBaseSettingsSource, DaxConfig, Root configuration for Dax Assistant.      Settings are loaded in order of prior, Guard: the secret table references real, current config fields., test_secret_fields_cover_known_secret_paths(), TestDaxConfig, _model_leaves() (+3 more)
 
 ### Community 61 - "Application Settings Models"
-Cohesion: 0.10
-Nodes (12): CredentialStore, Boolean, Int, Long, String, AppModule, Context, CoroutineDispatcher (+4 more)
+Cohesion: 0.11
+Nodes (13): BackendAuth, CredentialStore, Boolean, Int, Long, String, AppModule, Context (+5 more)
 
 ### Community 62 - "Voice Model Downloads"
 Cohesion: 0.21
@@ -571,8 +588,8 @@ Cohesion: 0.18
 Nodes (10): description, identifier, linux, macOS, windows, permissions, platforms, $schema (+2 more)
 
 ### Community 65 - "Web Application Entrypoint"
-Cohesion: 0.24
-Nodes (7): PanelHeader(), useConfig(), ExportPanel(), McpPage(), McpTab(), SettingsPage(), ShellPage()
+Cohesion: 0.13
+Nodes (22): data(), Tabs(), useToast(), useConfig(), useStatus(), DashboardPage(), ExportPanel(), McpPage() (+14 more)
 
 ### Community 66 - "Codex Provider Adapter"
 Cohesion: 0.16
@@ -583,24 +600,24 @@ Cohesion: 0.13
 Nodes (12): _get_oauth_token(), MCP server manager — implements the ToolProvider protocol.  Manages the lifecycl, Build an unconnected client for a server config (env resolved)., Replace {env:VAR_NAME} patterns with environment variable values., Resolve env vars in all values of a dict., Snapshot desktop-session vars present in the current environment., Get stored OAuth access token for an MCP server, if available., _resolve_env_dict() (+4 more)
 
 ### Community 68 - "MCP Marketplace Interface"
-Cohesion: 0.15
-Nodes (26): index(), api, Field(), Panel(), Select(), Tabs(), TextArea(), TextInput() (+18 more)
+Cohesion: 0.28
+Nodes (15): api, Badge(), Field(), Panel(), PanelHeader(), Select(), TextArea(), TextInput() (+7 more)
 
 ### Community 69 - "Project Architecture Overview"
 Cohesion: 0.15
 Nodes (11): Architecture, Channels (`channels/`), Commands, Config & secrets (`core/config.py`, `core/config_io.py`), LLM layer (`llm/`) — fully decoupled behind the `LLMProvider` port, MCP (`mcp/`) and the bundled server, Message flow (the spine), Safety model (+3 more)
 
 ### Community 70 - "End-to-End Web Tests"
-Cohesion: 0.11
-Nodes (15): Any, Queue, Voice event transport — thread-to-loop fan-out with no optional deps.  Lives in, The most recent state event, replayed to clients on connect.          Without th, Register a new subscriber and return its queue., Remove a subscriber's queue., Publish *event* to all subscribers. Safe to call from any thread.          Never, Push *event* onto every subscriber queue. Runs on the event loop. (+7 more)
+Cohesion: 0.09
+Nodes (18): Any, Queue, Voice event transport — thread-to-loop fan-out with no optional deps.  Lives in, True when at least one client is listening.          The pipeline checks this be, The most recent state event, replayed to clients on connect.          Without th, Register a new subscriber and return its queue., Return the active delivery owner and its monotonic generation., Start a new local or remote event generation. (+10 more)
 
 ### Community 71 - "Collection Selection Queries"
-Cohesion: 0.08
-Nodes (32): pushToTalk, advanceSpring(), clamp(), createSignalBuffers(), drawVoiceRings(), drawWave(), LevelSource, OrbState (+24 more)
+Cohesion: 0.06
+Nodes (45): usesRemoteAudio(), CommandDeck(), LiveOrb(), Meter(), MetricsPane(), PIPELINE_KEY, ToolRun, toOrbState() (+37 more)
 
 ### Community 72 - "Application Shell Theming"
 Cohesion: 0.09
-Nodes (47): getConnectionSettings(), RESIZE_HANDLES, ResizeHandles(), TitleBar(), TitleBarProps, useWindowFrame(), WindowFrame(), WindowFrameContext (+39 more)
+Nodes (44): RESIZE_HANDLES, ResizeHandles(), TitleBar(), TitleBarProps, useWindowFrame(), WindowFrame(), WindowFrameContext, WindowFrameContextValue (+36 more)
 
 ### Community 73 - "Streaming Speech Synthesis"
 Cohesion: 0.40
@@ -627,8 +644,8 @@ Cohesion: 0.27
 Nodes (9): delete_conversation(), get_conversation(), list_conversations(), Any, Request, Conversation history endpoints — list, fetch, delete web chats., List recent web conversations for the sidebar., Return a conversation with its messages. (+1 more)
 
 ### Community 80 - "WebSocket Channel Adapter"
-Cohesion: 0.16
-Nodes (8): AssistantController, Boolean, Job, List, StateFlow, String, ApprovalRequest, com
+Cohesion: 0.14
+Nodes (11): AssistantController, Boolean, Job, List, StateFlow, String, PlaybackRequest, shouldStartAutomaticFollowUp() (+3 more)
 
 ### Community 81 - "Web Authentication Interface"
 Cohesion: 0.31
@@ -643,12 +660,12 @@ Cohesion: 0.48
 Nodes (7): Bluesky Icon, Discord Icon, Documentation and Code Icon, GitHub Icon, Social Profile Icon, Web Icon Sprite, X Social Platform Icon
 
 ### Community 87 - "Authentication Flow Tests"
-Cohesion: 0.10
-Nodes (18): hash_password(), Return an argon2id hash of ``password``., Check ``password`` against a stored argon2 hash., verify_password(), auth_app(), auth_client(), AsyncClient, FastAPI (+10 more)
+Cohesion: 0.14
+Nodes (10): auth_app(), auth_client(), AsyncClient, FastAPI, Tests for single-user web authentication., The desktop client can't rely on a SameSite=lax cookie from a webview     custom, A cookie left over from a previous session must not shadow a good         bearer, Regression guard: the existing web UI must keep working. (+2 more)
 
 ### Community 88 - "test_webhooks.py"
 Cohesion: 0.11
-Nodes (39): persist_config(), Persist the live configuration as an encrypted SQLite document.      The single, change_password(), ChangePasswordRequest, GeneralConfigUpdate, get_config(), LLMConfigUpdate, Any (+31 more)
+Nodes (38): persist_config(), Persist the live configuration as an encrypted SQLite document.      The single, change_password(), ChangePasswordRequest, GeneralConfigUpdate, get_config(), Any, BaseModel (+30 more)
 
 ### Community 89 - "Public Social Icons"
 Cohesion: 0.29
@@ -663,20 +680,20 @@ Cohesion: 0.50
 Nodes (4): Built Frontend Assets, Production SPA Shell, Development SPA Shell, React TypeScript Entrypoint
 
 ### Community 95 - "Speaker Voice Enrollment"
-Cohesion: 0.19
-Nodes (11): createRemotePtt(), encodePcm16(), PcmFrameBatcher, RemoteMicrophone, remotePtt, resampleMono(), StreamingMonoResampler, ServerForm() (+3 more)
+Cohesion: 0.14
+Nodes (15): createRemotePtt(), encodePcm16(), PcmFrameBatcher, pushToTalk, RemoteMicrophone, remotePtt, resampleMono(), StreamingMonoResampler (+7 more)
 
 ### Community 96 - "MemoryTab.tsx"
-Cohesion: 0.07
-Nodes (45): Locale, APPLY_CLASS, APPLY_KEY, asNumber(), asString(), FieldControl(), FieldLabel(), fromIntLines() (+37 more)
+Cohesion: 0.06
+Nodes (53): ShieldIcon(), SparkleIcon(), WrenchIcon(), Locale, APPLY_CLASS, APPLY_KEY, asNumber(), asString() (+45 more)
 
 ### Community 98 - "Production Favicon Graphics"
 Cohesion: 0.50
 Nodes (4): Favicon Graphic, Lightning Bolt Symbol, Purple Angular Mark, Soft Glow Highlights
 
 ### Community 102 - "auth_from_app"
-Cohesion: 0.14
-Nodes (15): StrEnum, Discriminator for events on the voice stream., VoiceEventType, _idle_state(), _lease_from_app(), _pipeline_from_app(), Any, Exception (+7 more)
+Cohesion: 0.11
+Nodes (21): LevelSource, StrEnum, Discriminator for events on the voice stream., Which side of the conversation a level frame describes., VoiceEventType, voice_events_from_app(), _idle_state(), _lease_from_app() (+13 more)
 
 ### Community 110 - "I18n.tsx"
 Cohesion: 0.20
@@ -687,32 +704,32 @@ Cohesion: 0.06
 Nodes (30): app, security, windows, build, beforeBuildCommand, beforeDevCommand, devUrl, frontendDist (+22 more)
 
 ### Community 112 - "models.py"
-Cohesion: 0.22
-Nodes (15): formatMediaTime(), hashTrack(), mediaProvider, NowPlaying(), NowPlayingView(), progressWaveform(), media, controlMedia() (+7 more)
+Cohesion: 0.19
+Nodes (17): formatMediaTime(), hashTrack(), mediaProvider, NowPlaying(), NowPlayingView(), progressWaveform(), media, controlMedia() (+9 more)
 
 ### Community 150 - "test_legacy_oauth_files_migrate_encrypted"
 Cohesion: 0.07
 Nodes (27): compilerOptions, allowImportingTsExtensions, exactOptionalPropertyTypes, isolatedModules, jsx, lib, module, moduleResolution (+19 more)
 
 ### Community 151 - "McpServers.tsx"
-Cohesion: 0.16
-Nodes (6): _build_prompt(), ndarray, Transcribe a float audio buffer to text.          Args:             audio: Mono, Pick a trustworthy language code from Whisper's transcription info.          Whe, Encode normalized mono float audio as a 16 kHz PCM WAV., Combine a fixed vocabulary hint with live conversation context.      Biasing the
+Cohesion: 0.18
+Nodes (6): generate_pairing_code(), _PairingCode, _PairingCodes, One-time, expiring pairing codes held in memory.      Deliberately not persisted, Consume *code*. A code works exactly once., TestPairingCodes
 
 ### Community 152 - "TestYesNoParser"
-Cohesion: 0.13
-Nodes (14): Any, Message, Core agent loop — the brain of Dax Assistant.  Receives messages from the bus, s, Wire a callback that receives real-time agent events (tool calls, etc.)., Fire an agent event to the broadcaster, silently ignoring errors., Stable per-session key so conversations resume correctly.          WhatsApp grou, Process a single user message through the LLM + tool pipeline., Build an assistant Message mirroring the source's channel/metadata. (+6 more)
+Cohesion: 0.10
+Nodes (18): Remove provider control markup that must never reach users or TTS., sanitize_assistant_text(), Any, Message, Core agent loop — the brain of Dax Assistant.  Receives messages from the bus, s, Wire a callback that receives real-time agent events (tool calls, etc.)., Fire an agent event to the broadcaster, silently ignoring errors., Begin the agent processing loop. (+10 more)
 
 ### Community 153 - "getFullNode"
 Cohesion: 0.10
-Nodes (17): ApiError, AuthStatus, ConversationDetail, ConversationMessage, MCPPreset, OllamaModel, RegistryServer, requestBlob() (+9 more)
+Nodes (16): ApiError, ConversationDetail, ConversationMessage, ConversationSummary, MCPPreset, MCPServerStatus, OllamaModel, RegistryServer (+8 more)
 
 ### Community 154 - "compilerOptions"
 Cohesion: 0.11
 Nodes (18): compilerOptions, allowSyntheticDefaultImports, composite, declarationDir, emitDeclarationOnly, isolatedModules, lib, module (+10 more)
 
 ### Community 155 - "6.2 Parity checklist"
-Cohesion: 0.15
-Nodes (11): Manages active WebSocket connections and their session interests.      A single-, Devices with a live chat socket right now., WebSocketManager, _attach(), _FakeWebSocket, Multi-client isolation: session-scoped delivery and approval binding.  Several c, No eligible client means the gate must fail safe, not fan out., Records the frames sent to one client. (+3 more)
+Cohesion: 0.16
+Nodes (9): Manages active WebSocket connections and their session interests.      A single-, Devices with a live chat socket right now., WebSocketManager, _attach(), Multi-client isolation: session-scoped delivery and approval binding.  Several c, No eligible client means the gate must fail safe, not fan out., Legacy clients that never send a session_id must keep working., TestApprovalDelivery (+1 more)
 
 ### Community 156 - "permissions"
 Cohesion: 0.08
@@ -723,8 +740,8 @@ Cohesion: 0.22
 Nodes (9): 7. Milestone Results, M0 - Risk spike: passed (2026-07-18), M1 - Foundation: passed with visual caveat (2026-07-18), M2 - Chat: automated gate passed, M3 - Settings and screens: automated gate passed, M4 - Voice and HUD: software gate passed; hardware gate open, M5 - Native polish: software gate passed; human accessibility gate open, M6 - Packaging: build gate passed; clean-install gate open (+1 more)
 
 ### Community 158 - "._resolve_voice"
-Cohesion: 0.17
-Nodes (9): Closed, Frame, ByteArray, String, WebSocket, VoiceSocket, VoiceSocketEvent, ReceiveChannel (+1 more)
+Cohesion: 0.18
+Nodes (8): Closed, Frame, ByteArray, String, WebSocket, VoiceSocket, VoiceSocketEvent, ReceiveChannel
 
 ### Community 159 - "whatsapp_webhook"
 Cohesion: 0.20
@@ -735,8 +752,8 @@ Cohesion: 0.25
 Nodes (8): 10. Remaining Gates, 11. Ground Truth, 1. Scope, 5. Settings 6.0, 6. Voice HUD, 8. Automated Release Gate, 9. Reproducible Commands, Dax Desktop - Implementation Record
 
 ### Community 161 - "10. Phased milestones"
-Cohesion: 0.17
-Nodes (7): Boolean, OrbitaTheme(), OrbitaType, Bundle, Intent, MainActivity, AppCompatActivity
+Cohesion: 0.11
+Nodes (16): Boolean, Orbita, OrbitaTheme(), OrbitaType, OrbitaColors, OrbitaElevation, OrbitaMotion, OrbitaRadii (+8 more)
 
 ### Community 162 - "5. Design system specification"
 Cohesion: 0.33
@@ -758,9 +775,13 @@ Nodes (5): 4.1 Authentication and CORS, 4.2 Chat and `session_id`, 4.3 Voice sta
 Cohesion: 0.24
 Nodes (9): AppShell(), NAV, NavItem, TITLES, ThemeToggle(), apply(), resolveInitial(), Theme (+1 more)
 
+### Community 168 - "TestWebSocketAuthCredentials"
+Cohesion: 0.08
+Nodes (22): DaxError, Exception, Domain exception hierarchy for Dax Assistant., MCP tool execution failed., Requested tool does not exist in the registry., Tool was found but execution failed., Database or persistence operation failed., Wake word detection failed. (+14 more)
+
 ### Community 169 - ".from_config_path"
-Cohesion: 0.16
-Nodes (9): mcp_tools_to_openai(), parse_tool_calls_from_response(), Any, Maps MCP tool schemas to OpenAI function-calling format.  We use the OpenAI tool, Convert a list of MCP tool schemas to OpenAI function-calling format.      MCP f, Parse tool calls from a litellm response into our internal format.      Args:, Tests for MCP → OpenAI tool schema mapping and relevance filtering., TestMCPToolsToOpenAI (+1 more)
+Cohesion: 0.10
+Nodes (15): DaxApp, Apply the configured prompt to the live agent for its next turn., Expose FastAPI app for testing., Initialize all components in dependency order., Restart the Telegram channel to apply config changes without a full         app, Serialize live voice reloads so repeated UI saves remain safe., Restart the voice channel and pipeline with the live configuration., Shut down all components in reverse order. (+7 more)
 
 ### Community 170 - "Dax Desktop"
 Cohesion: 0.25
@@ -771,12 +792,12 @@ Cohesion: 0.33
 Nodes (6): Desktop React Entrypoint, Dax Blue App Icon 256, Dax Blue App Icon 128, Dax Blue App Icon 32, Dax Blue App Icon Master, Native Linux Client
 
 ### Community 172 - "WebChannel"
-Cohesion: 0.15
-Nodes (10): Any, Message, Telegram channel — long-polling bot via the Telegram Bot API.  Uses long-polling, Deliver an assistant reply back to the originating Telegram chat., Split text into chunks no longer than *limit* characters., Telegram bot channel using long-polling., Long-poll getUpdates and publish inbound text messages to the bus., _split_message() (+2 more)
+Cohesion: 0.13
+Nodes (6): KokoroTTS, ndarray, Text-to-Speech via Kokoro (kokoro-onnx).  Kokoro is a small (82M) Apache-2.0 neu, Synthesise *text* into an ``int16`` buffer at 24 kHz., Synthesise speech with Kokoro, per-language voice selection., Load the Kokoro ONNX model and voice bank.          Raises:             TTSError
 
 ### Community 173 - "TestEnums"
-Cohesion: 0.15
-Nodes (23): AgentActivity, AssistantError, AssistantState, Audio, Authentication, AwaitingApproval, Backend, Cancelled (+15 more)
+Cohesion: 0.13
+Nodes (26): AgentActivity, ApprovalTransport, CHAT, VOICE, AssistantError, AssistantState, Audio, Authentication (+18 more)
 
 ### Community 174 - "Logs.tsx"
 Cohesion: 0.19
@@ -787,12 +808,12 @@ Cohesion: 0.31
 Nodes (8): build(), focus_main(), menu_action(), MenuAction, AppHandle, Option, R, Result
 
 ### Community 183 - "_make_app"
-Cohesion: 0.14
-Nodes (30): _acquire(), FakePipeline, _make_app(), Tests for the /ws/voice event stream.  The subscriber lifecycle matters more tha, A leaked subscriber would keep the pipeline metering forever., Omitting `output` must preserve the pre-existing behaviour exactly., The failure that would otherwise mute the backend permanently., Build an app with a voice hub attached, mirroring DaxApp wiring. (+22 more)
+Cohesion: 0.12
+Nodes (36): _acquire(), FakePipeline, _make_app(), Tests for the /ws/voice event stream.  The subscriber lifecycle matters more tha, A client must get a definite starting state, not silence., Connecting mid-conversation must not render as idle., A leaked subscriber would keep the pipeline metering forever., The failure that would otherwise mute the backend permanently. (+28 more)
 
 ### Community 185 - "VoicePreviewRequest"
-Cohesion: 0.43
-Nodes (7): Orbita, OrbitaColors, OrbitaElevation, OrbitaMotion, OrbitaRadii, OrbitaSizing, OrbitaSpacing
+Cohesion: 0.15
+Nodes (10): ConversationsUiState, ConversationsViewModel, Boolean, ChatMessage, ConversationSummary, Job, List, StateFlow (+2 more)
 
 ### Community 188 - "enroll_voice.py"
 Cohesion: 0.38
@@ -807,36 +828,36 @@ Cohesion: 0.31
 Nodes (4): Output ownership, Remote input v1, Reproducible checks, Voice WebSocket protocol
 
 ### Community 213 - ".__init__"
-Cohesion: 0.09
-Nodes (26): BadgeTone, ButtonProps, ButtonSize, ButtonVariant, Checkbox(), CodeBlock(), EmptyState(), IconButton() (+18 more)
+Cohesion: 0.16
+Nodes (15): create_app(), FastAPI, FastAPI application factory.  Creates the web server with lifespan management, C, Create and configure the FastAPI application., app(), bus(), client(), _make_audio_webhook() (+7 more)
 
 ### Community 214 - "WebChannel"
-Cohesion: 0.31
-Nodes (7): Badge(), useLogStream(), wsUrl(), LEVEL_COLOR, LEVELS, LogsPage(), LogEntry
+Cohesion: 0.27
+Nodes (8): _build_local_tts(), _build_piper(), build_tts(), Path, VoiceConfig, Text-to-Speech via Piper.  Wraps Piper's ONNX-based VITS voice models for fast,, Build the configured TTS engine, with Piper as the safety net.      ``tts_engine, VoiceConfig
 
 ### Community 215 - "datetime"
-Cohesion: 0.21
-Nodes (10): fail(), info(), message(), COLORS, ICONS, ToastProvider(), BadgeColor, Toast (+2 more)
+Cohesion: 0.20
+Nodes (9): fail(), info(), message(), COLORS, ICONS, ToastProvider(), BadgeColor, Toast (+1 more)
 
 ### Community 216 - ".get_relevant_tools"
-Cohesion: 0.15
-Nodes (15): XIcon(), Modal(), ModalProps, en, es, MessageKey, detectLocale(), format() (+7 more)
+Cohesion: 0.16
+Nodes (11): _device_for(), WebSocket, WebSocket chat endpoint for the web UI.  Handles inbound messages from browser c, Record that *websocket* owns ``session_id``.          Called when a client publi, Atomically add session ownership, respecting the per-client cap., Release session ownership for a connected client., True when *websocket* has subscribed to or published on ``session_id``., Send data to a specific WebSocket connection. (+3 more)
 
 ### Community 217 - ".bind_loop"
-Cohesion: 0.12
-Nodes (22): DiagnosticsUiState, DiagnosticsViewModel, Boolean, StateFlow, String, ViewModel, DestinationBar(), DestinationItem() (+14 more)
+Cohesion: 0.13
+Nodes (21): Turn, DiagnosticsUiState, DiagnosticsViewModel, Boolean, StateFlow, String, ViewModel, DestinationBar() (+13 more)
 
 ### Community 218 - "get_config"
 Cohesion: 0.17
 Nodes (10): AssistantService, ensureRunning(), Context, Int, Intent, String, triggerTurn(), LifecycleService (+2 more)
 
 ### Community 219 - ".to_json"
-Cohesion: 0.12
-Nodes (15): Boolean, String, Playback, Speaker, AssistActivity, DaxVoiceInteractionService, DaxVoiceInteractionSession, DaxVoiceInteractionSessionService (+7 more)
+Cohesion: 0.11
+Nodes (18): Boolean, File, String, MediaPlayback, Playback, Speaker, AssistActivity, DaxVoiceInteractionService (+10 more)
 
 ### Community 220 - ".unregister_server"
-Cohesion: 0.05
-Nodes (33): DaxError, Exception, Domain exception hierarchy for Dax Assistant., MCP tool execution failed., Requested tool does not exist in the registry., Tool was found but execution failed., Database or persistence operation failed., Wake word detection failed. (+25 more)
+Cohesion: 0.12
+Nodes (9): ndarray, Voice Activity Detection via Silero VAD.  Wraps Silero VAD behind a chunk-orient, Reset the iterator state between utterances., Detect speech start and end boundaries in streaming audio.      Args:         th, Load the Silero VAD model and create the iterator., Release model resources., Process a single VAD-sized audio chunk.          Args:             audio_chunk:, Return the raw speech probability (0..1) for a VAD-sized chunk.          Used by (+1 more)
 
 ### Community 221 - ".has_subscribers"
 Cohesion: 0.09
@@ -844,19 +865,19 @@ Nodes (19): CapabilityCheck, CapabilityReport, CheckId, AUDIO_FORMAT, COMMUNICAT
 
 ### Community 222 - ".server_lookup"
 Cohesion: 0.21
-Nodes (12): Failed, Final, Boolean, Flow, Int, Pair, String, Partial (+4 more)
+Nodes (12): Failed, Final, Boolean, Int, Pair, String, Partial, ReadyForSpeech (+4 more)
 
 ### Community 223 - ".events"
-Cohesion: 0.12
-Nodes (11): data(), MCPServerStatus, MemoryEntry, ToolAuditEntry, useStatus(), DashboardPage(), EMPTY_DRAFT, MEMORY_TYPES (+3 more)
+Cohesion: 0.25
+Nodes (5): MemoryEntry, EMPTY_DRAFT, MEMORY_TYPES, MemoryDraft, TYPE_COLOR
 
 ### Community 225 - "_get_oauth_token"
-Cohesion: 0.36
-Nodes (4): DaxLog, List, String, Throwable
+Cohesion: 0.32
+Nodes (5): DaxLog, List, String, Regex, Throwable
 
 ### Community 226 - "oauth_callback"
-Cohesion: 0.14
-Nodes (20): Turn, AssistantScreen(), CancelControl(), describeActivity(), describeError(), describeForAccessibility(), EmptyState(), History() (+12 more)
+Cohesion: 0.26
+Nodes (16): ChatActivity, ActivityDisclosure(), ActivityTrail(), ApprovalDialog(), ChatDetail(), ConversationList(), ConversationsScreen(), decisionLabel() (+8 more)
 
 ### Community 227 - "TestEnums"
 Cohesion: 0.25
@@ -867,12 +888,12 @@ Cohesion: 0.29
 Nodes (6): ANDROID_HOME, ANDROID_SDK_ROOT, GRADLE_USER_HOME, JAVA_HOME, PATH, env.sh script
 
 ### Community 229 - "_StatefulStorage"
-Cohesion: 0.28
-Nodes (11): Completed, Exception, T, Listening, Processing, RemoteVoiceClient, RemoteVoiceEvent, RemoteVoiceException (+3 more)
+Cohesion: 0.18
+Nodes (17): Approval, Completed, Boolean, Exception, String, T, Listening, Processing (+9 more)
 
 ### Community 231 - ".subscribe"
-Cohesion: 0.15
-Nodes (13): ChatSocket, Connected, Connecting, ConnectionState, Disconnected, Failed, Boolean, Flow (+5 more)
+Cohesion: 0.14
+Nodes (14): ChatSocket, Connected, Connecting, ConnectionState, Disconnected, Failed, Boolean, Int (+6 more)
 
 ### Community 232 - "test_settings_coverage.py"
 Cohesion: 0.40
@@ -895,8 +916,8 @@ Cohesion: 0.22
 Nodes (6): AppViewModel, Boolean, StateFlow, String, ViewModel, SetupUiState
 
 ### Community 242 - "DiagnosticsViewModel"
-Cohesion: 0.29
-Nodes (5): Boolean, Int, String, VoiceFrames, Float
+Cohesion: 0.26
+Nodes (5): Boolean, Float, Int, String, VoiceFrames
 
 ### Community 243 - "DiagnosticsScreen"
 Cohesion: 0.38
@@ -907,8 +928,8 @@ Cohesion: 0.36
 Nodes (7): Field(), Modifier, String, SetupScreen(), StepCard(), KeyboardCapitalization, KeyboardType
 
 ### Community 245 - "Speaker"
-Cohesion: 0.38
-Nodes (11): Acquired, Error, Level, Released, Speaker, Speech, Started, State (+3 more)
+Cohesion: 0.33
+Nodes (14): Acquired, ApprovalRequest, Error, Interrupted, Level, Released, Speaker, Speech (+6 more)
 
 ### Community 246 - "TestDeviceRegistry"
 Cohesion: 0.40
@@ -928,19 +949,19 @@ Nodes (8): _configure_logging(), Path, Application bootstrap and lifecycle manag
 
 ### Community 251 - ".get_relevant_tools"
 Cohesion: 0.15
-Nodes (15): Failed, T, MobileApiClient, MobileApiResult, Success, bool(), String, MobileConfig (+7 more)
+Nodes (15): Failed, Nothing, T, MobileApiClient, MobileApiResult, Success, bool(), String (+7 more)
 
 ### Community 252 - "app"
-Cohesion: 0.16
-Nodes (16): VoiceConfigUpdate, VoiceNonSecretConfigUpdate, get_mobile_config(), MobileLLMConfigUpdate, MobileVoiceConfigUpdate, Any, BaseModel, ConfigDep (+8 more)
+Cohesion: 0.15
+Nodes (17): LLMConfigUpdate, Update LLM provider settings and rebuild the live router., update_llm(), get_mobile_config(), MobileLLMConfigUpdate, MobileVoiceConfigUpdate, Any, BaseModel (+9 more)
 
 ### Community 254 - ".list_tools"
-Cohesion: 0.25
-Nodes (9): AgentEvent, ClientFrames, FrameParser, Boolean, String, Message, ServerFrame, ToolConfirmation (+1 more)
+Cohesion: 0.20
+Nodes (12): AgentEvent, ClientFrames, FrameParser, Boolean, String, Message, ServerFrame, SessionSubscriptionAck (+4 more)
 
 ### Community 255 - "VoiceOrb"
-Cohesion: 0.21
-Nodes (24): AdvancedDisclosure(), BooleanChoice(), ChoiceChip(), ChoiceRow(), choices(), DiagnosticsLink(), Boolean, List (+16 more)
+Cohesion: 0.23
+Nodes (22): AdvancedDisclosure(), BooleanChoice(), ChoiceChip(), ChoiceRow(), choices(), DiagnosticsLink(), Boolean, List (+14 more)
 
 ### Community 256 - ".send"
 Cohesion: 0.40
@@ -951,56 +972,56 @@ Cohesion: 0.31
 Nodes (7): CaptureResult, DurationLimit, EndOfSpeech, ByteArray, Int, NativeAudioCapture, NoSpeech
 
 ### Community 258 - "test_config_io.py"
-Cohesion: 0.14
-Nodes (18): load_encrypted_config(), Load and decode the encrypted configuration document, if initialized., Path, Tests for TOML config serialization + secret extraction (config_io)., A field already holding an {env:…} ref is kept verbatim, not re-stored., Authorization-style headers move to the store as {env:…} refs., Guard: the secret table references real, current config fields., A modified config survives dump → load unchanged (no silent field loss). (+10 more)
+Cohesion: 0.16
+Nodes (16): load_encrypted_config(), Load and decode the encrypted configuration document, if initialized., Path, Tests for TOML config serialization + secret extraction (config_io)., A field already holding an {env:…} ref is kept verbatim, not re-stored., Authorization-style headers move to the store as {env:…} refs., A modified config survives dump → load unchanged (no silent field loss)., Every declared secret stays out of the TOML file. (+8 more)
 
 ### Community 259 - "websocket_chat"
-Cohesion: 0.14
-Nodes (14): approval_from_app(), auth_from_app(), bus_from_app(), log_buffer_from_app(), voice_events_from_app(), WebSocket, WebSocket endpoint that streams live backend logs to the web UI., Stream log records as JSON. Authenticated like the chat socket. (+6 more)
+Cohesion: 0.22
+Nodes (3): Protocol, Common surface every TTS engine exposes to the pipeline., Synthesizer
 
 ### Community 260 - "BackendAuth.kt"
-Cohesion: 0.27
-Nodes (11): AuthResult, BackendAuth, EnrolRequest, EnrolResponse, EnrolResult, Failed, String, NotEnrolled (+3 more)
+Cohesion: 0.28
+Nodes (10): AuthResult, EnrolRequest, EnrolResponse, EnrolResult, Failed, String, NotEnrolled, Success (+2 more)
 
 ### Community 261 - "CredentialStore"
-Cohesion: 0.22
-Nodes (5): Message, Publish a message from a channel to the orchestrator., Wait for and return the next inbound message., Publish a response from the orchestrator to a channel., Wait for and return the next outbound message.
+Cohesion: 0.20
+Nodes (16): AssistantScreen(), CancelControl(), describeActivity(), describeError(), describeForAccessibility(), EmptyState(), History(), List (+8 more)
 
 ### Community 262 - "TestYesNoParser"
-Cohesion: 0.25
-Nodes (7): build_messages_for_llm(), Any, Message, Shared LLM helpers: the system prompt and the message builder.  The conversation, Build the OpenAI-format message list for an LLM call.      Converts our Message, Remove provider control markup that must never reach users or TTS., sanitize_assistant_text()
+Cohesion: 0.23
+Nodes (8): ChatRepository, Boolean, ChatMessage, List, StateFlow, String, Unit, Store
 
 ### Community 263 - "hash_password"
-Cohesion: 0.12
-Nodes (11): RecognitionMode, ANDROID, SERVER, ThemePreference, DARK, LIGHT, SYSTEM, StateFlow (+3 more)
+Cohesion: 0.24
+Nodes (6): recognitionSummary(), Boolean, StateFlow, ViewModel, SettingsUiState, SettingsViewModel
 
 ### Community 264 - "._send_many"
-Cohesion: 0.14
-Nodes (13): _device_for(), Any, WebSocket, WebSocket chat endpoint for the web UI.  Handles inbound messages from browser c, Send data to a specific WebSocket connection., Send data to all connected WebSocket clients., Route *data* by its ``session_id``, falling back to a broadcast.          Sessio, Deliver a confirmation request only to the client that can answer it.          U (+5 more)
+Cohesion: 0.17
+Nodes (16): _discover_auth(), _fetch_as_metadata(), _parse_www_authenticate(), AsyncClient, ConfigDep, Discover OAuth endpoints for a remote MCP server.      Follows the MCP authoriza, Parse WWW-Authenticate header and discover auth endpoints., Fetch Authorization Server metadata via well-known endpoints. (+8 more)
 
 ### Community 265 - "oauth_callback"
-Cohesion: 0.50
-Nodes (3): filter_tools_by_relevance(), Filter tools based on keyword relevance to the user's query.      Always include, TestFilterToolsByRelevance
+Cohesion: 0.18
+Nodes (7): Any, Message, Telegram channel — long-polling bot via the Telegram Bot API.  Uses long-polling, Deliver an assistant reply back to the originating Telegram chat., Split text into chunks no longer than *limit* characters., Long-poll getUpdates and publish inbound text messages to the bus., _split_message()
 
 ### Community 266 - "datetime"
-Cohesion: 0.29
-Nodes (4): Any, Register tools from an MCP server.          Each tool dict must include a 'serve, Return all registered tool schemas., Return the most relevant tools for a given query.          Uses keyword matching
+Cohesion: 0.21
+Nodes (5): BackendSpeechClient, String, SynthesisRequest, SynthesizedSpeech, BackendSpeechClientTest
 
 ### Community 267 - "ApprovalSheet"
-Cohesion: 0.43
-Nodes (6): app(), client(), AsyncClient, FastAPI, End-to-end web flow: login → protected endpoints → tool audit.  Exercises the re, test_full_web_flow()
+Cohesion: 0.13
+Nodes (16): hash_password(), _main(), Single-user authentication for the web UI and API.  Dax is a personal assistant:, Return an argon2id hash of ``password``., Check ``password`` against a stored argon2 hash., verify_password(), app(), client() (+8 more)
 
 ### Community 268 - "parse"
-Cohesion: 0.70
-Nodes (4): decode(), String, PairingPayload, parse()
+Cohesion: 0.16
+Nodes (17): ConversationApi, ConversationApiResult, Failed, Boolean, ConversationSummary, Int, List, Nothing (+9 more)
 
 ### Community 269 - "DaxError"
-Cohesion: 0.33
-Nodes (5): datetime, In-memory log buffer + live fan-out for the web Logs viewer.  A single :class:`L, _parse_datetime(), Conversation repository — implements the Storage protocol for SQLite., Parse an ISO format datetime string.
+Cohesion: 0.21
+Nodes (7): ChatApproval, ChatMessage, ConversationChatState, ConversationDetail, ConversationMessage, ConversationSummary, ConversationsViewModelTest
 
 ### Community 270 - "websocket_voice"
-Cohesion: 0.40
-Nodes (5): ApprovalSheet(), DecisionButton(), Modifier, String, Color
+Cohesion: 0.36
+Nodes (4): AuthStatus, AuthGate(), Markdown, LoginPage()
 
 ### Community 272 - ".connection"
 Cohesion: 0.50
@@ -1010,29 +1031,85 @@ Nodes (4): main(), ndarray, Enroll the owner's voice for speaker verification (V
 Cohesion: 0.50
 Nodes (4): SettingsSection, INTELLIGENCE, INTERFACE, SPEECH
 
+### Community 275 - "._process_loop"
+Cohesion: 0.20
+Nodes (6): _parse_session_control(), Validate a session ownership control frame without coercion., _FakeWebSocket, Any, Records the frames sent to one client., TestSessionControlValidation
+
 ### Community 276 - "test_legacy_oauth_files_migrate_encrypted"
+Cohesion: 0.39
+Nodes (7): Modal(), envToText(), FormMode, headersToText(), parseEnv(), parseHeaders(), ServerFormModal()
+
+### Community 277 - "ThemePreference"
+Cohesion: 0.15
+Nodes (10): AppPreferences, AppPreferenceState, fromStored(), Boolean, StateFlow, ThemePreference, DARK, LIGHT (+2 more)
+
+### Community 278 - ".assertContrast"
+Cohesion: 0.43
+Nodes (3): Color, Float, OrbitaColorsContrastTest
+
+### Community 279 - "._load_voice"
+Cohesion: 0.33
+Nodes (3): Load configured voice models., Load a voice by file path or by name (auto-downloading if needed)., Resolve *value* to a local ``.onnx`` file.          Accepts either a path to an
+
+### Community 280 - "._format_assistant_tool_calls"
+Cohesion: 0.33
+Nodes (7): appendInlineMarkdown(), Color, String, parseSafeMarkdown(), SafeMarkdown(), SafeMarkdownTest, AnnotatedString
+
+### Community 281 - "VoiceEnrollment.tsx"
+Cohesion: 0.50
+Nodes (3): index(), PHRASES, VoiceEnrollment()
+
+### Community 282 - "oauth_callback"
+Cohesion: 0.25
+Nodes (8): HTMLResponse, _callback_html(), oauth_callback(), Request, Handle the OAuth redirect callback from the auth provider., Reconnect an MCP server so a freshly stored token takes effect., Generate the callback page HTML., _reconnect_mcp_server()
+
+### Community 283 - "Any"
+Cohesion: 0.33
+Nodes (4): Any, Send data to all connected WebSocket clients., Route *data* by its ``session_id``.          Session-scoped frames reach only th, Deliver a confirmation request only to the client that can answer it.          U
+
+### Community 284 - "ApprovalSheet"
+Cohesion: 0.33
+Nodes (6): ApprovalSheet(), DecisionButton(), Color, Modifier, String, ApprovalRequest
+
+### Community 286 - "RecognitionMode"
+Cohesion: 0.40
+Nodes (3): RecognitionMode, ANDROID, SERVER
+
+### Community 287 - "SpeechOutputMode"
+Cohesion: 0.40
+Nodes (3): SpeechOutputMode, ANDROID, SERVER
+
+### Community 288 - ".get_relevant_tools"
+Cohesion: 0.40
+Nodes (3): Any, Per-configured-server connection + tool status for the web UI., Return the tools most relevant to ``query`` (ToolProvider port).          Delega
+
+### Community 289 - ".request"
+Cohesion: 0.40
+Nodes (3): Any, Register the async callback that delivers requests to the UI., Ask the user to confirm a tool call.          Returns the chosen decision string
+
+### Community 291 - "test_legacy_oauth_files_migrate_encrypted"
 Cohesion: 0.50
 Nodes (3): Path, Encrypted persistence tests for MCP OAuth credentials., test_legacy_oauth_files_migrate_encrypted()
 
 ## Knowledge Gaps
-- **445 isolated node(s):** `$schema`, `.opencode/plugins/graphify.js`, `PHONE`, `BLUETOOTH_SCO`, `WIRED` (+440 more)
+- **451 isolated node(s):** `$schema`, `.opencode/plugins/graphify.js`, `CHAT`, `VOICE`, `PHONE` (+446 more)
   These have ≤1 connection - possible missing edges or undocumented components.
-- **81 thin communities (<3 nodes) omitted from report** — run `graphify query` to explore isolated nodes.
+- **83 thin communities (<3 nodes) omitted from report** — run `graphify query` to explore isolated nodes.
 
 ## Suggested Questions
 _Questions this graph is uniquely positioned to answer:_
 
-- **Why does `MCPManager` connect `MCP Lifecycle Manager` to `MCP Environment Resolution`, `Application Storage Lifecycle`, `MCP Client Connections`, `MCP Tool Registry`, `React Collection Rendering`, `Selection and Syntax Utilities`, `Core Configuration Models`, `.unregister_server`, `Web Dependency Injection`?**
-  _High betweenness centrality (0.039) - this node is a cross-community bridge._
-- **Why does `DaxApp` connect `Application Storage Lifecycle` to `MCP Lifecycle Manager`, `Secure Configuration Serialization`, `End-to-End Web Tests`, `OAuth Webhook Integration`, `Collection Cursor Operations`, `WebChannel`, `Password Authentication Tests`, `Encrypted Secret Storage`, `Shared Web UI Components`, `Voice Activity Detection`, `System API Tests`, `Selection and Syntax Utilities`, `enroll_voice.py`, `Logging Event Buffer`, `WhatsApp Channel Integration`, `Human Approval Workflow`?**
-  _High betweenness centrality (0.036) - this node is a cross-community bridge._
-- **Why does `SecretStore` connect `Encrypted Secret Storage` to `test_config_io.py`, `Secure Configuration Serialization`, `Application Storage Lifecycle`, `LLM Provider Factory`, `OAuth Webhook Integration`, `test_settings_coverage.py`, `WhatsApp Channel Integration`, `React Collection Rendering`, `Voice Activity Detection`, `System API Tests`, `test_legacy_oauth_files_migrate_encrypted`, `Selection and Syntax Utilities`, `Core Configuration Models`, `Password Authentication Tests`, `Web Dependency Injection`?**
-  _High betweenness centrality (0.030) - this node is a cross-community bridge._
-- **Are the 107 inferred relationships involving `n()` (e.g. with `fromIntLines()` and `index-Z_8JFh70.js`) actually correct?**
-  _`n()` has 107 INFERRED edges - model-reasoned connections that need verification._
-- **Are the 76 inferred relationships involving `i()` (e.g. with `ac()` and `Ad()`) actually correct?**
-  _`i()` has 76 INFERRED edges - model-reasoned connections that need verification._
-- **Are the 99 inferred relationships involving `r()` (e.g. with `ac()` and `Ad()`) actually correct?**
-  _`r()` has 99 INFERRED edges - model-reasoned connections that need verification._
-- **Are the 80 inferred relationships involving `t()` (e.g. with `index-Z_8JFh70.js` and `a()`) actually correct?**
-  _`t()` has 80 INFERRED edges - model-reasoned connections that need verification._
+- **Why does `MessageBus` connect `Selection and Syntax Utilities` to `Frontend Runtime Internals`, `Application Storage Lifecycle`, `Collection Cursor Operations`, `ApprovalSheet`, `MCP Configuration Routes`, `System API Tests`, `._process_loop`, `Webhook API Tests`, `6.2 Parity checklist`, `Web Dependency Injection`, `Human Approval Workflow`, `Token Authentication Manager`, `.from_config_path`, `Voice Activity Detection`, `Shared Test Fixtures`, `filter_tools_by_relevance`, `_make_app`, `.__init__`, `Authentication Flow Tests`?**
+  _High betweenness centrality (0.034) - this node is a cross-community bridge._
+- **Why does `DaxApp` connect `.from_config_path` to `Frontend Runtime Internals`, `Secure Configuration Serialization`, `End-to-End Web Tests`, `Application Storage Lifecycle`, `oauth_callback`, `Collection Cursor Operations`, `Password Authentication Tests`, `Encrypted Secret Storage`, `Shared Web UI Components`, `Voice Activity Detection`, `System API Tests`, `filter_tools_by_relevance`, `Selection and Syntax Utilities`, `enroll_voice.py`, `Logging Event Buffer`, `WhatsApp Channel Integration`, `Human Approval Workflow`?**
+  _High betweenness centrality (0.028) - this node is a cross-community bridge._
+- **Why does `Message` connect `Application Storage Lifecycle` to `whatsapp_webhook`, `Codex Provider Adapter`, `Frontend Runtime Internals`, `LLM Provider Factory`, `Collection Cursor Operations`, `Gemini Provider Adapter`, `Anthropic Provider Adapter`, `Voice Activity Detection`, `System API Tests`, `filter_tools_by_relevance`, `Selection and Syntax Utilities`, `.get_relevant_tools`, `LLM Router Failover`, `6.2 Parity checklist`, `WhatsApp Channel Integration`, `OpenAI Provider Adapter`?**
+  _High betweenness centrality (0.023) - this node is a cross-community bridge._
+- **Are the 115 inferred relationships involving `n()` (e.g. with `fromIntLines()` and `add()`) actually correct?**
+  _`n()` has 115 INFERRED edges - model-reasoned connections that need verification._
+- **Are the 82 inferred relationships involving `i()` (e.g. with `index-DNUImnmJ.js` and `ac()`) actually correct?**
+  _`i()` has 82 INFERRED edges - model-reasoned connections that need verification._
+- **Are the 108 inferred relationships involving `r()` (e.g. with `Aa()` and `ac()`) actually correct?**
+  _`r()` has 108 INFERRED edges - model-reasoned connections that need verification._
+- **Are the 83 inferred relationships involving `t()` (e.g. with `a()` and `add()`) actually correct?**
+  _`t()` has 83 INFERRED edges - model-reasoned connections that need verification._

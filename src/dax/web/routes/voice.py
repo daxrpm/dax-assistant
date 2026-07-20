@@ -10,10 +10,11 @@ from typing import TYPE_CHECKING, Annotated, Literal
 
 import numpy as np
 from fastapi import APIRouter, File, HTTPException, Request, Response, UploadFile
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from dax.core.exceptions import TTSError, VoiceError
 from dax.voice.speaker import SpeakerVerifier
+from dax.voice.tts_service import TTSRateLimitError, TTSService, TTSServiceBusyError
 from dax.web.dependencies import ConfigDep
 
 if TYPE_CHECKING:
@@ -67,6 +68,21 @@ class VoicePreviewRequest(BaseModel):
     timeout_s: int = Field(default=30, ge=1, le=120)
 
 
+class VoiceSynthesisRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    text: str = Field(min_length=1, max_length=2000)
+    language: Literal["es", "en", "auto"] = "auto"
+
+    @field_validator("text")
+    @classmethod
+    def text_must_not_be_blank(cls, value: str) -> str:
+        value = value.strip()
+        if not value:
+            raise ValueError("text must not be blank")
+        return value
+
+
 @router.post("/push-to-talk/press")
 async def push_to_talk_press(request: Request) -> dict[str, str]:
     """Begin backend-local microphone capture without wake-word detection."""
@@ -111,6 +127,59 @@ def _encode_wav(audio: np.ndarray, sample_rate: int) -> bytes:
         wav.setframerate(sample_rate)
         wav.writeframes(pcm.tobytes())
     return output.getvalue()
+
+
+def _tts_service(request: Request, config: ConfigDep) -> TTSService:
+    service = getattr(request.app.state, "tts_service", None)
+    if isinstance(service, TTSService):
+        return service
+    service = TTSService(config.voice, config.storage.models_path)
+    request.app.state.tts_service = service
+    return service
+
+
+@router.post("/synthesize")
+async def synthesize_voice(
+    request: Request,
+    body: VoiceSynthesisRequest,
+    config: ConfigDep,
+) -> Response:
+    """Return a complete WAV using the backend's active TTS configuration."""
+    service = _tts_service(request, config)
+    try:
+        result = await asyncio.to_thread(
+            service.synthesize_mobile,
+            body.text.strip(),
+            body.language,
+        )
+    except TTSRateLimitError as exc:
+        raise HTTPException(
+            status_code=429,
+            detail=str(exc),
+            headers={"Retry-After": "60"},
+        ) from exc
+    except TTSServiceBusyError as exc:
+        raise HTTPException(
+            status_code=503,
+            detail=str(exc),
+            headers={"Retry-After": "5"},
+        ) from exc
+    except TTSError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+    except Exception as exc:
+        raise HTTPException(status_code=503, detail=f"Voice synthesis failed: {exc}") from exc
+
+    headers = {
+        "X-Dax-TTS-Engine": result.engine,
+        "X-Dax-TTS-Fingerprint": service.fingerprint,
+    }
+    if result.voice:
+        headers["X-Dax-TTS-Voice"] = result.voice
+    return Response(
+        content=_encode_wav(result.audio, result.sample_rate),
+        media_type="audio/wav",
+        headers=headers,
+    )
 
 
 async def _reload_voice(request: Request) -> None:

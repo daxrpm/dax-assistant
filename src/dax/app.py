@@ -33,6 +33,7 @@ from dax.storage.database import Database
 from dax.storage.devices import DeviceRegistry
 from dax.storage.repository import ConversationRepository
 from dax.storage.secrets import SecretStore
+from dax.voice.tts_service import TTSService
 from dax.web.server import create_app
 
 if TYPE_CHECKING:
@@ -112,6 +113,7 @@ class DaxApp:
 
         # Voice pipeline (initialized in start() if enabled)
         self._voice_pipeline: VoicePipeline | None = None
+        self._tts_service = TTSService(config.voice, config.storage.models_path)
         self._voice_reload_lock = asyncio.Lock()
         # The event hub outlives any individual pipeline: it is owned here so a
         # UI client subscribed to /ws/voice keeps its connection across voice
@@ -121,6 +123,8 @@ class DaxApp:
         # Web
         self._web_app = create_app(config=config, bus=self._bus)
         self._web_app.state.voice_events = self._voice_events
+        self._web_app.state.approval = self._approval
+        self._web_app.state.tts_service = self._tts_service
         self._uvicorn_server: uvicorn.Server | None = None
 
         self._agent: Agent | None = None
@@ -303,6 +307,7 @@ class DaxApp:
                     models_path=self._config.storage.models_path,
                     approval=self._approval,
                     events=self._voice_events,
+                    tts_service=self._tts_service,
                 )
                 self._voice_pipeline.start()
                 if hasattr(self._web_app, "state"):
@@ -343,9 +348,13 @@ class DaxApp:
         """Restart the voice channel and pipeline with the live configuration."""
         from dax.voice.pipeline import VoicePipeline as VoicePipelineImpl
 
+        old_tts_service = self._tts_service
+
         if self._voice_pipeline is not None:
             await asyncio.to_thread(self._voice_pipeline.stop)
             self._voice_pipeline = None
+        else:
+            await asyncio.to_thread(old_tts_service.stop)
 
         existing = self._channels.pop("voice", None)
         if existing is not None:
@@ -354,12 +363,18 @@ class DaxApp:
         self._web_app.state.voice_pipeline = None
         self._web_app.state.voice_listening = False
         if not self._config.voice.enabled:
+            self._tts_service = TTSService(
+                self._config.voice, self._config.storage.models_path
+            )
+            self._web_app.state.tts_service = self._tts_service
             logger.info("Voice pipeline disabled")
             return
 
         voice_channel = VoiceChannel()
         await voice_channel.start()
         self._channels["voice"] = voice_channel
+        self._tts_service = TTSService(self._config.voice, self._config.storage.models_path)
+        self._web_app.state.tts_service = self._tts_service
         try:
             self._voice_pipeline = VoicePipelineImpl(
                 config=self._config.voice,
@@ -369,6 +384,7 @@ class DaxApp:
                 models_path=self._config.storage.models_path,
                 approval=self._approval,
                 events=self._voice_events,
+                tts_service=self._tts_service,
             )
             await asyncio.to_thread(self._voice_pipeline.start)
         except Exception:
@@ -395,6 +411,8 @@ class DaxApp:
         # Voice pipeline first (it's in a thread)
         if self._voice_pipeline:
             self._voice_pipeline.stop()
+        else:
+            self._tts_service.stop()
 
         if self._dispatcher:
             await self._dispatcher.stop()

@@ -10,8 +10,14 @@ from __future__ import annotations
 import asyncio
 from typing import Any
 
+import pytest
+from fastapi.testclient import TestClient
+
+from dax.core.config import DaxConfig
 from dax.orchestrator.approval import ApprovalManager
-from dax.web.routes.chat import WebSocketManager
+from dax.orchestrator.bus import MessageBus
+from dax.web.routes.chat import WebSocketManager, _parse_session_control
+from dax.web.server import create_app
 
 
 class _FakeWebSocket:
@@ -61,13 +67,22 @@ class TestSessionScopedDelivery:
         assert len(a.sent) == 1
         assert len(b.sent) == 1
 
-    async def test_unknown_session_falls_back_to_broadcast(self):
+    async def test_unknown_session_is_dropped(self):
         manager = WebSocketManager()
         a = await _attach(manager, "phone-1")
 
         await manager.dispatch({"type": "message", "session_id": "nobody-owns-this"})
 
-        assert len(a.sent) == 1
+        assert a.sent == []
+
+    @pytest.mark.parametrize("session_id", ["", None, 42])
+    async def test_malformed_scoped_frame_never_broadcasts(self, session_id: Any):
+        manager = WebSocketManager()
+        a = await _attach(manager)
+
+        await manager.dispatch({"type": "message", "session_id": session_id})
+
+        assert a.sent == []
 
     async def test_two_clients_may_share_a_session(self):
         manager = WebSocketManager()
@@ -109,6 +124,86 @@ class TestSessionScopedDelivery:
         owned = sum(1 for i in range(200) if manager.owns_session(ws, f"s{i}"))  # type: ignore[arg-type]
         assert owned <= 32
 
+    async def test_subscribe_restores_ownership_without_publishing(self):
+        manager = WebSocketManager()
+        ws = await _attach(manager)
+
+        assert manager.subscribe(ws, ["restored"]) is True  # type: ignore[arg-type]
+        assert manager.owns_session(ws, "restored") is True  # type: ignore[arg-type]
+
+        await manager.dispatch({"type": "message", "session_id": "restored"})
+        assert len(ws.sent) == 1
+
+    async def test_unsubscribe_releases_ownership(self):
+        manager = WebSocketManager()
+        ws = await _attach(manager, "released")
+
+        manager.unsubscribe(ws, ["released"])  # type: ignore[arg-type]
+
+        assert manager.owns_session(ws, "released") is False  # type: ignore[arg-type]
+        await manager.dispatch({"type": "message", "session_id": "released"})
+        assert ws.sent == []
+
+    async def test_subscription_limit_is_atomic(self):
+        manager = WebSocketManager()
+        ws = await _attach(manager)
+        existing = [f"s{i}" for i in range(32)]
+        assert manager.subscribe(ws, existing) is True  # type: ignore[arg-type]
+
+        assert manager.subscribe(ws, ["overflow"]) is False  # type: ignore[arg-type]
+        assert manager.owns_session(ws, "overflow") is False  # type: ignore[arg-type]
+        assert all(manager.owns_session(ws, item) for item in existing)  # type: ignore[arg-type]
+
+
+class TestSessionControlValidation:
+    def test_valid_control_frame(self):
+        assert _parse_session_control(
+            {"type": "session_subscribe", "session_ids": ["one", "two"], "ack": True}
+        ) == ("session_subscribe", ["one", "two"], True)
+
+    @pytest.mark.parametrize(
+        "frame",
+        [
+            {"type": "session_subscribe", "session_ids": "one"},
+            {"type": "session_subscribe", "session_ids": []},
+            {"type": "session_subscribe", "session_ids": ["duplicate", "duplicate"]},
+            {"type": "session_subscribe", "session_ids": [""]},
+            {"type": "session_subscribe", "session_ids": [" padded "]},
+            {"type": "session_subscribe", "session_ids": ["one"], "ack": 1},
+            {"type": "session_subscribe", "session_ids": ["one"], "extra": True},
+            {"type": "session_unsubscribe", "session_ids": [str(i) for i in range(33)]},
+        ],
+    )
+    def test_rejects_malformed_control_frame(self, frame: dict[str, Any]):
+        with pytest.raises(ValueError):
+            _parse_session_control(frame)
+
+    def test_endpoint_returns_optional_control_ack(self):
+        bus = MessageBus()
+        bus.start()
+        app = create_app(
+            config=DaxConfig(security={"auth_enabled": False}),
+            bus=bus,
+        )
+
+        with TestClient(app) as client, client.websocket_connect("/ws/chat") as ws:
+            ws.send_json(
+                {"type": "session_subscribe", "session_ids": ["restored"], "ack": True}
+            )
+            assert ws.receive_json() == {
+                "type": "session_subscribe_ack",
+                "ok": True,
+                "session_ids": ["restored"],
+            }
+            ws.send_json(
+                {"type": "session_unsubscribe", "session_ids": ["restored"], "ack": True}
+            )
+            assert ws.receive_json() == {
+                "type": "session_unsubscribe_ack",
+                "ok": True,
+                "session_ids": ["restored"],
+            }
+
 
 class TestApprovalDelivery:
     async def test_approval_never_broadcasts_to_non_owners(self):
@@ -135,6 +230,16 @@ class TestApprovalDelivery:
 
         await manager.deliver_approval(
             {"type": "tool_confirmation_request", "session_id": "orphan", "tool_name": "fs_write"}
+        )
+
+        assert desktop.sent == []
+
+    async def test_malformed_scoped_approval_is_not_broadcast(self):
+        manager = WebSocketManager()
+        desktop = await _attach(manager)
+
+        await manager.deliver_approval(
+            {"type": "tool_confirmation_request", "session_id": None, "tool_name": "fs_write"}
         )
 
         assert desktop.sent == []

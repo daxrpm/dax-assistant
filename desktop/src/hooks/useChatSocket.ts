@@ -91,6 +91,7 @@ export function createChatStore(sessionId: string, initialMessages: ChatMessage[
       if (socket !== ws) return;
       if (connectionTimer) clearTimeout(connectionTimer);
       connectionTimer = null;
+      ws.send(JSON.stringify({ type: "session_subscribe", session_ids: [sessionId] }));
       update({ status: "open", authFailed: false });
     };
     ws.onclose = (event) => {
@@ -170,6 +171,9 @@ export function createChatStore(sessionId: string, initialMessages: ChatMessage[
       connectionTimer = null;
       const active = socket;
       socket = null;
+      if (active?.readyState === WebSocket.OPEN) {
+        active.send(JSON.stringify({ type: "session_unsubscribe", session_ids: [sessionId] }));
+      }
       active?.close();
       clearMcpActivity(sessionId);
       if (snapshot.status !== "closed") update({ status: "closed" });

@@ -12,11 +12,16 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.systemBarsPadding
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.expandHorizontally
+import androidx.compose.animation.shrinkHorizontally
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.ChatBubble
 import androidx.compose.material.icons.filled.GraphicEq
@@ -29,8 +34,10 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.semantics.selected
@@ -98,9 +105,9 @@ fun MainNavigation(
                     navController, assistantState, history, diagnosticsState, diagnostics,
                     onTrigger, onCancel, onApprove, onRequestPermissions,
                     onForgetEverything, onDeviceRecognition,
-                    Modifier.fillMaxSize().padding(bottom = 88.dp),
+                    Modifier.fillMaxSize().padding(bottom = 72.dp),
                 )
-                DestinationBar(navController, Modifier.align(Alignment.BottomCenter).systemBarsPadding())
+                DestinationBar(navController, Modifier.align(Alignment.BottomCenter))
             }
         }
     }
@@ -129,7 +136,7 @@ private fun MainGraph(
                 onOpenSettings = { navController.navigate(MainDestination.SettingsPage.route) },
             )
         }
-        composable(MainDestination.Conversations.route) { ConversationsScreen(history) }
+        composable(MainDestination.Conversations.route) { ConversationsScreen() }
         composable(MainDestination.SettingsPage.route) {
             val viewModel: SettingsViewModel = hiltViewModel()
             val state by viewModel.state.collectAsStateWithLifecycle()
@@ -141,6 +148,8 @@ private fun MainGraph(
                 onAppLanguageChange = viewModel::setAppLanguage,
                 onRecognitionModeChange = viewModel::setRecognitionMode,
                 onRecognitionLanguageChange = viewModel::setRecognitionLanguage,
+                onSpeechOutputModeChange = viewModel::setSpeechOutputMode,
+                onFollowUpChange = viewModel::setFollowUpEnabled,
                 onThemeChange = viewModel::setTheme,
                 onOpenDiagnostics = { navController.navigate(DIAGNOSTICS_ROUTE) },
             )
@@ -169,8 +178,11 @@ private fun MainGraph(
 private fun DestinationBar(navController: NavHostController, modifier: Modifier = Modifier) {
     val route = navController.currentBackStackEntryAsState().value?.destination?.route
     Row(
-        modifier.padding(horizontal = Orbita.spacing.x3, vertical = Orbita.spacing.x2)
-            .fillMaxWidth().clip(RoundedCornerShape(Orbita.radii.xxl))
+        modifier.navigationBarsPadding()
+            .padding(horizontal = Orbita.spacing.x4, vertical = Orbita.spacing.x2)
+            .fillMaxWidth().widthIn(max = 380.dp)
+            .shadow(Orbita.elevation.level2, RoundedCornerShape(Orbita.radii.pill))
+            .clip(RoundedCornerShape(Orbita.radii.pill))
             .background(Orbita.colors.bgPanel).padding(Orbita.spacing.x1),
         horizontalArrangement = Arrangement.spacedBy(Orbita.spacing.x1),
     ) {
@@ -179,6 +191,7 @@ private fun DestinationBar(navController: NavHostController, modifier: Modifier 
                 modifier = Modifier.weight(1f),
                 destination = destination,
                 selected = route == destination.route,
+                labelOnlyWhenSelected = true,
                 onClick = { navController.open(destination) },
             )
         }
@@ -198,6 +211,7 @@ private fun DestinationRail(navController: NavHostController, modifier: Modifier
                 modifier = Modifier.fillMaxWidth(),
                 destination = destination,
                 selected = route == destination.route,
+                labelOnlyWhenSelected = false,
                 onClick = { navController.open(destination) },
             )
         }
@@ -208,21 +222,38 @@ private fun DestinationRail(navController: NavHostController, modifier: Modifier
 private fun DestinationItem(
     destination: MainDestination,
     selected: Boolean,
+    labelOnlyWhenSelected: Boolean,
     onClick: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
+    val label = stringResource(destination.label)
     val color = if (selected) Orbita.colors.fgPrimary else Orbita.colors.fgTertiary
-    Column(
+    Row(
         modifier.clip(RoundedCornerShape(Orbita.radii.xl))
-            .background(if (selected) Orbita.colors.bgElevated else Orbita.colors.bgPanel)
+            .background(if (selected) Orbita.colors.bgSelected else Orbita.colors.bgPanel)
             .clickable(role = Role.Tab, onClick = onClick)
-            .semantics { this.selected = selected }
-            .heightIn(min = 60.dp).padding(vertical = Orbita.spacing.x2),
-        horizontalAlignment = Alignment.CenterHorizontally,
-        verticalArrangement = Arrangement.Center,
+            .semantics(mergeDescendants = true) {
+                this.selected = selected
+                contentDescription = label
+            }
+            .heightIn(min = Orbita.sizing.minTouchTarget)
+            .padding(horizontal = Orbita.spacing.x3, vertical = Orbita.spacing.x2),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.Center,
     ) {
         Icon(destination.icon, contentDescription = null, tint = color, modifier = Modifier.size(20.dp))
-        Text(stringResource(destination.label), style = OrbitaType.caption, color = color)
+        AnimatedVisibility(
+            visible = !labelOnlyWhenSelected || selected,
+            enter = expandHorizontally(),
+            exit = shrinkHorizontally(),
+        ) {
+            Text(
+                label,
+                style = OrbitaType.caption,
+                color = color,
+                modifier = Modifier.padding(start = Orbita.spacing.x2),
+            )
+        }
     }
 }
 

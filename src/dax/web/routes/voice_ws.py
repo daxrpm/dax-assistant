@@ -158,6 +158,7 @@ async def websocket_voice(websocket: WebSocket) -> None:
     acquired = False
     active = False
     output_owned = False
+    owner_generation = 0
     received_bytes = 0
     send_lock = asyncio.Lock()
 
@@ -168,10 +169,20 @@ async def websocket_voice(websocket: WebSocket) -> None:
     async def send_events() -> None:
         while True:
             event = await queue.get()
+            current_owner = lease.owner
+            if current_owner is None:
+                if event.owner is not None:
+                    continue
+            elif (
+                current_owner != owner
+                or event.owner != owner
+                or event.generation != owner_generation
+            ):
+                continue
             await send_json(event.to_json())
 
     async def cleanup_remote() -> None:
-        nonlocal acquired, active, source, output_owned
+        nonlocal acquired, active, source, output_owned, owner_generation
         if not acquired:
             return
         try:
@@ -182,30 +193,32 @@ async def websocket_voice(websocket: WebSocket) -> None:
                 except Exception:
                     logger.debug("Failed to cancel disconnected remote PTT", exc_info=True)
             if pipeline is not None:
-                try:
-                    pipeline.select_audio_source(None)
-                except Exception:
-                    logger.debug("Failed to restore local audio source", exc_info=True)
                 if output_owned:
-                    # Must run even on a crash path: a client that dropped
-                    # while owning output would otherwise leave the backend
-                    # permanently silent for every later local turn.
+                    # Do not let a late remote response escape through the host
+                    # speakers after its client disappears.
                     try:
-                        if pipeline.output_owner == owner:
-                            pipeline.set_output_owner(None)
+                        if pipeline.output_owner == owner and str(pipeline.state) != "idle":
+                            await asyncio.to_thread(pipeline.interrupt_remote_turn)
                     except Exception:
-                        logger.debug("Failed to restore local audio output", exc_info=True)
+                        logger.debug(
+                            "Failed to invalidate disconnected remote turn", exc_info=True
+                        )
+                try:
+                    pipeline.release_remote_owner(owner)
+                except Exception:
+                    logger.debug("Failed to restore local voice context", exc_info=True)
             if source is not None:
                 source.stop()
         finally:
             active = False
             acquired = False
             output_owned = False
+            owner_generation = 0
             source = None
             lease.release(owner)
 
     async def handle_control(frame: dict[str, object]) -> None:
-        nonlocal acquired, active, source, received_bytes, output_owned
+        nonlocal acquired, active, source, received_bytes, output_owned, owner_generation
         kind = frame.get("type")
         if not isinstance(kind, str):
             raise VoiceProtocolError("malformed_control", "Control frame requires a string type")
@@ -223,19 +236,22 @@ async def websocket_voice(websocket: WebSocket) -> None:
             try:
                 from dax.voice.audio_io import RemoteAudioSource
 
+                owner_generation = pipeline.acquire_remote_owner(owner)
                 source = RemoteAudioSource()
                 source.start()
                 acquired = True
                 received_bytes = 0
             except Exception:
+                try:
+                    pipeline.release_remote_owner(owner)
+                except Exception:
+                    logger.debug("Failed to roll back remote voice ownership", exc_info=True)
                 lease.release(owner)
                 raise
-            if output_mode == "client_text":
-                # Held for the lifetime of the lease, not just one utterance:
-                # the reply arrives asynchronously and must not be spoken on
-                # the backend host in the gap between turns.
-                pipeline.set_output_owner(owner)
-                output_owned = True
+            # Remote leases always suppress host playback. client_text clients
+            # consume the owner-scoped speech events; legacy server mode remains
+            # negotiated but intentionally cannot sound on the unattended host.
+            output_owned = True
             await send_json({
                 "type": "remote_audio.acquired",
                 "data": {
@@ -275,7 +291,6 @@ async def websocket_voice(websocket: WebSocket) -> None:
                 raise VoiceProtocolError("ptt_rejected", str(exc)) from exc
             active = False
             source.stop()
-            pipeline.select_audio_source(None)
             await send_json({"type": "remote_audio.stopped", "data": {"state": str(state)}})
             return
         if kind == "remote_audio.release":
@@ -283,6 +298,52 @@ async def websocket_voice(websocket: WebSocket) -> None:
                 raise VoiceProtocolError("invalid_order", "Stop remote audio before releasing it")
             await cleanup_remote()
             await send_json({"type": "remote_audio.released", "data": {}})
+            return
+        if kind == "voice.approval":
+            if not acquired or not output_owned or lease.owner != owner:
+                raise VoiceProtocolError(
+                    "approval_not_owned",
+                    "Only the remote output owner may resolve voice approvals",
+                )
+            approval_id = frame.get("approval_id")
+            decision = frame.get("decision")
+            if (
+                not isinstance(approval_id, str)
+                or not approval_id
+                or not isinstance(decision, str)
+            ):
+                raise VoiceProtocolError(
+                    "malformed_control", "Voice approval requires approval_id and decision"
+                )
+            approval = getattr(websocket.app.state, "approval", None)
+            if (
+                approval is None
+                or approval.channel_for(approval_id) != "voice"
+                or not approval.resolve(approval_id, decision)
+            ):
+                # Includes invalid options, unknown IDs, timeouts, and replay.
+                raise VoiceProtocolError(
+                    "invalid_approval", "Voice approval is invalid or already settled"
+                )
+            return
+        if kind == "remote_audio.interrupt":
+            if not acquired or not output_owned or lease.owner != owner or active:
+                raise VoiceProtocolError(
+                    "interrupt_not_owned",
+                    "Only an idle remote output owner may interrupt voice delivery",
+                )
+            pipeline = _pipeline_from_app(websocket.app)
+            try:
+                state = await asyncio.to_thread(pipeline.interrupt_remote_turn)
+            except Exception as exc:
+                raise VoiceProtocolError("interrupt_rejected", str(exc)) from exc
+            await send_json({
+                "type": "remote_audio.interrupted",
+                "data": {
+                    "state": str(state),
+                    "agent_cancelled": False,
+                },
+            })
             return
         raise VoiceProtocolError("unknown_control", f"Unknown control frame: {kind}")
 
@@ -348,7 +409,9 @@ async def websocket_voice(websocket: WebSocket) -> None:
         # transition happens to fire.
         last_state = hub.last_state
         await send_json(
-            last_state.to_json() if last_state is not None else _idle_state()
+            last_state.to_json()
+            if last_state is not None and last_state.owner is None and lease.owner is None
+            else _idle_state()
         )
         event_task = asyncio.create_task(send_events())
         await receive_audio()

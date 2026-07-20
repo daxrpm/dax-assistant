@@ -24,6 +24,7 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import logging
+import threading
 import time
 from dataclasses import dataclass, field
 from enum import StrEnum
@@ -43,6 +44,8 @@ class VoiceEventType(StrEnum):
     LEVEL = "level"
     TRANSCRIPT = "transcript"
     SPEECH = "speech"
+    TURN_COMPLETE = "turn_complete"
+    APPROVAL_REQUEST = "approval_request"
     SPEAKER = "speaker"
     ERROR = "error"
 
@@ -61,6 +64,8 @@ class VoiceEvent:
     type: VoiceEventType
     data: dict[str, Any] = field(default_factory=dict)
     timestamp: float = field(default_factory=time.time)
+    owner: str | None = None
+    generation: int = 0
 
     def to_json(self) -> dict[str, Any]:
         return {"type": str(self.type), "data": self.data, "timestamp": self.timestamp}
@@ -79,6 +84,9 @@ class VoiceEventHub:
         self._subscribers: set[asyncio.Queue[VoiceEvent]] = set()
         self._last_state: VoiceEvent | None = None
         self._dropped = 0
+        self._owner: str | None = None
+        self._generation = 0
+        self._context_lock = threading.Lock()
 
     # -- Loop binding --
 
@@ -117,6 +125,19 @@ class VoiceEventHub:
         logger.debug("Voice event subscriber added (total: %d)", len(self._subscribers))
         return queue
 
+    @property
+    def event_context(self) -> tuple[str | None, int]:
+        """Return the active delivery owner and its monotonic generation."""
+        with self._context_lock:
+            return self._owner, self._generation
+
+    def set_event_owner(self, owner: str | None) -> int:
+        """Start a new local or remote event generation."""
+        with self._context_lock:
+            self._generation += 1
+            self._owner = owner
+            return self._generation
+
     def unsubscribe(self, queue: asyncio.Queue[VoiceEvent]) -> None:
         """Remove a subscriber's queue."""
         self._subscribers.discard(queue)
@@ -129,6 +150,10 @@ class VoiceEventHub:
 
         Never raises and never blocks — the caller is often the audio thread.
         """
+        with self._context_lock:
+            event.owner = self._owner
+            event.generation = self._generation
+
         if event.type is VoiceEventType.STATE:
             # Cached before the subscriber check: a client connecting later
             # still needs the current state even if nobody was listening when
@@ -189,6 +214,39 @@ class VoiceEventHub:
             VoiceEvent(
                 type=VoiceEventType.SPEECH,
                 data={"text": text, "language": language},
+            )
+        )
+
+    def emit_turn_completed(self, voice_turn: str) -> None:
+        """Mark that every client-owned speech sentence for a turn was emitted."""
+        self.emit(
+            VoiceEvent(
+                type=VoiceEventType.TURN_COMPLETE,
+                data={"voice_turn": voice_turn},
+            )
+        )
+
+    def emit_approval_request(
+        self,
+        *,
+        approval_id: str,
+        tool_name: str,
+        server_name: str,
+        arguments: dict[str, Any],
+        options: list[str],
+        timeout_seconds: int,
+    ) -> None:
+        self.emit(
+            VoiceEvent(
+                type=VoiceEventType.APPROVAL_REQUEST,
+                data={
+                    "approval_id": approval_id,
+                    "tool_name": tool_name,
+                    "server_name": server_name,
+                    "arguments": arguments,
+                    "options": options,
+                    "timeout_seconds": timeout_seconds,
+                },
             )
         )
 

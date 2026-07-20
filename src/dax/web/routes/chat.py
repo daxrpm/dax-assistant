@@ -23,6 +23,31 @@ logger = logging.getLogger(__name__)
 # A client legitimately holds a handful of conversations open at once. The cap
 # keeps a misbehaving or hostile client from growing the interest set forever.
 _MAX_SESSIONS_PER_CLIENT = 32
+_SESSION_CONTROL_TYPES = frozenset({"session_subscribe", "session_unsubscribe"})
+
+
+def _parse_session_control(data: dict[str, Any]) -> tuple[str, list[str], bool]:
+    """Validate a session ownership control frame without coercion."""
+    frame_type = data.get("type")
+    if frame_type not in _SESSION_CONTROL_TYPES:
+        raise ValueError("unsupported control type")
+    if set(data) - {"type", "session_ids", "ack"}:
+        raise ValueError("unexpected control field")
+    session_ids = data.get("session_ids")
+    if (
+        not isinstance(session_ids, list)
+        or not 1 <= len(session_ids) <= _MAX_SESSIONS_PER_CLIENT
+        or any(
+            not isinstance(item, str) or not item or item != item.strip()
+            for item in session_ids
+        )
+        or len(set(session_ids)) != len(session_ids)
+    ):
+        raise ValueError("session_ids must contain 1-32 unique non-empty strings")
+    ack = data.get("ack", False)
+    if not isinstance(ack, bool):
+        raise ValueError("ack must be a boolean")
+    return frame_type, session_ids, ack
 
 
 class WebSocketManager:
@@ -33,16 +58,14 @@ class WebSocketManager:
     frames: ``session_id`` scopes a conversation, and a client only receives
     frames for sessions it has spoken on.
 
-    Interest is registered implicitly when a client publishes a message with a
-    ``session_id``, so existing clients gain isolation without a protocol
-    change. Frames with no session (legacy clients that never send one) still
-    broadcast, which preserves the old behaviour exactly.
+    Interest is registered explicitly by subscription frames and implicitly
+    when a client publishes a message with a ``session_id``. Frames with no
+    session still broadcast; session-scoped frames never do.
     """
 
     def __init__(self) -> None:
         self._connections: list[WebSocket] = []
-        # Which sessions each connection has spoken on. A connection with an
-        # empty set has not claimed any session yet.
+        # Sessions each connection explicitly subscribed to or published on.
         self._interests: dict[int, set[str]] = {}
         # Which enrolled device (if any) each connection authenticated as, so
         # the desktop can show whether the phone is actually attached rather
@@ -73,7 +96,7 @@ class WebSocketManager:
         """Devices with a live chat socket right now."""
         return set(self._devices.values())
 
-    def register_interest(self, websocket: WebSocket, session_id: str) -> None:
+    def register_interest(self, websocket: WebSocket, session_id: str) -> bool:
         """Record that *websocket* owns ``session_id``.
 
         Called when a client publishes on a session. Bounded so a client that
@@ -81,13 +104,34 @@ class WebSocketManager:
         """
         interests = self._interests.get(id(websocket))
         if interests is None:
-            return
-        if len(interests) >= _MAX_SESSIONS_PER_CLIENT:
-            interests.pop()
+            return False
+        if session_id not in interests and len(interests) >= _MAX_SESSIONS_PER_CLIENT:
+            logger.warning(
+                "WebSocket client reached the %d-session limit",
+                _MAX_SESSIONS_PER_CLIENT,
+            )
+            return False
         interests.add(session_id)
+        return True
+
+    def subscribe(self, websocket: WebSocket, session_ids: list[str]) -> bool:
+        """Atomically add session ownership, respecting the per-client cap."""
+        interests = self._interests.get(id(websocket))
+        if interests is None:
+            return False
+        if len(interests | set(session_ids)) > _MAX_SESSIONS_PER_CLIENT:
+            return False
+        interests.update(session_ids)
+        return True
+
+    def unsubscribe(self, websocket: WebSocket, session_ids: list[str]) -> None:
+        """Release session ownership for a connected client."""
+        interests = self._interests.get(id(websocket))
+        if interests is not None:
+            interests.difference_update(session_ids)
 
     def owns_session(self, websocket: WebSocket, session_id: str) -> bool:
-        """True when *websocket* has published on ``session_id``.
+        """True when *websocket* has subscribed to or published on ``session_id``.
 
         Gates approval resolution: a client may only answer confirmations for
         conversations it started.
@@ -110,19 +154,22 @@ class WebSocketManager:
         await self._send_many(self._connections, data)
 
     async def dispatch(self, data: dict[str, Any]) -> None:
-        """Route *data* by its ``session_id``, falling back to a broadcast.
+        """Route *data* by its ``session_id``.
 
         Session-scoped frames reach only the clients that own the session, so
         the phone never renders the desktop's conversation and vice versa. A
-        frame without a session, or for a session nobody claims, broadcasts —
-        that keeps pre-session clients and server-initiated frames working.
+        Frames without a session broadcast. A session-scoped frame with no
+        subscriber is discarded instead of leaking to unrelated clients.
         """
         session_id = data.get("session_id")
-        if isinstance(session_id, str) and session_id:
-            targets = self._subscribers(session_id)
-            if targets:
-                await self._send_many(targets, data)
-                return
+        if "session_id" in data:
+            if isinstance(session_id, str) and session_id:
+                targets = self._subscribers(session_id)
+                if targets:
+                    await self._send_many(targets, data)
+                    return
+            logger.warning("Dropping frame for invalid or unowned session %r", session_id)
+            return
         await self._send_many(self._connections, data)
 
     async def deliver_approval(self, data: dict[str, Any]) -> None:
@@ -135,11 +182,14 @@ class WebSocketManager:
         :class:`ApprovalManager` fails safe to deny.
         """
         session_id = data.get("session_id")
-        targets = (
-            self._subscribers(session_id)
-            if isinstance(session_id, str) and session_id
-            else self._connections
-        )
+        if "session_id" in data:
+            targets = (
+                self._subscribers(session_id)
+                if isinstance(session_id, str) and session_id
+                else []
+            )
+        else:
+            targets = self._connections
         if not targets:
             logger.warning(
                 "No client owns session %r — confirmation for '%s' will be denied",
@@ -217,6 +267,40 @@ async def websocket_chat(websocket: WebSocket) -> None:
     try:
         while True:
             data = await websocket.receive_json()
+            if not isinstance(data, dict):
+                logger.warning("Ignoring non-object WebSocket chat frame")
+                continue
+
+            if data.get("type") in _SESSION_CONTROL_TYPES:
+                try:
+                    control_type, session_ids, ack = _parse_session_control(data)
+                    if control_type == "session_subscribe":
+                        accepted = ws_manager.subscribe(websocket, session_ids)
+                    else:
+                        ws_manager.unsubscribe(websocket, session_ids)
+                        accepted = True
+                except ValueError as exc:
+                    logger.warning("Rejected invalid session control frame: %s", exc)
+                    if data.get("ack") is True:
+                        await ws_manager.send_to(
+                            websocket,
+                            {
+                                "type": f"{data.get('type')}_ack",
+                                "ok": False,
+                                "error": str(exc),
+                            },
+                        )
+                    continue
+                if ack:
+                    response: dict[str, Any] = {
+                        "type": f"{control_type}_ack",
+                        "ok": accepted,
+                        "session_ids": session_ids,
+                    }
+                    if not accepted:
+                        response["error"] = "session limit exceeded"
+                    await ws_manager.send_to(websocket, response)
+                continue
 
             # Tool-confirmation responses from the UI resolve a pending gate.
             if data.get("type") == "tool_confirmation":
@@ -256,6 +340,13 @@ async def websocket_chat(websocket: WebSocket) -> None:
 
             metadata: dict[str, object] = {}
             session_id = data.get("session_id", "")
+            if "session_id" in data and (
+                not isinstance(session_id, str)
+                or not session_id
+                or session_id != session_id.strip()
+            ):
+                logger.warning("Ignoring chat message with invalid session_id")
+                continue
             if isinstance(session_id, str) and session_id:
                 metadata["session_id"] = session_id
                 # Claim the session so replies, agent events, and confirmations

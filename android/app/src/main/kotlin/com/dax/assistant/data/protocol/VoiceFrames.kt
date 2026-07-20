@@ -23,6 +23,16 @@ sealed interface VoiceFrame {
     data object Released : VoiceFrame
     data class Transcript(val text: String, val language: String?, val final: Boolean) : VoiceFrame
     data class Speech(val text: String, val language: String?) : VoiceFrame
+    data class TurnComplete(val voiceTurn: String) : VoiceFrame
+    data class ApprovalRequest(
+        val approvalId: String,
+        val toolName: String,
+        val serverName: String,
+        val arguments: Map<String, String>,
+        val options: List<String>,
+        val timeoutSeconds: Int,
+    ) : VoiceFrame
+    data class Interrupted(val state: String, val agentCancelled: Boolean) : VoiceFrame
     data class Error(val code: String?, val message: String) : VoiceFrame
     data class Level(val value: Float, val source: String) : VoiceFrame
     data class Speaker(val verified: Boolean) : VoiceFrame
@@ -41,6 +51,11 @@ object VoiceFrames {
     fun start(): String = encode("remote_audio.start")
     fun stop(): String = encode("remote_audio.stop")
     fun release(): String = encode("remote_audio.release")
+    fun interrupt(): String = encode("remote_audio.interrupt")
+    fun approval(approvalId: String, decision: String): String = encode("voice.approval") {
+        put("approval_id", approvalId)
+        put("decision", decision)
+    }
 
     fun parse(text: String): VoiceFrame {
         val root = DaxJson.parseToJsonElement(text).jsonObject
@@ -70,6 +85,23 @@ object VoiceFrames {
             "speech" -> VoiceFrame.Speech(
                 text = data.requiredString("text"),
                 language = data.string("language"),
+            )
+            "turn_complete" -> VoiceFrame.TurnComplete(data.requiredString("voice_turn"))
+            "approval_request" -> VoiceFrame.ApprovalRequest(
+                approvalId = data.requiredString("approval_id"),
+                toolName = data.requiredString("tool_name"),
+                serverName = data.requiredString("server_name"),
+                arguments = data["arguments"]?.jsonObject?.mapValues { (_, value) ->
+                    (value as? JsonPrimitive)?.contentOrNull ?: value.toString()
+                } ?: throw IllegalArgumentException("Approval has no arguments"),
+                options = data["options"]?.jsonArray?.map { it.jsonPrimitive.content }
+                    ?: throw IllegalArgumentException("Approval has no options"),
+                timeoutSeconds = data.requiredInt("timeout_seconds"),
+            )
+            "remote_audio.interrupted" -> VoiceFrame.Interrupted(
+                state = data.requiredString("state"),
+                agentCancelled = data.boolean("agent_cancelled")
+                    ?: throw IllegalArgumentException("Interrupt has no agent cancellation flag"),
             )
             "remote_audio.error" -> VoiceFrame.Error(data.string("code"), data.requiredString("message"))
             "error" -> VoiceFrame.Error(data.string("code"), data.requiredString("message"))

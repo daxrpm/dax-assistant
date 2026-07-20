@@ -91,7 +91,8 @@ sealed interface AssistantState {
 
     /** Whether a new turn may begin. */
     val canStartTurn: Boolean
-        get() = this is Idle || this is Failed || this is Speaking
+        get() = this is Idle || this is Failed || this is Speaking || this is Processing ||
+            this is AwaitingApproval
 
     /**
      * Whether the user can cancel. True for every state that holds a
@@ -128,7 +129,10 @@ data class ApprovalRequest(
     val options: List<String>,
     val timeoutSeconds: Int,
     val requestedAtEpochMillis: Long,
+    val transport: ApprovalTransport = ApprovalTransport.CHAT,
 )
+
+enum class ApprovalTransport { CHAT, VOICE }
 
 /** A failure the user might need to act on. */
 sealed interface AssistantError {

@@ -10,6 +10,7 @@ import com.dax.assistant.preferences.AppPreferenceState
 import com.dax.assistant.preferences.AppPreferences
 import com.dax.assistant.preferences.RecognitionLanguage
 import com.dax.assistant.preferences.RecognitionMode
+import com.dax.assistant.preferences.SpeechOutputMode
 import com.dax.assistant.preferences.ThemePreference
 import dagger.hilt.android.lifecycle.HiltViewModel
 import javax.inject.Inject
@@ -68,7 +69,11 @@ class SettingsViewModel @Inject constructor(
 
     fun setRecognitionLanguage(value: RecognitionLanguage) = preferences.setRecognitionLanguage(value)
 
+    fun setSpeechOutputMode(value: SpeechOutputMode) = preferences.setSpeechOutputMode(value)
+
     fun setTheme(value: ThemePreference) = preferences.setTheme(value)
+
+    fun setFollowUpEnabled(value: Boolean) = preferences.setFollowUpEnabled(value)
 
     fun save() {
         if (_state.value.saving) return

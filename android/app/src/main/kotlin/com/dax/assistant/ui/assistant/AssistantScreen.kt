@@ -106,12 +106,16 @@ fun AssistantScreen(
                 modifier = Modifier
                     .clip(CircleShape)
                     .clickable(
-                        enabled = state.canStartTurn || state.cancellable,
+                        enabled = state.canStartTurn,
                         role = Role.Button,
-                        onClickLabel = if (state.cancellable) "Cancel" else "Start listening",
+                        onClickLabel = if (state is AssistantState.Idle) {
+                            "Start listening"
+                        } else {
+                            "Interrupt and start listening"
+                        },
                     ) {
                         haptics.performHapticFeedback(HapticFeedbackType.LongPress)
-                        if (state.cancellable) onCancel() else onTrigger()
+                        onTrigger()
                     }
                     .semantics {
                         contentDescription = describeForAccessibility(state)

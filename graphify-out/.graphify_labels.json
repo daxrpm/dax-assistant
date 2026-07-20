@@ -275,5 +275,22 @@
   "273": "SettingsSection",
   "274": "AppPreferencesTest",
   "275": "._process_loop",
-  "276": "test_legacy_oauth_files_migrate_encrypted"
+  "276": "test_legacy_oauth_files_migrate_encrypted",
+  "277": "ThemePreference",
+  "278": ".assertContrast",
+  "279": "._load_voice",
+  "280": "._format_assistant_tool_calls",
+  "281": "VoiceEnrollment.tsx",
+  "282": "oauth_callback",
+  "283": "Any",
+  "284": "ApprovalSheet",
+  "285": "VoiceFramesTest",
+  "286": "RecognitionMode",
+  "287": "SpeechOutputMode",
+  "288": ".get_relevant_tools",
+  "289": ".request",
+  "290": "DaxApplication",
+  "291": "test_legacy_oauth_files_migrate_encrypted",
+  "292": "RemoteVoiceClientTest",
+  "293": ".`level burst cannot close socket or displace turn completion`"
 }

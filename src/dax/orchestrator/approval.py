@@ -16,9 +16,9 @@ from typing import TYPE_CHECKING, Any
 if TYPE_CHECKING:
     from collections.abc import Awaitable, Callable
 
-    # Spoken-confirmation handler: asks by voice and returns the decision string
-    # ("approve"/"deny", or a chosen option like "once"/"save").
-    VoiceApprover = Callable[..., Awaitable[str]]
+    # A local handler returns its spoken decision. A remote handler emits the
+    # request and returns None; resolve() then settles the same managed waiter.
+    VoiceApprover = Callable[..., Awaitable[str | None]]
 
 logger = logging.getLogger(__name__)
 
@@ -30,6 +30,7 @@ class ApprovalManager:
         self._timeout = timeout_seconds
         self._pending: dict[str, asyncio.Future[str]] = {}
         self._allowed: dict[str, frozenset[str]] = {}
+        self._channels: dict[str, str | None] = {}
         # approval_id -> owning session, so a resolution can be checked against
         # the conversation that raised it.
         self._owners: dict[str, str] = {}
@@ -69,19 +70,8 @@ class ApprovalManager:
         Voice-channel requests are routed to the spoken approver when one is
         registered; everything else goes to the web UI.
         """
-        if channel == "voice" and self._voice_approver is not None:
-            try:
-                return await self._voice_approver(
-                    tool_name=tool_name,
-                    server_name=server_name,
-                    arguments=arguments,
-                    options=options,
-                )
-            except Exception:
-                logger.exception("Voice confirmation failed for '%s' — denying", tool_name)
-                return "deny"
-
-        if self._notifier is None:
+        voice_approver = self._voice_approver if channel == "voice" else None
+        if voice_approver is None and self._notifier is None:
             # No UI to ask — fail safe (deny) rather than run unconfirmed.
             logger.warning(
                 "Tool '%s' needs confirmation but no UI is connected — denying",
@@ -94,6 +84,7 @@ class ApprovalManager:
         future: asyncio.Future[str] = loop.create_future()
         self._pending[approval_id] = future
         self._allowed[approval_id] = frozenset({"deny", *(options or ["approve"])})
+        self._channels[approval_id] = channel
 
         payload = {
             "type": "tool_confirmation_request",
@@ -107,9 +98,26 @@ class ApprovalManager:
         if session_id:
             payload["session_id"] = session_id
             self._owners[approval_id] = session_id
+
+        async def dispatch_and_wait() -> str:
+            if voice_approver is not None:
+                decision = await voice_approver(
+                    approval_id=approval_id,
+                    tool_name=tool_name,
+                    server_name=server_name,
+                    arguments=arguments,
+                    options=options or ["approve"],
+                    timeout_seconds=self._timeout,
+                )
+                if decision is not None and not self.resolve(approval_id, decision):
+                    return "deny"
+            else:
+                assert self._notifier is not None
+                await self._notifier(payload)
+            return await future
+
         try:
-            await self._notifier(payload)
-            return await asyncio.wait_for(future, timeout=self._timeout)
+            return await asyncio.wait_for(dispatch_and_wait(), timeout=self._timeout)
         except TimeoutError:
             logger.info("Confirmation for '%s' timed out — denying", tool_name)
             return "deny"
@@ -119,6 +127,7 @@ class ApprovalManager:
         finally:
             self._pending.pop(approval_id, None)
             self._allowed.pop(approval_id, None)
+            self._channels.pop(approval_id, None)
             self._owners.pop(approval_id, None)
 
     def session_for(self, approval_id: str) -> str | None:
@@ -128,6 +137,10 @@ class ApprovalManager:
         that owns the conversation.
         """
         return self._owners.get(approval_id)
+
+    def channel_for(self, approval_id: str) -> str | None:
+        """Return the originating channel for a currently pending request."""
+        return self._channels.get(approval_id)
 
     def resolve(self, approval_id: str, decision: str) -> bool:
         """Resolve a pending request. Returns True if it matched a pending one.

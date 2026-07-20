@@ -182,7 +182,7 @@ export function VoiceHud() {
   }, [runtime.pttError, voice.state]);
 
   return (
-    <main className={s.hud}>
+    <main className={s.hud} data-state={orbState(voice.state)}>
       <VoiceOrb
         ref={orbRef}
         state={orbState(voice.state)}
@@ -190,15 +190,15 @@ export function VoiceHud() {
         ariaLabel={t(labelKeys[voice.state])}
       />
       <div className={s.detail}>
-        <div className={s.status}>{t(labelKeys[voice.state])}</div>
-        <Waveform ref={waveformRef} state={voice.state} />
         <div className={runtime.pttError ? s.error : s.transcript} role="status">
           {runtime.pttError ||
             voice.error ||
             (voice.state === "speaking" ? voice.speech?.text : null) ||
             voice.transcript?.text ||
-            (voice.connected ? t("hud.ready") : t("common.connecting"))}
+             (voice.connected ? t("hud.ready") : t("common.connecting"))}
         </div>
+        <Waveform ref={waveformRef} state={voice.state} />
+        <div className={s.status}>{t(labelKeys[voice.state])}</div>
       </div>
       <button
         className={s.close}

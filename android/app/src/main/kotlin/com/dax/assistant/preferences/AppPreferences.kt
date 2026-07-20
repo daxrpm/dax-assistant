@@ -27,6 +27,16 @@ enum class RecognitionMode(val storedValue: String) {
     }
 }
 
+enum class SpeechOutputMode(val storedValue: String) {
+    SERVER("server"),
+    ANDROID("android"),
+    ;
+
+    companion object {
+        fun fromStored(value: String?) = entries.firstOrNull { it.storedValue == value } ?: SERVER
+    }
+}
+
 enum class RecognitionLanguage(val storedValue: String) {
     ENGLISH_US("en-US"),
     SPANISH_SPAIN("es-ES"),
@@ -59,7 +69,9 @@ data class AppPreferenceState(
     val appLanguage: AppLanguage = AppLanguage.ENGLISH,
     val recognitionMode: RecognitionMode = RecognitionMode.ANDROID,
     val recognitionLanguage: RecognitionLanguage = RecognitionLanguage.AUTO,
+    val speechOutputMode: SpeechOutputMode = SpeechOutputMode.SERVER,
     val theme: ThemePreference = ThemePreference.SYSTEM,
+    val followUpEnabled: Boolean = true,
 )
 
 class AppPreferences(context: Context) {
@@ -85,16 +97,28 @@ class AppPreferences(context: Context) {
         _state.value = _state.value.copy(recognitionLanguage = value)
     }
 
+    fun setSpeechOutputMode(value: SpeechOutputMode) {
+        store.edit().putString(KEY_SPEECH_OUTPUT_MODE, value.storedValue).apply()
+        _state.value = _state.value.copy(speechOutputMode = value)
+    }
+
     fun setTheme(value: ThemePreference) {
         store.edit().putString(KEY_THEME, value.storedValue).apply()
         _state.value = _state.value.copy(theme = value)
+    }
+
+    fun setFollowUpEnabled(value: Boolean) {
+        store.edit().putBoolean(KEY_FOLLOW_UP, value).apply()
+        _state.value = _state.value.copy(followUpEnabled = value)
     }
 
     private fun read() = AppPreferenceState(
         appLanguage = AppLanguage.fromStored(store.getString(KEY_LANGUAGE, null)),
         recognitionMode = RecognitionMode.fromStored(store.getString(KEY_RECOGNITION_MODE, null)),
         recognitionLanguage = RecognitionLanguage.fromStored(store.getString(KEY_RECOGNITION_LANGUAGE, null)),
+        speechOutputMode = SpeechOutputMode.fromStored(store.getString(KEY_SPEECH_OUTPUT_MODE, null)),
         theme = ThemePreference.fromStored(store.getString(KEY_THEME, null)),
+        followUpEnabled = store.getBoolean(KEY_FOLLOW_UP, true),
     )
 
     private fun applyLanguage(language: AppLanguage) {
@@ -106,6 +130,8 @@ class AppPreferences(context: Context) {
         const val KEY_LANGUAGE = "app_language"
         const val KEY_RECOGNITION_MODE = "recognition_mode"
         const val KEY_RECOGNITION_LANGUAGE = "recognition_language"
+        const val KEY_SPEECH_OUTPUT_MODE = "speech_output_mode"
         const val KEY_THEME = "theme"
+        const val KEY_FOLLOW_UP = "voice_follow_up"
     }
 }

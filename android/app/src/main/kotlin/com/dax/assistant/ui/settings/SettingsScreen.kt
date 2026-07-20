@@ -3,6 +3,7 @@ package com.dax.assistant.ui.settings
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.selection.selectable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -15,11 +16,14 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.ChevronRight
+import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.Troubleshoot
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
@@ -35,9 +39,13 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.rotate
+import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.semantics.stateDescription
 import androidx.compose.ui.text.input.KeyboardCapitalization
+import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.ui.unit.dp
 import com.dax.assistant.R
@@ -45,8 +53,10 @@ import com.dax.assistant.mobileapi.MobileConfig
 import com.dax.assistant.preferences.AppLanguage
 import com.dax.assistant.preferences.RecognitionLanguage
 import com.dax.assistant.preferences.RecognitionMode
+import com.dax.assistant.preferences.SpeechOutputMode
 import com.dax.assistant.preferences.ThemePreference
 import com.dax.assistant.ui.design.Orbita
+import com.dax.assistant.ui.design.OrbitaTheme
 import com.dax.assistant.ui.design.OrbitaType
 
 private enum class SettingsSection { INTERFACE, INTELLIGENCE, SPEECH }
@@ -60,6 +70,8 @@ fun SettingsScreen(
     onAppLanguageChange: (AppLanguage) -> Unit,
     onRecognitionModeChange: (RecognitionMode) -> Unit,
     onRecognitionLanguageChange: (RecognitionLanguage) -> Unit,
+    onSpeechOutputModeChange: (SpeechOutputMode) -> Unit,
+    onFollowUpChange: (Boolean) -> Unit,
     onThemeChange: (ThemePreference) -> Unit,
     onOpenDiagnostics: () -> Unit,
     modifier: Modifier = Modifier,
@@ -68,12 +80,17 @@ fun SettingsScreen(
     var expanded by remember { mutableStateOf<SettingsSection?>(null) }
     var advanced by remember { mutableStateOf(false) }
 
+    Box(modifier.fillMaxSize().background(Orbita.colors.bgWindow)) {
     Column(
-        modifier.fillMaxSize().background(Orbita.colors.bgWindow)
+        Modifier.fillMaxSize().widthIn(max = 760.dp).align(Alignment.TopCenter)
             .verticalScroll(rememberScrollState())
             .padding(horizontal = Orbita.spacing.edge, vertical = Orbita.spacing.x6),
     ) {
-        Text(stringResource(R.string.settings_title), style = OrbitaType.largeTitle)
+        Text(
+            stringResource(R.string.settings_title),
+            style = OrbitaType.largeTitle,
+            color = Orbita.colors.fgPrimary,
+        )
         Spacer(Modifier.height(Orbita.spacing.x2))
         Text(
             stringResource(R.string.settings_intro),
@@ -218,6 +235,20 @@ fun SettingsScreen(
                     )
                 }
                 SettingBlock(
+                    title = stringResource(R.string.settings_speech_output),
+                    description = stringResource(R.string.settings_speech_output_help),
+                ) {
+                    ChoiceRow(
+                        options = listOf(
+                            SpeechOutputMode.SERVER to stringResource(R.string.speech_output_server),
+                            SpeechOutputMode.ANDROID to stringResource(R.string.speech_output_android),
+                        ),
+                        selected = state.preferences.speechOutputMode,
+                        recommended = SpeechOutputMode.SERVER,
+                        onSelect = onSpeechOutputModeChange,
+                    )
+                }
+                SettingBlock(
                     title = stringResource(R.string.settings_recognition_language),
                     description = stringResource(R.string.settings_recognition_language_help),
                 ) {
@@ -230,6 +261,20 @@ fun SettingsScreen(
                         selected = state.preferences.recognitionLanguage,
                         recommended = RecognitionLanguage.AUTO,
                         onSelect = onRecognitionLanguageChange,
+                    )
+                }
+                SettingBlock(
+                    title = stringResource(R.string.settings_follow_up),
+                    description = stringResource(R.string.settings_follow_up_help),
+                ) {
+                    ChoiceRow(
+                        options = listOf(
+                            true to stringResource(R.string.choice_on),
+                            false to stringResource(R.string.choice_off),
+                        ),
+                        selected = state.preferences.followUpEnabled,
+                        recommended = true,
+                        onSelect = onFollowUpChange,
                     )
                 }
                 SettingBlock(
@@ -299,6 +344,7 @@ fun SettingsScreen(
         }
         Spacer(Modifier.height(Orbita.spacing.x8))
     }
+    }
 }
 
 @Composable
@@ -309,17 +355,23 @@ private fun SettingsCard(
     onToggle: () -> Unit,
     content: @Composable () -> Unit,
 ) {
+    val expansionState = stringResource(
+        if (expanded) R.string.settings_expanded else R.string.settings_collapsed,
+    )
     Column(
-        Modifier.fillMaxWidth().clip(RoundedCornerShape(Orbita.radii.xxl))
+        Modifier.fillMaxWidth()
+            .shadow(Orbita.elevation.level1, RoundedCornerShape(Orbita.radii.xxl))
+            .clip(RoundedCornerShape(Orbita.radii.xxl))
             .background(Orbita.colors.bgPanel),
     ) {
         Row(
             Modifier.fillMaxWidth().clickable(role = Role.Button, onClick = onToggle)
+                .semantics { stateDescription = expansionState }
                 .padding(Orbita.spacing.x5),
             verticalAlignment = Alignment.CenterVertically,
         ) {
             Column(Modifier.weight(1f)) {
-                Text(title, style = OrbitaType.title2)
+                Text(title, style = OrbitaType.title2, color = Orbita.colors.fgPrimary)
                 Spacer(Modifier.height(Orbita.spacing.x1))
                 Text(summary, style = OrbitaType.callout, color = Orbita.colors.fgTertiary)
             }
@@ -346,7 +398,7 @@ private fun SettingsCard(
 @Composable
 private fun SettingBlock(title: String, description: String, content: @Composable () -> Unit) {
     Column(verticalArrangement = Arrangement.spacedBy(Orbita.spacing.x3)) {
-        Text(title, style = OrbitaType.title3)
+        Text(title, style = OrbitaType.title3, color = Orbita.colors.fgPrimary)
         Text(description, style = OrbitaType.footnote, color = Orbita.colors.fgTertiary)
         content()
     }
@@ -379,14 +431,35 @@ private fun MultiChoiceRow(options: List<String>, selected: List<String>, onSele
 private fun ChoiceChip(label: String, selected: Boolean, recommended: Boolean, onClick: () -> Unit) {
     Column(
         Modifier.clip(RoundedCornerShape(Orbita.radii.pill))
-            .background(if (selected) Orbita.colors.bgElevated else Orbita.colors.bgInset)
-            .clickable(role = Role.RadioButton, onClick = onClick)
+            .background(if (selected) Orbita.colors.bgSelected else Orbita.colors.bgInset)
+            .selectable(selected = selected, role = Role.RadioButton, onClick = onClick)
             .padding(horizontal = Orbita.spacing.x4, vertical = Orbita.spacing.x3),
         horizontalAlignment = Alignment.CenterHorizontally,
     ) {
-        Text(label, style = OrbitaType.callout, color = if (selected) Orbita.colors.fgPrimary else Orbita.colors.fgSecondary)
+        Row(
+            horizontalArrangement = Arrangement.spacedBy(Orbita.spacing.x1),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            if (selected) {
+                Icon(
+                    Icons.Filled.Check,
+                    contentDescription = null,
+                    tint = Orbita.colors.fgPrimary,
+                    modifier = Modifier.size(16.dp),
+                )
+            }
+            Text(
+                label,
+                style = OrbitaType.callout,
+                color = if (selected) Orbita.colors.fgPrimary else Orbita.colors.fgSecondary,
+            )
+        }
         if (recommended) {
-            Text(stringResource(R.string.settings_recommended).uppercase(), style = OrbitaType.caption, color = Orbita.colors.accent)
+            Text(
+                stringResource(R.string.settings_recommended).uppercase(),
+                style = OrbitaType.caption,
+                color = if (selected) Orbita.colors.fgSecondary else Orbita.colors.fgTertiary,
+            )
         }
     }
 }
@@ -399,12 +472,15 @@ private fun ModelField(label: String, value: String, onChange: (String) -> Unit)
             value = value,
             onValueChange = onChange,
             singleLine = true,
-            textStyle = OrbitaType.mono,
+            textStyle = OrbitaType.mono.copy(color = Orbita.colors.fgPrimary),
             keyboardOptions = KeyboardOptions(capitalization = KeyboardCapitalization.None, autoCorrectEnabled = false),
             shape = RoundedCornerShape(Orbita.radii.lg),
             colors = TextFieldDefaults.colors(
                 focusedContainerColor = Orbita.colors.bgInset,
                 unfocusedContainerColor = Orbita.colors.bgInset,
+                focusedTextColor = Orbita.colors.fgPrimary,
+                unfocusedTextColor = Orbita.colors.fgPrimary,
+                cursorColor = Orbita.colors.accent,
                 focusedIndicatorColor = androidx.compose.ui.graphics.Color.Transparent,
                 unfocusedIndicatorColor = androidx.compose.ui.graphics.Color.Transparent,
             ),
@@ -463,7 +539,9 @@ private fun ProviderStatus(provider: String, configured: Map<String, Boolean>) {
 @Composable
 private fun DiagnosticsLink(onClick: () -> Unit) {
     Row(
-        Modifier.fillMaxWidth().clip(RoundedCornerShape(Orbita.radii.xxl))
+        Modifier.fillMaxWidth()
+            .shadow(Orbita.elevation.level1, RoundedCornerShape(Orbita.radii.xxl))
+            .clip(RoundedCornerShape(Orbita.radii.xxl))
             .background(Orbita.colors.bgPanel).clickable(role = Role.Button, onClick = onClick)
             .padding(Orbita.spacing.x5),
         verticalAlignment = Alignment.CenterVertically,
@@ -471,7 +549,11 @@ private fun DiagnosticsLink(onClick: () -> Unit) {
         Icon(Icons.Filled.Troubleshoot, contentDescription = null, tint = Orbita.colors.fgTertiary)
         Spacer(Modifier.padding(Orbita.spacing.x2))
         Column(Modifier.weight(1f)) {
-            Text(stringResource(R.string.settings_diagnostics), style = OrbitaType.title3)
+            Text(
+                stringResource(R.string.settings_diagnostics),
+                style = OrbitaType.title3,
+                color = Orbita.colors.fgPrimary,
+            )
             Text(stringResource(R.string.settings_diagnostics_help), style = OrbitaType.footnote, color = Orbita.colors.fgTertiary)
         }
         Icon(Icons.Filled.ChevronRight, contentDescription = null, tint = Orbita.colors.fgTertiary)
@@ -517,3 +599,41 @@ private fun choices(defaults: List<String>, current: String): List<String> =
 
 private fun choices(defaults: List<String>, current: List<String>): List<String> =
     (defaults + current).filter(String::isNotBlank).distinct()
+
+@Preview(name = "Settings dark", showBackground = true, widthDp = 412, heightDp = 860)
+@Composable
+private fun SettingsDarkPreview() {
+    OrbitaTheme(darkTheme = true) { SettingsPreviewContent() }
+}
+
+@Preview(name = "Settings light", showBackground = true, widthDp = 412, heightDp = 860)
+@Composable
+private fun SettingsLightPreview() {
+    OrbitaTheme(darkTheme = false) { SettingsPreviewContent() }
+}
+
+@Composable
+private fun SettingsPreviewContent() {
+    SettingsScreen(
+        state = SettingsUiState(
+            config = MobileConfig(
+                provider = "ollama",
+                models = mapOf("ollama" to "llama3.2"),
+                fallbackOrder = listOf("anthropic"),
+                sttBackend = "local",
+                ttsEngine = "kokoro",
+            ),
+            loaded = true,
+        ),
+        onLoad = {},
+        onUpdate = {},
+        onSave = {},
+        onAppLanguageChange = {},
+        onRecognitionModeChange = {},
+        onRecognitionLanguageChange = {},
+        onSpeechOutputModeChange = {},
+        onFollowUpChange = {},
+        onThemeChange = {},
+        onOpenDiagnostics = {},
+    )
+}

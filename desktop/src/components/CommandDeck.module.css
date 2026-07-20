@@ -322,7 +322,7 @@
   flex-direction: column;
   align-items: center;
   justify-content: center;
-  gap: var(--space-4);
+  gap: var(--space-3);
   min-width: 0;
   padding: var(--space-8);
   background:
@@ -357,11 +357,23 @@
 .stageState {
   flex: none;
   color: var(--fg-tertiary);
-  font-family: var(--font-mono);
-  font-size: var(--text-footnote);
-  line-height: var(--text-footnote-lh);
+  font-size: var(--text-caption);
+  line-height: var(--text-caption-lh);
+  font-weight: 500;
   letter-spacing: var(--tracking-label);
   text-transform: uppercase;
+}
+
+.stageState[data-state="listening"] {
+  color: var(--accent-hover);
+}
+
+.stageState[data-state="processing"] {
+  color: var(--purple);
+}
+
+.stageState[data-state="speaking"] {
+  color: var(--success);
 }
 
 .transcript {
@@ -372,7 +384,8 @@
   gap: var(--space-2);
   width: 100%;
   max-width: 520px;
-  min-height: 76px;
+  min-height: 82px;
+  justify-content: flex-end;
   text-align: center;
 }
 
@@ -391,6 +404,16 @@
   font-size: var(--text-title3);
   line-height: var(--text-title3-lh);
   letter-spacing: var(--tracking-tight);
+  text-wrap: balance;
+}
+
+.transcript[data-kind="transcript"] .transcriptText {
+  color: var(--fg-secondary);
+  font-weight: 400;
+}
+
+.transcript[data-kind="response"] .transcriptText {
+  font-weight: 500;
 }
 
 .commandBar {

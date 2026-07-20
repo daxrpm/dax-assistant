@@ -32,6 +32,11 @@ class Synthesizer(Protocol):
     @property
     def sample_rate(self) -> int: ...
 
+    @property
+    def engine_name(self) -> str: ...
+
+    def voice_name(self, language: str) -> str | None: ...
+
     def start(self) -> None: ...
 
     def stop(self) -> None: ...
@@ -59,6 +64,13 @@ class OpenAITextToSpeech:
     @property
     def sample_rate(self) -> int:
         return 24_000
+
+    @property
+    def engine_name(self) -> str:
+        return "openai"
+
+    def voice_name(self, language: str) -> str | None:
+        return self._voice
 
     def start(self) -> None:
         if not os.environ.get("OPENAI_API_KEY"):
@@ -148,6 +160,18 @@ class TextToSpeech:
     def sample_rate(self) -> int:
         """Native sample rate of the most recently used voice."""
         return self._sample_rate
+
+    @property
+    def engine_name(self) -> str:
+        return "piper"
+
+    def voice_name(self, language: str) -> str | None:
+        if language in self._voices:
+            return self._voice_es_path if language == "es" else self._voice_en_path
+        if self._voices:
+            fallback_lang = next(iter(self._voices))
+            return self._voice_es_path if fallback_lang == "es" else self._voice_en_path
+        return None
 
     @property
     def available_languages(self) -> list[str]:
@@ -356,6 +380,13 @@ class _FallbackSynthesizer:
     @property
     def sample_rate(self) -> int:
         return self._active.sample_rate
+
+    @property
+    def engine_name(self) -> str:
+        return self._active.engine_name
+
+    def voice_name(self, language: str) -> str | None:
+        return self._active.voice_name(language)
 
     def start(self) -> None:
         try:

@@ -13,7 +13,8 @@ import pytest
 from fastapi.testclient import TestClient
 
 from dax.core.config import DaxConfig
-from dax.core.voice_events import VoiceEventHub
+from dax.core.voice_events import VoiceEvent, VoiceEventHub, VoiceEventType
+from dax.orchestrator.approval import ApprovalManager
 from dax.orchestrator.bus import MessageBus
 from dax.web.auth import hash_password
 from dax.web.server import create_app
@@ -27,12 +28,36 @@ class FakePipeline:
         self.source = None
         self.cancelled = 0
         self.output_owner: str | None = None
+        self.input_owner: str | None = None
+        self.owner_generation = 0
+        self.state = "idle"
+        self.events: VoiceEventHub | None = None
 
     def select_audio_source(self, source) -> None:
         self.source = source
 
     def set_output_owner(self, owner: str | None) -> None:
         self.output_owner = owner
+
+    def acquire_remote_owner(self, owner: str) -> int:
+        if self.state != "idle":
+            raise RuntimeError("Voice pipeline is busy")
+        self.owner_generation += 1
+        self.input_owner = owner
+        self.output_owner = owner
+        if self.events is not None:
+            self.owner_generation = self.events.set_event_owner(owner)
+        return self.owner_generation
+
+    def release_remote_owner(self, owner: str) -> None:
+        if self.input_owner == owner:
+            if self.state != "idle":
+                raise RuntimeError("Voice pipeline is busy")
+            self.source = None
+            self.input_owner = None
+            self.output_owner = None
+            if self.events is not None:
+                self.owner_generation = self.events.set_event_owner(None)
 
     def push_to_talk_press(self) -> str:
         return "listening"
@@ -42,6 +67,13 @@ class FakePipeline:
 
     def push_to_talk_cancel(self) -> str:
         self.cancelled += 1
+        return "idle"
+
+    def interrupt_remote_turn(self) -> str:
+        if self.output_owner is None:
+            raise RuntimeError("Remote output is not owned")
+        self.cancelled += 1
+        self.state = "idle"
         return "idle"
 
 
@@ -58,8 +90,10 @@ def _make_app(*, auth_enabled: bool = True, pipeline=None):
     app = create_app(config=config, bus=bus)
     hub = VoiceEventHub()
     app.state.voice_events = hub
+    app.state.approval = ApprovalManager(timeout_seconds=5)
     if pipeline is not None:
         app.state.voice_pipeline = pipeline
+        pipeline.events = hub
     return app, hub
 
 
@@ -145,6 +179,24 @@ def test_current_speech_sentence_is_streamed_to_a_subscriber():
     }
 
 
+def test_client_text_turn_completion_is_streamed_after_sentences():
+    app, hub = _make_app()
+    client = TestClient(app)
+
+    with client.websocket_connect(f"/ws/voice?token={_token(app)}") as ws:
+        ws.receive_json()
+        hub.emit_speech("Primera.", "es")
+        hub.emit_speech("Segunda.", "es")
+        hub.emit_turn_completed("7")
+
+        assert ws.receive_json()["type"] == "speech"
+        assert ws.receive_json()["type"] == "speech"
+        completed = ws.receive_json()
+
+    assert completed["type"] == "turn_complete"
+    assert completed["data"] == {"voice_turn": "7"}
+
+
 def test_unsubscribe_runs_on_disconnect():
     """A leaked subscriber would keep the pipeline metering forever."""
     app, hub = _make_app()
@@ -179,7 +231,9 @@ def test_remote_audio_happy_path_switches_source_and_processes_on_stop():
         ws.send_json({"type": "remote_audio.stop"})
         stopped = ws.receive_json()
         assert stopped == {"type": "remote_audio.stopped", "data": {"state": "processing"}}
-        assert pipeline.source is None
+        # The remote source remains selected until the pipeline reaches IDLE;
+        # restoring the host microphone while processing would break isolation.
+        assert pipeline.source is not None
 
 
 def test_only_one_authenticated_connection_can_own_remote_audio():
@@ -198,6 +252,58 @@ def test_only_one_authenticated_connection_can_own_remote_audio():
             second.send_json(acquire)
             error = second.receive_json()
             assert error["data"]["code"] == "remote_audio_busy"
+
+
+def test_remote_lease_events_are_delivered_only_to_owner_and_stale_events_are_dropped():
+    pipeline = FakePipeline()
+    app, hub = _make_app(pipeline=pipeline)
+    client = TestClient(app)
+
+    with (
+        client.websocket_connect(f"/ws/voice?token={_token(app)}") as owner,
+        client.websocket_connect(f"/ws/voice?token={_token(app)}") as observer,
+    ):
+        owner.receive_json()
+        observer.receive_json()
+        owner.send_json(_acquire("client_text"))
+        assert owner.receive_json()["type"] == "remote_audio.acquired"
+
+        stale = VoiceEvent(
+            VoiceEventType.TRANSCRIPT,
+            {"text": "stale local", "language": "en", "final": True},
+            owner=None,
+            generation=0,
+        )
+        assert hub._loop is not None
+        hub._loop.call_soon_threadsafe(hub._deliver, stale)
+
+        hub.emit_transcript("owner only", "en")
+        assert owner.receive_json()["data"]["text"] == "owner only"
+
+        owner.send_json({"type": "remote_audio.release"})
+        assert owner.receive_json()["type"] == "remote_audio.released"
+        hub.emit_transcript("local again", "en")
+        assert observer.receive_json()["data"]["text"] == "local again"
+
+
+def test_remote_lease_owns_input_output_and_cleanup_restores_host_only_when_idle():
+    pipeline = FakePipeline()
+    app, _hub = _make_app(pipeline=pipeline)
+    client = TestClient(app)
+
+    with client.websocket_connect(f"/ws/voice?token={_token(app)}") as ws:
+        ws.receive_json()
+        ws.send_json(_acquire("client_text"))
+        ws.receive_json()
+        assert pipeline.input_owner is not None
+        assert pipeline.output_owner == pipeline.input_owner
+
+        ws.send_json({"type": "remote_audio.release"})
+        assert ws.receive_json()["type"] == "remote_audio.released"
+
+    assert pipeline.input_owner is None
+    assert pipeline.output_owner is None
+    assert pipeline.source is None
 
 
 @pytest.mark.parametrize(
@@ -292,8 +398,7 @@ def _acquire(output_mode: str | None = None) -> dict:
     return frame
 
 
-def test_output_defaults_to_the_server_host():
-    """Omitting `output` must preserve the pre-existing behaviour exactly."""
+def test_server_output_mode_still_suppresses_unattended_host_speakers():
     pipeline = FakePipeline()
     app, _hub = _make_app(pipeline=pipeline)
     client = TestClient(app)
@@ -303,7 +408,7 @@ def test_output_defaults_to_the_server_host():
         acquired = ws.receive_json()
 
         assert acquired["data"]["output"]["mode"] == "server"
-        assert pipeline.output_owner is None
+        assert pipeline.output_owner is not None
 
 
 def test_client_can_claim_text_output():
@@ -351,6 +456,21 @@ def test_disconnect_while_owning_output_restores_the_host():
     assert pipeline.output_owner is None
 
 
+def test_disconnect_invalidates_pending_remote_reply_before_restoring_host():
+    pipeline = FakePipeline()
+    app, _hub = _make_app(pipeline=pipeline)
+    client = TestClient(app)
+
+    with client.websocket_connect(f"/ws/voice?token={_token(app)}") as ws:
+        ws.receive_json()
+        ws.send_json(_acquire("client_text"))
+        ws.receive_json()
+        pipeline.state = "speaking"
+
+    assert pipeline.cancelled == 1
+    assert pipeline.output_owner is None
+
+
 def test_unsupported_output_mode_is_rejected_not_downgraded():
     pipeline = FakePipeline()
     app, _hub = _make_app(pipeline=pipeline)
@@ -379,3 +499,113 @@ def test_malformed_output_object_is_rejected():
         error = ws.receive_json()
 
         assert error["data"]["code"] == "malformed_control"
+
+
+def test_voice_approval_is_accepted_only_once_from_output_owner():
+    pipeline = FakePipeline()
+    app, _hub = _make_app(pipeline=pipeline)
+    approval = app.state.approval
+    seen: dict = {}
+
+    async def approver(**payload):
+        seen.update(payload)
+
+    approval.set_voice_approver(approver)
+
+    async def request():
+        return await approval.request(
+            tool_name="shell_run",
+            server_name="dax-system",
+            arguments={},
+            channel="voice",
+        )
+
+    client = TestClient(app)
+    with client.websocket_connect(f"/ws/voice?token={_token(app)}") as ws:
+        ws.receive_json()
+        ws.send_json(_acquire("client_text"))
+        ws.receive_json()
+        import asyncio
+
+        task = asyncio.run_coroutine_threadsafe(request(), app.state.voice_events._loop)
+        for _ in range(50):
+            if seen:
+                break
+            time.sleep(0.01)
+        ws.send_json({
+            "type": "voice.approval",
+            "approval_id": seen["approval_id"],
+            "decision": "approve",
+        })
+        assert task.result(timeout=1) == "approve"
+        ws.send_json({
+            "type": "voice.approval",
+            "approval_id": seen["approval_id"],
+            "decision": "approve",
+        })
+        assert ws.receive_json()["data"]["code"] == "invalid_approval"
+
+
+def test_voice_owner_cannot_resolve_chat_approval():
+    pipeline = FakePipeline()
+    app, _hub = _make_app(pipeline=pipeline)
+    approval = app.state.approval
+    seen: dict = {}
+
+    async def notifier(payload):
+        seen.update(payload)
+
+    approval.set_notifier(notifier)
+
+    async def request():
+        return await approval.request(
+            tool_name="shell_run",
+            server_name="dax-system",
+            arguments={},
+            channel="web",
+        )
+
+    client = TestClient(app)
+    with client.websocket_connect(f"/ws/voice?token={_token(app)}") as ws:
+        ws.receive_json()
+        ws.send_json(_acquire("client_text"))
+        ws.receive_json()
+        import asyncio
+
+        task = asyncio.run_coroutine_threadsafe(request(), app.state.voice_events._loop)
+        for _ in range(50):
+            if seen:
+                break
+            time.sleep(0.01)
+        ws.send_json({
+            "type": "voice.approval",
+            "approval_id": seen["approval_id"],
+            "decision": "approve",
+        })
+        assert ws.receive_json()["data"]["code"] == "invalid_approval"
+
+        async def deny_on_owner_loop():
+            return approval.resolve(seen["approval_id"], "deny")
+
+        denied = asyncio.run_coroutine_threadsafe(
+            deny_on_owner_loop(), app.state.voice_events._loop
+        )
+        assert denied.result(timeout=1)
+        assert task.result(timeout=1) == "deny"
+
+
+def test_remote_interrupt_reports_delivery_only_semantics():
+    pipeline = FakePipeline()
+    app, _hub = _make_app(pipeline=pipeline)
+    client = TestClient(app)
+    with client.websocket_connect(f"/ws/voice?token={_token(app)}") as ws:
+        ws.receive_json()
+        ws.send_json(_acquire("client_text"))
+        ws.receive_json()
+        ws.send_json({"type": "remote_audio.interrupt"})
+        frame = ws.receive_json()
+
+    assert frame == {
+        "type": "remote_audio.interrupted",
+        "data": {"state": "idle", "agent_cancelled": False},
+    }

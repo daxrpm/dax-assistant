@@ -4,6 +4,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   advanceSpring,
   createSignalBuffers,
+  getOrbVisualProfile,
   pushLevelFrame,
   VoiceOrb,
   type VoiceOrbHandle,
@@ -112,5 +113,17 @@ describe("VoiceOrb", () => {
     };
 
     expect(Math.abs(simulate(1 / 60) - simulate(1 / 120))).toBeLessThan(0.03);
+  });
+
+  it("gives listening, thinking, and speaking distinct visual signatures", () => {
+    const listening = getOrbVisualProfile("listening");
+    const thinking = getOrbVisualProfile("processing");
+    const speaking = getOrbVisualProfile("speaking");
+
+    expect(listening.tone).toBe("--accent");
+    expect(thinking.tone).toBe("--purple");
+    expect(speaking.tone).toBe("--success");
+    expect(thinking.phaseRate).toBeGreaterThan(speaking.phaseRate);
+    expect(speaking.pulse).toBeGreaterThan(listening.pulse);
   });
 });

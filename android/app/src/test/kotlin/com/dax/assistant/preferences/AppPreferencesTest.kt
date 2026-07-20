@@ -9,6 +9,7 @@ class AppPreferencesTest {
         assertEquals(AppLanguage.ENGLISH, AppLanguage.fromStored("unknown"))
         assertEquals(RecognitionMode.ANDROID, RecognitionMode.fromStored("unknown"))
         assertEquals(RecognitionLanguage.AUTO, RecognitionLanguage.fromStored("unknown"))
+        assertEquals(SpeechOutputMode.SERVER, SpeechOutputMode.fromStored("unknown"))
         assertEquals(ThemePreference.SYSTEM, ThemePreference.fromStored("unknown"))
     }
 
