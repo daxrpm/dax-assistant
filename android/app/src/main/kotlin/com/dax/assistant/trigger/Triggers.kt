@@ -5,9 +5,18 @@ import android.os.Bundle
 import android.service.voice.VoiceInteractionService
 import android.service.voice.VoiceInteractionSession
 import android.service.voice.VoiceInteractionSessionService
+import android.view.View
 import androidx.activity.ComponentActivity
+import androidx.compose.ui.platform.ComposeView
+import androidx.compose.ui.platform.ViewCompositionStrategy
+import com.dax.assistant.assistant.AssistantController
 import com.dax.assistant.core.log.DaxLog
 import com.dax.assistant.service.AssistantService
+import com.dax.assistant.ui.assist.AssistOverlay
+import com.dax.assistant.ui.assist.SessionOwners
+import dagger.hilt.android.AndroidEntryPoint
+import javax.inject.Inject
+import kotlinx.coroutines.flow.MutableStateFlow
 
 /**
  * Registering as the system assistant.
@@ -37,27 +46,88 @@ class DaxVoiceInteractionService : VoiceInteractionService() {
     }
 }
 
+@AndroidEntryPoint
 class DaxVoiceInteractionSessionService : VoiceInteractionSessionService() {
+
+    @Inject
+    lateinit var controller: AssistantController
+
     override fun onNewSession(args: Bundle?): VoiceInteractionSession =
-        DaxVoiceInteractionSession(this)
+        DaxVoiceInteractionSession(this, controller)
 }
 
 /**
  * The session the system starts for an assist gesture.
  *
- * It deliberately shows nothing. A full-screen overlay would be the wrong
- * answer on a phone that may be locked and in a pocket: the turn is started on
- * the service, the notification reports state, and the session closes
- * immediately so it never sits on top of whatever the user was doing.
+ * It shows a bottom sheet, not a takeover. The gesture fires from a locked
+ * phone, from inside another app, sometimes from a pocket, so covering what the
+ * user was doing would be hostile — everything above the panel stays visible
+ * and dismisses on touch. The turn still runs on [AssistantService], which owns
+ * the microphone and the notification; this session only observes and draws.
+ *
+ * Composition lives between `onShow` and `onHide` via [SessionOwners], so the
+ * orb's animations are not running against the battery while nothing is on
+ * screen.
  */
 class DaxVoiceInteractionSession(
     private val service: DaxVoiceInteractionSessionService,
+    private val controller: AssistantController,
 ) : VoiceInteractionSession(service) {
+
+    private val owners = SessionOwners()
+    private var composeView: ComposeView? = null
+
+    /**
+     * Counts invocations. The system reuses one session across gestures and the
+     * composition outlives a hide, so the overlay keys its per-invocation state
+     * on this rather than on first composition.
+     */
+    private val showCount = MutableStateFlow(0)
+
+    override fun onCreateContentView(): View {
+        val view = ComposeView(context).apply {
+            setViewCompositionStrategy(ViewCompositionStrategy.DisposeOnDetachedFromWindow)
+            setBackgroundColor(android.graphics.Color.TRANSPARENT)
+            setContent {
+                AssistOverlay(
+                    state = controller.state,
+                    inputLevel = controller.inputLevel,
+                    showCount = showCount,
+                    onDismiss = ::dismiss,
+                )
+            }
+        }
+        owners.attach(view)
+        composeView = view
+        return view
+    }
 
     override fun onShow(args: Bundle?, showFlags: Int) {
         super.onShow(args, showFlags)
         DaxLog.i(TAG, "Assist gesture received")
+        showCount.value += 1
+        owners.show()
         AssistantService.triggerTurn(service, source = "assist-gesture")
+    }
+
+    override fun onHide() {
+        owners.hide()
+        super.onHide()
+    }
+
+    override fun onDestroy() {
+        owners.destroy()
+        composeView = null
+        super.onDestroy()
+    }
+
+    /**
+     * Dismissal cancels an in-flight turn. Leaving the microphone open after
+     * the user has visibly closed the surface is exactly the behaviour that
+     * makes people distrust an always-listening app.
+     */
+    private fun dismiss() {
+        if (controller.state.value.cancellable) controller.cancel()
         hide()
     }
 

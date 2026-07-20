@@ -69,6 +69,33 @@
     <string name="chat_new_messages">Ir a los mensajes nuevos</string>
     <string name="chat_role_you">Mensaje tuyo</string>
     <string name="chat_role_assistant">Mensaje de Dax</string>
+    <string name="setup_assistant_step">Haz de Dax tu asistente</string>
+    <string name="setup_assistant_detail">Android decide qué gesto abre un asistente, y solo tú puedes elegir qué app responde. Selecciona Dax en Aplicación de asistencia digital y el gesto que ya usa tu teléfono mostrará el orbe de voz.</string>
+    <string name="setup_assistant_open">Abrir ajustes de asistente</string>
+    <string name="assist_dismiss">Cerrar el asistente</string>
+    <string name="assist_open_app">Abre Dax para revisar esta solicitud</string>
+    <string name="settings_nodes">Nodo local</string>
+    <string name="settings_nodes_prefer">Usar la laptop mientras esté encendida</string>
+    <string name="settings_nodes_prefer_help">Ejecuta el turno en tu laptop en vez del backend. Las herramientas actúan sobre su propio disco y la voz se queda junto al micrófono, que es donde de verdad se gana tiempo.</string>
+    <string name="settings_nodes_enabled">Aceptar nodos</string>
+    <string name="settings_nodes_enabled_help">Con esto apagado el backend rechaza todo nodo y hace el trabajo él mismo.</string>
+    <string name="settings_nodes_none">Ninguna laptop encendida ahora mismo.</string>
+    <string name="settings_nodes_using">%1$s está encendida y atendería a este teléfono.</string>
+    <string name="settings_nodes_tools_only">Hay una laptop encendida, solo prestando herramientas.</string>
+    <string name="settings_nodes_off">Nodos rechazados</string>
+    <string name="chat_reasoning">Razonamiento</string>
+    <string name="chat_step_done">listo</string>
+    <string name="chat_step_failed">falló</string>
+    <plurals name="chat_thought_for">
+        <item quantity="one">Pensó durante %1$d segundo</item>
+        <item quantity="many">Pensó durante %1$d segundos</item>
+        <item quantity="other">Pensó durante %1$d segundos</item>
+    </plurals>
+    <plurals name="chat_tool_count">
+        <item quantity="one">%1$d herramienta</item>
+        <item quantity="many">%1$d herramientas</item>
+        <item quantity="other">%1$d herramientas</item>
+    </plurals>
     <string name="approval_title">¿Aprobar esta acción?</string>
     <string name="approval_explanation">Dax quiere ejecutar una herramienta que puede realizar cambios. Comprueba lo que está a punto de hacer.</string>
     <plurals name="approval_timeout">

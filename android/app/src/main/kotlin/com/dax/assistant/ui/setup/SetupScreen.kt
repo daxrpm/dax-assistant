@@ -157,7 +157,11 @@ fun SetupScreen(
 }
 
 @Composable
-fun PermissionSetupScreen(onContinue: () -> Unit, modifier: Modifier = Modifier) {
+fun PermissionSetupScreen(
+    onContinue: () -> Unit,
+    onOpenAssistantSettings: () -> Unit = {},
+    modifier: Modifier = Modifier,
+) {
     Column(
         modifier.fillMaxSize().background(Orbita.colors.bgWindow).systemBarsPadding()
             .verticalScroll(rememberScrollState())
@@ -183,6 +187,31 @@ fun PermissionSetupScreen(onContinue: () -> Unit, modifier: Modifier = Modifier)
                 style = OrbitaType.body,
                 color = Orbita.colors.fgTertiary,
             )
+        }
+        Spacer(Modifier.height(Orbita.spacing.x4))
+        // The assistant role cannot be granted programmatically — RoleManager
+        // has no request flow for it — so the only honest thing the app can do
+        // is send the user to the right settings page and say why.
+        StepCard(number = "4", title = stringResource(R.string.setup_assistant_step)) {
+            Text(
+                stringResource(R.string.setup_assistant_detail),
+                style = OrbitaType.body,
+                color = Orbita.colors.fgTertiary,
+            )
+            Spacer(Modifier.height(Orbita.spacing.x3))
+            Box(
+                Modifier.fillMaxWidth().heightIn(min = Orbita.sizing.minTouchTarget)
+                    .clip(RoundedCornerShape(Orbita.radii.pill))
+                    .background(Orbita.colors.bgInset)
+                    .clickable(role = Role.Button, onClick = onOpenAssistantSettings),
+                contentAlignment = Alignment.Center,
+            ) {
+                Text(
+                    stringResource(R.string.setup_assistant_open),
+                    style = OrbitaType.callout,
+                    color = Orbita.colors.fgPrimary,
+                )
+            }
         }
         Spacer(Modifier.height(Orbita.spacing.x8))
         Box(

@@ -40,6 +40,7 @@ class MobileApiClient @Inject constructor(
             val updates = listOf(
                 "llm" to config.llmJson(),
                 "voice" to config.voiceJson(),
+                "nodes" to config.nodesJson(),
             )
             runCatching {
                 updates.forEach { (section, payload) ->

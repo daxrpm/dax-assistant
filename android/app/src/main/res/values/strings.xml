@@ -73,6 +73,31 @@
     <string name="chat_new_messages">Jump to new messages</string>
     <string name="chat_role_you">Message from you</string>
     <string name="chat_role_assistant">Message from Dax</string>
+    <string name="setup_assistant_step">Make Dax your assistant</string>
+    <string name="setup_assistant_detail">Android decides which gesture opens an assistant, and only you can choose which app answers it. Pick Dax under Digital assistant app, and the gesture your phone already uses will bring up the voice orb.</string>
+    <string name="setup_assistant_open">Open assistant settings</string>
+    <string name="assist_dismiss">Close the assistant</string>
+    <string name="assist_open_app">Open Dax to review this request</string>
+    <string name="settings_nodes">Local node</string>
+    <string name="settings_nodes_prefer">Use the laptop while it is up</string>
+    <string name="settings_nodes_prefer_help">Runs the turn on your laptop instead of the backend. Tools act on its own disk and speech stays next to the microphone, which is where the time is actually saved.</string>
+    <string name="settings_nodes_enabled">Accept nodes</string>
+    <string name="settings_nodes_enabled_help">With this off the backend refuses every node and does the work itself.</string>
+    <string name="settings_nodes_none">No laptop is up right now.</string>
+    <string name="settings_nodes_using">%1$s is up and would serve this phone.</string>
+    <string name="settings_nodes_tools_only">A laptop is up, lending tools only.</string>
+    <string name="settings_nodes_off">Nodes refused</string>
+    <string name="chat_reasoning">Reasoning</string>
+    <string name="chat_step_done">done</string>
+    <string name="chat_step_failed">failed</string>
+    <plurals name="chat_thought_for">
+        <item quantity="one">Thought for %1$d second</item>
+        <item quantity="other">Thought for %1$d seconds</item>
+    </plurals>
+    <plurals name="chat_tool_count">
+        <item quantity="one">%1$d tool</item>
+        <item quantity="other">%1$d tools</item>
+    </plurals>
     <string name="approval_title">Approve this action?</string>
     <string name="approval_explanation">Dax wants to run a tool that can change things. Check what it is about to do.</string>
     <plurals name="approval_timeout">

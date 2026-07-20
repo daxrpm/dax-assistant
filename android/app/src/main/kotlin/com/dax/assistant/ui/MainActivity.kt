@@ -33,6 +33,7 @@ import com.dax.assistant.preferences.ThemePreference
 import com.dax.assistant.service.AssistantService
 import com.dax.assistant.trigger.MediaButtonTrigger
 import com.dax.assistant.ui.design.OrbitaTheme
+import com.dax.assistant.ui.setup.PermissionSetupScreen
 import com.dax.assistant.ui.setup.SetupScreen
 import com.journeyapps.barcodescanner.ScanContract
 import com.journeyapps.barcodescanner.ScanOptions
@@ -102,6 +103,8 @@ private val requiredPermissions = buildList {
         add(Manifest.permission.POST_NOTIFICATIONS)
     }
 }.toTypedArray()
+
+private const val INTRO_DONE_KEY = "permission_intro_done"
 
 enum class MicrophonePermissionState {
     Granted,
@@ -184,6 +187,10 @@ private fun DaxApp(
         }
     }
 
+    var introDone by remember {
+        mutableStateOf(permissionHistory.getBoolean(INTRO_DONE_KEY, false))
+    }
+
     LaunchedEffect(Unit) {
         refreshMicrophonePermission()
         permissionsChecked = true
@@ -216,6 +223,25 @@ private fun DaxApp(
                     ScanOptions().setDesiredBarcodeFormats(ScanOptions.QR_CODE)
                         .setBeepEnabled(false).setOrientationLocked(false),
                 )
+            },
+        )
+    } else if (!introDone) {
+        // A freshly paired phone has neither a microphone permission nor the
+        // assistant role, and both are things only the user can grant. Landing
+        // straight in the app hid that, so the turn simply never worked.
+        PermissionSetupScreen(
+            onContinue = {
+                permissionHistory.edit { putBoolean(INTRO_DONE_KEY, true) }
+                introDone = true
+                requestVoicePermissions()
+            },
+            onOpenAssistantSettings = {
+                runCatching {
+                    context.startActivity(
+                        Intent(Settings.ACTION_VOICE_INPUT_SETTINGS)
+                            .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK),
+                    )
+                }
             },
         )
     } else if (permissionsChecked) {

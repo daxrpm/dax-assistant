@@ -76,4 +76,58 @@ class MobileConfigTest {
         assertFalse(config.llmJson().contains("configured"))
         assertFalse(config.voiceJson().contains("api_key"))
     }
+
+    @Test
+    fun `parses the node summary the backend reports`() {
+        val config = MobileConfig.parse(
+            """{
+                "nodes": {
+                    "enabled": true,
+                    "prefer_when_available": false,
+                    "available": true,
+                    "name": "Laptop"
+                }
+            }""".trimIndent(),
+        )
+
+        assertEquals(true, config.nodesEnabled)
+        assertEquals(false, config.nodesPreferWhenAvailable)
+        assertEquals(true, config.nodeAvailable)
+        assertEquals("Laptop", config.nodeName)
+    }
+
+    @Test
+    fun `a backend without the node block keeps the permissive defaults`() {
+        val config = MobileConfig.parse("""{"llm": {"default_provider": "ollama"}}""")
+
+        assertEquals(true, config.nodesEnabled)
+        assertEquals(true, config.nodesPreferWhenAvailable)
+        assertEquals(false, config.nodeAvailable)
+        assertEquals("", config.nodeName)
+    }
+
+    @Test
+    fun `a connected node whose policy forbids hosting reports no name`() {
+        val config = MobileConfig.parse(
+            """{"nodes": {"available": true, "name": null}}""",
+        )
+
+        assertEquals(true, config.nodeAvailable)
+        assertEquals("", config.nodeName)
+    }
+
+    @Test
+    fun `node update carries only the two switches`() {
+        val payload = MobileConfig(
+            nodesEnabled = false,
+            nodesPreferWhenAvailable = true,
+            nodeAvailable = true,
+            nodeName = "Laptop",
+        ).nodesJson()
+
+        // Exact equality is the assertion: it pins the payload to the two
+        // switches, so the read-only half cannot be echoed back as an edit.
+        assertEquals("""{"enabled":false,"prefer_when_available":true}""", payload)
+        assertFalse(payload.contains("Laptop"))
+    }
 }

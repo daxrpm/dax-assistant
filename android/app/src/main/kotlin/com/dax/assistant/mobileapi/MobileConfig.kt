@@ -24,6 +24,12 @@ data class MobileConfig(
     val ttsModel: String = "",
     val ttsVoice: String = "",
     val ttsFallbackToLocal: Boolean = true,
+    val nodesEnabled: Boolean = true,
+    val nodesPreferWhenAvailable: Boolean = true,
+    /** Reported by the backend, not editable here: is a laptop up right now. */
+    val nodeAvailable: Boolean = false,
+    /** The node that would serve this phone, when one would. */
+    val nodeName: String = "",
 ) {
     /** Canonical payload for the intentionally secret-free mobile endpoint. */
     fun toJson(): String = buildJsonObject {
@@ -49,6 +55,12 @@ data class MobileConfig(
         }
     }.toString()
 
+    /** Only the two switches; the rest of the node summary is read-only. */
+    fun nodesJson(): String = buildJsonObject {
+        put("enabled", nodesEnabled)
+        put("prefer_when_available", nodesPreferWhenAvailable)
+    }.toString()
+
     fun voiceJson(): String = buildJsonObject {
         put("stt_backend", sttBackend)
         put("stt_model", sttModel)
@@ -66,6 +78,7 @@ data class MobileConfig(
         fun parse(payload: String): MobileConfig {
             val root = json.parseToJsonElement(payload).jsonObject
             val llm = root.objectOrEmpty("llm")
+            val nodes = root.objectOrEmpty("nodes")
             val voice = root.objectOrEmpty("voice")
             val stt = voice.objectOrEmpty("stt")
             val tts = voice.objectOrEmpty("tts")
@@ -105,6 +118,10 @@ data class MobileConfig(
                     ?: tts.string("voice").orEmpty(),
                 ttsFallbackToLocal = voice.bool("tts_fallback_to_local")
                     ?: tts.bool("fallback_to_local") ?: true,
+                nodesEnabled = nodes.bool("enabled") ?: true,
+                nodesPreferWhenAvailable = nodes.bool("prefer_when_available") ?: true,
+                nodeAvailable = nodes.bool("available") ?: false,
+                nodeName = nodes.string("name").orEmpty(),
             )
         }
 

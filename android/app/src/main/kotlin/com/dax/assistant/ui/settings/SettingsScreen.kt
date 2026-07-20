@@ -60,7 +60,7 @@ import com.dax.assistant.ui.design.Orbita
 import com.dax.assistant.ui.design.OrbitaTheme
 import com.dax.assistant.ui.design.OrbitaType
 
-private enum class SettingsSection { INTERFACE, INTELLIGENCE, SPEECH }
+private enum class SettingsSection { INTERFACE, INTELLIGENCE, NODES, SPEECH }
 
 @Composable
 fun SettingsScreen(
@@ -208,6 +208,45 @@ fun SettingsScreen(
                             onUpdate { config -> config.copy(models = config.models + (provider to value)) }
                         }
                     }
+                }
+            }
+
+            Spacer(Modifier.height(Orbita.spacing.x3))
+            SettingsCard(
+                title = stringResource(R.string.settings_nodes),
+                summary = nodeSummary(state.config),
+                expanded = expanded == SettingsSection.NODES,
+                onToggle = {
+                    expanded = SettingsSection.NODES.takeUnless { expanded == it }
+                    advanced = false
+                },
+            ) {
+                NodePresence(state.config)
+                SettingBlock(
+                    title = stringResource(R.string.settings_nodes_prefer),
+                    description = stringResource(R.string.settings_nodes_prefer_help),
+                ) {
+                    ChoiceRow(
+                        options = listOf(
+                            true to stringResource(R.string.choice_on),
+                            false to stringResource(R.string.choice_off),
+                        ),
+                        selected = state.config.nodesPreferWhenAvailable,
+                        recommended = true,
+                    ) { value -> onUpdate { it.copy(nodesPreferWhenAvailable = value) } }
+                }
+                SettingBlock(
+                    title = stringResource(R.string.settings_nodes_enabled),
+                    description = stringResource(R.string.settings_nodes_enabled_help),
+                ) {
+                    ChoiceRow(
+                        options = listOf(
+                            true to stringResource(R.string.choice_on),
+                            false to stringResource(R.string.choice_off),
+                        ),
+                        selected = state.config.nodesEnabled,
+                        recommended = true,
+                    ) { value -> onUpdate { it.copy(nodesEnabled = value) } }
                 }
             }
 
@@ -540,6 +579,43 @@ private fun BooleanChoice(title: String, value: Boolean, onChange: (Boolean) -> 
             onSelect = onChange,
         )
     }
+}
+
+/**
+ * Live presence, in the same shape the desktop uses: a dot and a sentence. A
+ * switch whose effect you cannot see is a switch nobody trusts.
+ */
+@Composable
+private fun NodePresence(config: MobileConfig) {
+    val up = config.nodeAvailable
+    Row(verticalAlignment = Alignment.CenterVertically) {
+        Box(
+            Modifier.size(7.dp)
+                .clip(RoundedCornerShape(Orbita.radii.pill))
+                .background(if (up) Orbita.colors.success else Orbita.colors.fgQuaternary),
+        )
+        Spacer(Modifier.padding(Orbita.spacing.x1))
+        Text(
+            text = when {
+                !up -> stringResource(R.string.settings_nodes_none)
+                config.nodeName.isNotBlank() ->
+                    stringResource(R.string.settings_nodes_using, config.nodeName)
+                // Connected, but its policy forbids hosting: saying "available"
+                // here would promise work it would refuse.
+                else -> stringResource(R.string.settings_nodes_tools_only)
+            },
+            style = OrbitaType.footnote,
+            color = if (up) Orbita.colors.fgSecondary else Orbita.colors.fgTertiary,
+        )
+    }
+}
+
+@Composable
+private fun nodeSummary(config: MobileConfig): String = when {
+    !config.nodesEnabled -> stringResource(R.string.settings_nodes_off)
+    config.nodeName.isNotBlank() -> config.nodeName
+    config.nodeAvailable -> stringResource(R.string.settings_nodes_tools_only)
+    else -> stringResource(R.string.settings_nodes_none)
 }
 
 @Composable

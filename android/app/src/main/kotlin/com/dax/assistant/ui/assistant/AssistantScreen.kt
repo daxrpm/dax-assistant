@@ -1,9 +1,5 @@
 package com.dax.assistant.ui.assistant
 
-import android.database.ContentObserver
-import android.os.Handler
-import android.os.Looper
-import android.provider.Settings
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
@@ -33,7 +29,6 @@ import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material3.Icon
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.getValue
@@ -42,7 +37,6 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.platform.LocalHapticFeedback
-import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
@@ -60,6 +54,7 @@ import com.dax.assistant.assistant.Turn
 import com.dax.assistant.R
 import com.dax.assistant.audio.AudioRouteKind
 import com.dax.assistant.ui.design.Orbita
+import com.dax.assistant.ui.design.rememberReduceMotion
 import com.dax.assistant.ui.design.OrbitaType
 import com.dax.assistant.ui.MicrophonePermissionState
 import kotlinx.coroutines.flow.StateFlow
@@ -405,30 +400,6 @@ private fun LiveText(state: AssistantState, compact: Boolean) {
             )
         }
     }
-}
-
-@Composable
-private fun rememberReduceMotion(): Boolean {
-    val context = LocalContext.current
-    val resolver = context.contentResolver
-    fun readScale() = runCatching {
-        Settings.Global.getFloat(resolver, Settings.Global.ANIMATOR_DURATION_SCALE) == 0f
-    }.getOrDefault(false)
-    var reduceMotion by remember(resolver) { mutableStateOf(readScale()) }
-    DisposableEffect(resolver) {
-        val observer = object : ContentObserver(Handler(Looper.getMainLooper())) {
-            override fun onChange(selfChange: Boolean) {
-                reduceMotion = readScale()
-            }
-        }
-        resolver.registerContentObserver(
-            Settings.Global.getUriFor(Settings.Global.ANIMATOR_DURATION_SCALE),
-            false,
-            observer,
-        )
-        onDispose { resolver.unregisterContentObserver(observer) }
-    }
-    return reduceMotion
 }
 
 @Composable
