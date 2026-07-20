@@ -68,7 +68,64 @@ The agent does **not** send all tools to the LLM. `registry.get_relevant_tools(q
 
 `MCPManager` holds one persistent `MCPClient` session per server (stdio subprocess or streamable-HTTP). `mcp_servers/system/server.py` is the bundled **`dax-system`** server giving the assistant typed, path-confined, allowlisted PC-control tools. OAuth for remote MCP servers lives in `web/routes/oauth.py` (PKCE + dynamic client registration); after the callback it **reconnects** the server so the Bearer token takes effect without a restart, and refreshes expired tokens before reconnecting.
 
-`capabilities/` registers the trusted bundled inventory from authenticated edge nodes under canonical node-prefixed names; `edge/` is the outbound laptop daemon. Inventory is live-socket-only and removed on disconnect/revocation. Node execution remains policy/approval-gated, path-confined on the node, and argv-only for shell calls. Do not add arbitrary node MCP discovery, offline queues, state replication, or backend failover.
+`capabilities/` registers the trusted bundled inventory from authenticated edge nodes under canonical node-prefixed names; `edge/` is the outbound laptop daemon. Inventory is live-socket-only and removed on disconnect/revocation. Node execution remains policy/approval-gated, path-confined on the node, and argv-only for shell calls. Do not add arbitrary node MCP discovery.
+
+### Node processing policy
+
+`[nodes]` decides what each laptop is asked to do: `process_locally` (host a
+session and run the turn, versus only lend tools), plus `inference` and `voice`
+in `auto` / `local` / `server`. Policy is keyed by device id and owned by the
+backend, so a node reads its own entry on connect rather than keeping a copy —
+that is what makes "stop processing on the laptop" work from whichever client is
+in reach. `CapabilityHub.send_policy` pushes changes to a connected node, best
+effort; the backend enforces its side regardless, and nothing in that push is a
+security control.
+
+Keep `inference` on `auto`. It pins the model to the node only when the model is
+itself local (Ollama on the node's GPU). A cloud provider is dominated by the
+round trip to the provider, so routing that HTTPS call through a laptop adds a
+hop and removes none. The real win is `voice` — audio is bulky, and keeping
+speech next to the microphone avoids crossing the network twice.
+
+The desktop settings registry (`desktop/src/screens/settings/registry.json`) is
+gated by `tests/unit/test_settings_coverage.py`: every `DaxConfig` leaf must
+appear there. Add a setting to the JSON, not to a component.
+
+### Direct client sessions on a node (in progress)
+
+The intended end state is that the phone connects **directly** to the laptop
+when it is up, and the laptop runs the turn, while the backend stays the owner
+of conversation state. Two rules govern that work and neither is optional:
+
+* **Trust flows from the backend, never from the LAN.** Discovery may hint that
+  a node exists; it is never evidence of identity. A client verifies a node
+  against something the backend vouched for, and a node verifies the client the
+  same way. mDNS presence alone must never be sufficient, or anyone on the WiFi
+  can answer as Dax.
+* **The node is a subordinate session host, not a second authority.** It runs
+  the turn and writes through to the backend. It does not become the source of
+  truth for conversations, and it does not mint client credentials.
+
+The trust half is built. `capabilities/tickets.py` signs short-lived session
+tickets with Ed25519 — asymmetric on purpose, because the existing session and
+device tokens are HMAC and a node holding that shared secret could mint device
+tokens and session cookies for the backend itself. A ticket names one node and
+one device, so it cannot be replayed at a different laptop, and there is no
+algorithm field to downgrade. `POST /api/nodes/{id}/session-ticket` is
+device-authenticated and refuses what the node cannot check for itself: a
+switched-off fleet, a node not meant to host, a disconnected node, a revoked
+phone. The node receives the verifying public key in its `ready` frame.
+
+Node addresses follow the same rule as node tool schemas: proposed, not trusted.
+`trusted_endpoints` keeps private, link-local, and loopback literals and drops
+everything else — an address the backend repeats to a phone is an instruction
+about where to send a credential, so a node must not be able to name a routable
+one.
+
+What is still missing is the session server itself: the node does not yet listen,
+so it advertises no endpoints, and nothing hosts a turn. `process_locally` is
+stored, pushed, and enforced at ticket issue, but the socket it gates does not
+exist yet.
 
 ### Desktop authority selection
 

@@ -13,6 +13,75 @@ MCP servers on the laptop, synchronize files, queue calls while offline, or
 move authority between hosts. A reconnect for the same node replaces the older
 socket and inventory generation.
 
+Direct client-to-node sessions are **partially built**. The trust layer exists
+and is described under [Session trust](#session-trust); the listening socket
+does not. A node therefore still only lends tools, and `process_locally` is
+stored, pushed, and enforced at ticket issue without yet gating anything that
+runs.
+
+## Node Policy
+
+What a node is asked to do is configuration, so the backend owns it, keyed by
+device id. A node reads its own entry when it connects rather than keeping a
+copy — that is what makes "stop processing on the laptop" take effect from
+whichever client is in reach.
+
+| Setting | Values | Meaning |
+| --- | --- | --- |
+| `process_locally` | on/off | May host a client session and run the turn. Off leaves it lending tools only. |
+| `inference` | `auto`/`local`/`server` | Where the model runs. |
+| `voice` | `auto`/`local`/`server` | Where transcription and synthesis run. |
+
+Two fleet-wide switches sit above these: `enabled` refuses every node outright,
+and `prefer_when_available` decides whether clients reach for a node at all.
+Either one being off overrides a permissive per-node policy.
+
+Edit per-node policy in the desktop or web UI under **Settings → Capabilities →
+Capability nodes**. The Android app gets only the two fleet switches and live
+presence, under **Settings → Local node** — an enrolled device may not enumerate
+its siblings, and a per-node editor would require exactly that enumeration.
+
+Keep `inference` on `auto`. It pins the model to the node only when the model is
+itself local (Ollama on the node's GPU). A cloud provider is dominated by the
+round trip to the provider, so routing that HTTPS call through a laptop adds a
+hop and removes none. `voice` is the setting that actually pays: audio is bulky,
+and keeping speech next to the microphone avoids crossing the network twice.
+
+`CapabilityHub.send_policy` pushes changes to a connected node immediately. That
+push is best effort and is not a security control — the backend enforces the
+policy on its own side regardless of whether the node obeyed.
+
+## Session Trust
+
+A phone that finds a laptop on the WiFi has learned nothing about who that
+laptop is. Discovery is a hint; it is never evidence. So the backend vouches:
+the phone asks it for a ticket naming a specific node, and the node verifies
+that ticket before serving anyone.
+
+Tickets are Ed25519, not HMAC. The existing session and device tokens are signed
+with a shared secret, and a node holding that secret could mint device tokens
+and session cookies for the backend itself. With a signature scheme the node
+verifies but cannot produce, a compromised laptop can impersonate nobody. There
+is deliberately no algorithm field in the payload — negotiable algorithms are
+where JWT implementations get broken.
+
+A ticket names one node and one device and lives for two minutes, so a hostile
+node cannot collect tickets and replay them against the real one. The backend
+signing key is generated on first use and kept in the encrypted secret store;
+the node receives only the public half, in its `ready` frame.
+
+`POST /api/nodes/{id}/session-ticket` is device-authenticated and refuses what
+the node could not check for itself: a switched-off fleet, a node not configured
+to host, a disconnected node, an unknown node, and a session credential rather
+than a device one. A revoked phone stops receiving tickets immediately, because
+revocation is enforced at token validation rather than at issue.
+
+Node addresses follow the same rule as node tool schemas: proposed, not trusted.
+A node may advertise where it can be reached, and the backend keeps only
+private, link-local, and loopback literals. An address the backend repeats to a
+phone is an instruction about where to send a credential, so a node must not be
+able to name a routable one.
+
 ## Enroll A Laptop
 
 1. In an authenticated desktop or web UI, open the paired-devices area and

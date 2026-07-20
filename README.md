@@ -62,6 +62,10 @@ does not provide authority fallback. See
 
 ## Production install
 
+Installing all four pieces — backend, desktop, Android, and an optional
+capability node — in the order that avoids circular prerequisites is walked
+through in [`docs/installation.md`](docs/installation.md).
+
 The coordinated artifact and verification contract is documented in
 [`docs/releases.md`](docs/releases.md). The supported operational topology,
 backup, recovery, upgrade, and replacement procedures are in
