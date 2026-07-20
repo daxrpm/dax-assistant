@@ -50,8 +50,8 @@
     "semantic_hash": ""
   },
   "src/dax/app.py": {
-    "mtime": 1784515637.6897657,
-    "ast_hash": "00d85e8e7b99fd1d5d938edc768caa2b",
+    "mtime": 1784574625.0041492,
+    "ast_hash": "f7bfd63202f6e6e2e9c159ddf770810d",
     "semantic_hash": ""
   },
   "src/dax/channels/__init__.py": {
@@ -85,8 +85,8 @@
     "semantic_hash": "d41d8cd98f00b204e9800998ecf8427e"
   },
   "src/dax/core/config.py": {
-    "mtime": 1784503714.5721354,
-    "ast_hash": "c6b2c16cd2575814f9310e01afaad065",
+    "mtime": 1784567565.5480106,
+    "ast_hash": "fc3bd083bf7db6a8219d00c00065cd02",
     "semantic_hash": ""
   },
   "src/dax/core/config_io.py": {
@@ -320,8 +320,8 @@
     "semantic_hash": "d41d8cd98f00b204e9800998ecf8427e"
   },
   "src/dax/web/auth.py": {
-    "mtime": 1784514852.0774183,
-    "ast_hash": "d4dfcbbdd0928e7d128938f0c6fb2bc0",
+    "mtime": 1784571464.9295726,
+    "ast_hash": "571ec5e6f5e8f9cbae49540e89b362fe",
     "semantic_hash": ""
   },
   "src/dax/web/dependencies.py": {
@@ -345,8 +345,8 @@
     "semantic_hash": ""
   },
   "src/dax/web/routes/config.py": {
-    "mtime": 1784504899.0404477,
-    "ast_hash": "3ed92f4bf1c4faeb5e7bb9f77669c132",
+    "mtime": 1784567851.349835,
+    "ast_hash": "66c0af4a655303502bae47751743f034",
     "semantic_hash": ""
   },
   "src/dax/web/routes/conversations.py": {
@@ -385,8 +385,8 @@
     "semantic_hash": ""
   },
   "src/dax/web/server.py": {
-    "mtime": 1784515637.6897657,
-    "ast_hash": "ce36406b3a6c3ce3ea03cc8f149e132d",
+    "mtime": 1784571467.1855695,
+    "ast_hash": "1307e38c9b67ae281c801cbeaadf5f61",
     "semantic_hash": ""
   },
   "src/dax/web/spa_middleware.py": {
@@ -700,13 +700,13 @@
     "semantic_hash": ""
   },
   "CLAUDE.md": {
-    "mtime": 1784518634.359837,
-    "ast_hash": "13fa89d7af7c84d0177e4c9ae0916ac6",
+    "mtime": 1784574997.0338502,
+    "ast_hash": "8c686d267ce04af23b5777fcde180553",
     "semantic_hash": ""
   },
   "README.md": {
-    "mtime": 1784518618.2678158,
-    "ast_hash": "521673a074f89ee16d51b3a538663f62",
+    "mtime": 1784575613.1771204,
+    "ast_hash": "e53884537cb8e70e65ea124ab99390e4",
     "semantic_hash": ""
   },
   "src/dax/web/static/index.html": {
@@ -825,13 +825,13 @@
     "semantic_hash": ""
   },
   "desktop/src/App.tsx": {
-    "mtime": 1784517784.9277291,
-    "ast_hash": "c5838175c6cd2273a054548b03344686",
+    "mtime": 1784575236.7304041,
+    "ast_hash": "5078acbee0b7e769f190797a4eadf6d6",
     "semantic_hash": ""
   },
   "desktop/src/api/client.ts": {
-    "mtime": 1784517784.9277291,
-    "ast_hash": "8808313697471a7979baf8a7da0dfcd5",
+    "mtime": 1784567950.0809174,
+    "ast_hash": "1dfa480e614620f54091845df326b14c",
     "semantic_hash": ""
   },
   "desktop/src/api/connection.ts": {
@@ -840,8 +840,8 @@
     "semantic_hash": ""
   },
   "desktop/src/api/types.ts": {
-    "mtime": 1784516235.5075946,
-    "ast_hash": "2d254debb87e3e529e6b4cccb0ef5a0b",
+    "mtime": 1784567916.311526,
+    "ast_hash": "a8e0fe34c4b6388b019fd925d3af6529",
     "semantic_hash": ""
   },
   "desktop/src/components/AppShell.tsx": {
@@ -1015,8 +1015,8 @@
     "semantic_hash": ""
   },
   "desktop/src/screens/settings/DesktopTab.tsx": {
-    "mtime": 1784519378.2708135,
-    "ast_hash": "e4ee5bf604b007716f0ad2340e4e371c",
+    "mtime": 1784575243.7479331,
+    "ast_hash": "5f9ac31bcbcb068a9d0c503d3c068ef5",
     "semantic_hash": ""
   },
   "desktop/src/screens/settings/FieldControl.tsx": {
@@ -1060,13 +1060,13 @@
     "semantic_hash": "e346003e0ef660356b70b27992424082"
   },
   "desktop/src/screens/settings/registry.json": {
-    "mtime": 1784515050.0227537,
-    "ast_hash": "f4e0b0a02576bbac97892fc6e38444ab",
+    "mtime": 1784568587.1118364,
+    "ast_hash": "06137e2d25a546ee3865aea287a1ede9",
     "semantic_hash": ""
   },
   "desktop/src/screens/settings/registry.ts": {
-    "mtime": 1784514869.1504471,
-    "ast_hash": "8686c618d354c43f2e3a76cefab09309",
+    "mtime": 1784567956.7219942,
+    "ast_hash": "6f4322bf0f3447cdc35a4182da745d52",
     "semantic_hash": ""
   },
   "desktop/src/screens/settings/useSection.ts": {
@@ -1075,9 +1075,9 @@
     "semantic_hash": "4535f96a76f16a62975acba89acd683b"
   },
   "desktop/src/screens/settings/useSettingsDraft.ts": {
-    "mtime": 1784491915.6469884,
-    "ast_hash": "d9a0374fc830de516dd06b98a5898684",
-    "semantic_hash": "d9a0374fc830de516dd06b98a5898684"
+    "mtime": 1784568075.7193732,
+    "ast_hash": "a630a217a78100bfc75e4cb17afb7e78",
+    "semantic_hash": ""
   },
   "desktop/tsconfig.json": {
     "mtime": 1784491915.6479883,
@@ -1190,8 +1190,8 @@
     "semantic_hash": ""
   },
   "desktop/src/screens/settings/SettingsRenderer.tsx": {
-    "mtime": 1784514869.1514473,
-    "ast_hash": "6ece731c1179652530341ef2f5fbf421",
+    "mtime": 1784568059.9401903,
+    "ast_hash": "01a1cc426c0e1eb415fc681723599348",
     "semantic_hash": ""
   },
   "desktop/src/screens/settings/registry.test.ts": {
@@ -1250,8 +1250,8 @@
     "semantic_hash": ""
   },
   "desktop/src/screens/settings/registry.en.ts": {
-    "mtime": 1784515050.0227537,
-    "ast_hash": "f1789cb51f7a14859d637faeb35515ec",
+    "mtime": 1784567996.05545,
+    "ast_hash": "d05eb66655acef452724b8bd67378672",
     "semantic_hash": ""
   },
   "desktop/src/components/VoiceOrb.test.tsx": {
@@ -1410,8 +1410,8 @@
     "semantic_hash": ""
   },
   "tests/unit/test_devices_api.py": {
-    "mtime": 1784515060.768772,
-    "ast_hash": "84c0cd9426ac94ff0534e7be810d7af6",
+    "mtime": 1784568132.354056,
+    "ast_hash": "1d9aa64aa45ec626f600482f99cf3602",
     "semantic_hash": ""
   },
   "tests/unit/test_multiclient.py": {
@@ -1455,8 +1455,8 @@
     "semantic_hash": ""
   },
   "android/app/src/main/kotlin/com/dax/assistant/ui/MainActivity.kt": {
-    "mtime": 1784517916.6119006,
-    "ast_hash": "01e2a1b03ce9be4cac290c7e9dacb955",
+    "mtime": 1784575364.3492901,
+    "ast_hash": "0b49aebc6a88b6bf95a65aa98ed46f5d",
     "semantic_hash": ""
   },
   "android/app/src/main/kotlin/com/dax/assistant/ui/design/Theme.kt": {
@@ -1550,8 +1550,8 @@
     "semantic_hash": ""
   },
   "android/app/src/main/kotlin/com/dax/assistant/trigger/Triggers.kt": {
-    "mtime": 1784501635.3480618,
-    "ast_hash": "9849394e0fb8a657c63fed16ef23b018",
+    "mtime": 1784569766.7662494,
+    "ast_hash": "ad71cc0784d98c563e78693fc64faf1e",
     "semantic_hash": ""
   },
   "android/app/src/main/kotlin/com/dax/assistant/ui/AppViewModel.kt": {
@@ -1565,8 +1565,8 @@
     "semantic_hash": ""
   },
   "android/app/src/main/kotlin/com/dax/assistant/ui/assistant/AssistantScreen.kt": {
-    "mtime": 1784517796.292744,
-    "ast_hash": "ecda83940e08fda506031521b882f3ea",
+    "mtime": 1784569536.9782038,
+    "ast_hash": "3a7fb86e51f12479c2e625c0e5bb67b6",
     "semantic_hash": ""
   },
   "android/app/src/main/kotlin/com/dax/assistant/ui/assistant/VoiceOrb.kt": {
@@ -1580,8 +1580,8 @@
     "semantic_hash": ""
   },
   "android/app/src/main/kotlin/com/dax/assistant/ui/setup/SetupScreen.kt": {
-    "mtime": 1784514728.9732096,
-    "ast_hash": "5dd5f6a3d0e6decbd1bd3f09486afbd7",
+    "mtime": 1784575294.8039432,
+    "ast_hash": "d58a65a6f5fa9df4752b30510dd6d278",
     "semantic_hash": ""
   },
   "desktop/src/components/AppIcon.tsx": {
@@ -1980,13 +1980,13 @@
     "semantic_hash": ""
   },
   "android/app/src/main/kotlin/com/dax/assistant/mobileapi/MobileApiClient.kt": {
-    "mtime": 1784505263.3771796,
-    "ast_hash": "1810bcd7a42c03f44fb179e880790781",
+    "mtime": 1784568369.0919578,
+    "ast_hash": "33c170871299fd820fff6c2ba7440da2",
     "semantic_hash": ""
   },
   "android/app/src/main/kotlin/com/dax/assistant/mobileapi/MobileConfig.kt": {
-    "mtime": 1784506715.9380972,
-    "ast_hash": "ceb4dae2ed85cc851671c928a564d8f7",
+    "mtime": 1784568363.054892,
+    "ast_hash": "cd05c7799e42a4901ae1c2a7ae1342ca",
     "semantic_hash": ""
   },
   "android/app/src/main/kotlin/com/dax/assistant/ui/setup/PairingPayload.kt": {
@@ -1995,8 +1995,8 @@
     "semantic_hash": ""
   },
   "src/dax/web/routes/mobile.py": {
-    "mtime": 1784504899.0414479,
-    "ast_hash": "f829da7f70bbd50848eb489ee2d076d2",
+    "mtime": 1784567744.0515296,
+    "ast_hash": "c4fa06864b39c887bdb9c1e323218a80",
     "semantic_hash": ""
   },
   "android/app/src/main/kotlin/com/dax/assistant/ui/AppNavigation.kt": {
@@ -2005,13 +2005,13 @@
     "semantic_hash": ""
   },
   "android/app/src/main/kotlin/com/dax/assistant/ui/conversations/ConversationsScreen.kt": {
-    "mtime": 1784517674.7865858,
-    "ast_hash": "be6b8f558d225d45043186cbc9c7be2b",
+    "mtime": 1784567234.355177,
+    "ast_hash": "f5e99c747cbed81f117a36ee45a94daa",
     "semantic_hash": ""
   },
   "android/app/src/main/kotlin/com/dax/assistant/ui/settings/SettingsScreen.kt": {
-    "mtime": 1784514821.864367,
-    "ast_hash": "06b12149936bf4a41f0ab1c628360ba3",
+    "mtime": 1784568395.0251403,
+    "ast_hash": "973e8d7e42ffa4c9fc37bfc377cc3336",
     "semantic_hash": ""
   },
   "android/app/src/main/kotlin/com/dax/assistant/ui/settings/SettingsViewModel.kt": {
@@ -2020,8 +2020,8 @@
     "semantic_hash": ""
   },
   "android/app/src/test/kotlin/com/dax/assistant/mobileapi/MobileConfigTest.kt": {
-    "mtime": 1784505263.3781796,
-    "ast_hash": "46e6f186c78f9d716b5a4845c9d47f99",
+    "mtime": 1784568478.4535334,
+    "ast_hash": "78e651d22286c9dbf402bc5aabec0a3e",
     "semantic_hash": ""
   },
   "android/app/src/test/kotlin/com/dax/assistant/ui/setup/PairingPayloadTest.kt": {
@@ -2205,13 +2205,13 @@
     "semantic_hash": ""
   },
   "src/dax/capabilities/hub.py": {
-    "mtime": 1784517652.8625572,
-    "ast_hash": "a06ff5dfbcc7cbb2c09f90749736b550",
+    "mtime": 1784574687.992723,
+    "ast_hash": "7373b06c08a3a7e7c3266e814e0c8c48",
     "semantic_hash": ""
   },
   "src/dax/capabilities/protocol.py": {
-    "mtime": 1784515242.9290805,
-    "ast_hash": "2a72b4c05a9422740a91194ed65120ca",
+    "mtime": 1784571393.8036695,
+    "ast_hash": "418bd0352b5173b75206f39dc58303f8",
     "semantic_hash": ""
   },
   "src/dax/edge/__init__.py": {
@@ -2230,13 +2230,13 @@
     "semantic_hash": ""
   },
   "src/dax/edge/daemon.py": {
-    "mtime": 1784517652.8625572,
-    "ast_hash": "a4be7828b94b83ca978da6553474b825",
+    "mtime": 1784574666.0990362,
+    "ast_hash": "80775918e83b8d7d0cc42312e44ecfb1",
     "semantic_hash": ""
   },
   "src/dax/edge/protocol.py": {
-    "mtime": 1784514988.5486495,
-    "ast_hash": "59590ef3498f1d172b0a2f3edd55da6b",
+    "mtime": 1784571492.8095345,
+    "ast_hash": "ed5dc0076f8894836ad582a05edb606c",
     "semantic_hash": ""
   },
   "src/dax/web/routes/capabilities_ws.py": {
@@ -2265,8 +2265,8 @@
     "semantic_hash": ""
   },
   "tests/unit/test_edge_protocol.py": {
-    "mtime": 1784514988.5526237,
-    "ast_hash": "74d70f324b19bb6360623f4b94ae942e",
+    "mtime": 1784574761.3354735,
+    "ast_hash": "cf40eba4a02da6b73bfea18a4c5f1a33",
     "semantic_hash": ""
   },
   "web/src/api/client.test.ts": {
@@ -2290,8 +2290,8 @@
     "semantic_hash": ""
   },
   "docs/capability-nodes.md": {
-    "mtime": 1784518718.6699476,
-    "ast_hash": "f1c6cc5cdf8d556f99207108d05e9b72",
+    "mtime": 1784575606.1151068,
+    "ast_hash": "aac978e612bd9abf1f7214d6070b11d3",
     "semantic_hash": ""
   },
   "docs/deployment.md": {
@@ -2317,6 +2317,71 @@
   "desktop/src/native/backend.test.ts": {
     "mtime": 1784519378.2718134,
     "ast_hash": "b489c3d3308ea2fb4c2a018de521b2cd",
+    "semantic_hash": ""
+  },
+  "android/app/src/main/kotlin/com/dax/assistant/ui/assist/AssistOverlay.kt": {
+    "mtime": 1784569766.7815025,
+    "ast_hash": "69d9da9cb1825b7929027192b9ac2b39",
+    "semantic_hash": ""
+  },
+  "android/app/src/main/kotlin/com/dax/assistant/ui/assist/SessionOwners.kt": {
+    "mtime": 1784569403.9482274,
+    "ast_hash": "e7c2f1ccf48ceb8eccdadcf78daba4f2",
+    "semantic_hash": ""
+  },
+  "android/app/src/main/kotlin/com/dax/assistant/ui/conversations/ChatThread.kt": {
+    "mtime": 1784569582.4063144,
+    "ast_hash": "ab48859d6eddab82e60627b42a73712a",
+    "semantic_hash": ""
+  },
+  "android/app/src/main/kotlin/com/dax/assistant/ui/design/ReduceMotion.kt": {
+    "mtime": 1784569502.2520993,
+    "ast_hash": "54db92d98790e2f27bc050ff22e1cc01",
+    "semantic_hash": ""
+  },
+  "desktop/src/components/CapabilityNodes.tsx": {
+    "mtime": 1784568033.5308843,
+    "ast_hash": "bf05d6d40b14960d572f0a5dd39d6836",
+    "semantic_hash": ""
+  },
+  "desktop/src/native/FirstRun.test.ts": {
+    "mtime": 1784575184.2151308,
+    "ast_hash": "7b58ef43dceb764c038a9fcc2be68755",
+    "semantic_hash": ""
+  },
+  "desktop/src/native/FirstRun.tsx": {
+    "mtime": 1784575120.1139972,
+    "ast_hash": "9085c34ec6c8797fa635d00700405b38",
+    "semantic_hash": ""
+  },
+  "src/dax/capabilities/tickets.py": {
+    "mtime": 1784574573.9128494,
+    "ast_hash": "caeb8b5ce19c4c1078ecc2749fb63e67",
+    "semantic_hash": ""
+  },
+  "src/dax/web/routes/nodes.py": {
+    "mtime": 1784574592.0369449,
+    "ast_hash": "9e0253c7b990ef365b964406a1ad7e14",
+    "semantic_hash": ""
+  },
+  "tests/unit/test_capability_endpoints.py": {
+    "mtime": 1784574805.1389625,
+    "ast_hash": "635a77177ccc57ab5f0edc3609b7e70a",
+    "semantic_hash": ""
+  },
+  "tests/unit/test_capability_tickets.py": {
+    "mtime": 1784574944.811284,
+    "ast_hash": "cd0eb96ce8ca51942cff14573c450666",
+    "semantic_hash": ""
+  },
+  "tests/unit/test_nodes_api.py": {
+    "mtime": 1784574896.3623683,
+    "ast_hash": "8948fa709a1b265e42827548c4c7897b",
+    "semantic_hash": ""
+  },
+  "docs/installation.md": {
+    "mtime": 1784575583.2710698,
+    "ast_hash": "1fd58ea83247568083124f2c2e872244",
     "semantic_hash": ""
   }
 }
