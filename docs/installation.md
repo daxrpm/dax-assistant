@@ -108,16 +108,16 @@ systemctl --user enable --now dax-assistant-node.service
 journalctl --user -u dax-assistant-node.service -f
 ```
 
-Generate `CODE` from the desktop or web UI under **Settings → Access → Devices →
-Add laptop capability**, or from desktop first-run setup, which prints the whole
-command ready to paste.
+Native Desktop first-run enrols the same laptop directly. Generate `CODE` under
+**Settings → Access → Devices → Add laptop capability** only for a different or
+headless laptop that will use the manual command.
 
 Once enrolled, what the node is asked to do is configured from a UI, not from
 the laptop's config file:
 
 * **Desktop and web** — **Settings → Capabilities → Capability nodes**. One card
   per laptop, showing whether it is connected right now, with per-node control
-  over processing, inference, and speech.
+  over tools, shell, processing, inference, and mobile TTS.
 * **Android** — **Settings → Local node**. The phone gets the two fleet switches
   and whether a node is currently up. It deliberately cannot enumerate or
   re-policy the fleet: an enrolled device may not list its siblings.
@@ -125,9 +125,8 @@ the laptop's config file:
 Leave **inference** on `auto`. It pins the model to the laptop only when the
 model is itself local — Ollama on the laptop's GPU. A cloud provider is
 dominated by the round trip to that provider, so routing the call through a
-laptop adds a hop and removes none. **Speech** is where a node genuinely wins:
-audio is bulky, and keeping transcription next to the microphone avoids sending
-it across the network twice.
+laptop adds a hop and removes none. Mobile **TTS synthesis** can already execute
+on an eligible node. Direct phone-to-node audio and node STT are not implemented.
 
 ## Verifying the whole chain
 

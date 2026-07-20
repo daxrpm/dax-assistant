@@ -2380,8 +2380,8 @@
     "semantic_hash": ""
   },
   "docs/installation.md": {
-    "mtime": 1784589340.8352947,
-    "ast_hash": "84a98aea3cf21a1c48ebf1240f548b0d",
+    "mtime": 1784591302.2551582,
+    "ast_hash": "71a9dbf8b6f48693f0c12256c0544d65",
     "semantic_hash": ""
   },
   "desktop/src-tauri/src/capability_node.rs": {

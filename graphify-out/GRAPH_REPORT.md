@@ -5,12 +5,12 @@
 - Verdict: corpus is large enough that graph structure adds value.
 
 ## Summary
-- 6323 nodes · 16320 edges · 319 communities (229 shown, 90 thin omitted)
+- 6323 nodes · 16320 edges · 317 communities (227 shown, 90 thin omitted)
 - Extraction: 80% EXTRACTED · 20% INFERRED · 0% AMBIGUOUS · INFERRED: 3213 edges (avg confidence: 0.58)
 - Token cost: 0 input · 0 output
 
 ## Graph Freshness
-- Built from commit: `f713e98c`
+- Built from commit: `894b02f6`
 - Run `git rev-parse HEAD` and compare to check if the graph is stale.
 - Run `graphify update .` after code changes (no API cost).
 
@@ -43,7 +43,6 @@
 - Dashboard API Client
 - LLM Router Failover
 - Logging Event Buffer
-- WhatsApp Channel Integration
 - TypeScript Compiler Configuration
 - Web Dependency Injection
 - Human Approval Workflow
@@ -286,7 +285,6 @@
 - FirstRun.tsx
 - .request
 - DaxApplication
-- isValidPairingCode
 - RemoteVoiceClientTest
 - datetime
 - ThemePreference
@@ -334,9 +332,9 @@
   src/dax/web/static/index.html → web/index.html
 - `Native Linux Client` --conceptually_related_to--> `Dax Blue App Icon Master`  [INFERRED]
   README.md → desktop/src-tauri/icons/icon.png
+- `encodePcm16()` --indirect_call--> `value()`  [INFERRED]
+  desktop/src/audio/remoteAudio.ts → src/dax/web/static/assets/index-CIYnMraU.js
 - `CommandPalette()` --indirect_call--> `index()`  [INFERRED]
-  desktop/src/components/CommandPalette.tsx → src/dax/web/static/assets/index-CIYnMraU.js
-- `CommandPalette()` --indirect_call--> `q()`  [INFERRED]
   desktop/src/components/CommandPalette.tsx → src/dax/web/static/assets/index-CIYnMraU.js
 
 ## Import Cycles
@@ -350,19 +348,19 @@
 - **Remote Voice v1 Flow** — docs_voice_websocket_authenticated_voice_socket, docs_voice_websocket_exclusive_remote_audio_lease, docs_voice_websocket_bounded_pcm_protocol, readme_remote_voice_limit [EXTRACTED 1.00]
 - **Orbita Realtime Rendering** — docs_desktop_architecture_demand_managed_realtime_stores, docs_desktop_architecture_orbita_canvas_renderer, docs_voice_websocket_source_separated_level_frames, desktop_plan_voice_hud [EXTRACTED 1.00]
 
-## Communities (319 total, 90 thin omitted)
+## Communities (317 total, 90 thin omitted)
 
 ### Community 0 - "Bundle Collection Utilities"
 Cohesion: 0.01
-Nodes (209): ab(), add(), addChild(), addDescendants(), addNode(), __addSublanguage(), addText(), addTreeNode() (+201 more)
+Nodes (177): ab(), add(), addChild(), addDescendants(), addNode(), __addSublanguage(), addText(), addTreeNode() (+169 more)
 
 ### Community 1 - "Voice Processing Pipeline"
-Cohesion: 0.10
-Nodes (11): CallbackFlags, LocalAudioSource, ndarray, sounddevice callback — runs on the audio thread., Play a full audio buffer and block until playback finishes.          Args:, Play an int16 buffer in small blocks, stopping early on demand.          ``shoul, Play audio from an iterable of raw ``int16`` byte chunks.          Useful for lo, Capture audio from the default microphone in fixed-size chunks.      Chunks are (+3 more)
+Cohesion: 0.06
+Nodes (58): aa(), bb(), bs(), cb(), Cj(), Db(), dk(), Eb() (+50 more)
 
 ### Community 2 - "Frontend Runtime Internals"
 Cohesion: 0.03
-Nodes (61): Enum, LevelSource, Which side of the conversation a level frame describes., AudioSource, Protocol, Pluggable mono int16 input consumed by the voice pipeline., _clean_for_speech(), _ends_with_question() (+53 more)
+Nodes (63): Enum, LevelSource, Which side of the conversation a level frame describes., AudioSource, Protocol, Pluggable mono int16 input consumed by the voice pipeline., _clean_for_speech(), _ends_with_question() (+55 more)
 
 ### Community 3 - "Agent Tool Policy"
 Cohesion: 0.17
@@ -370,7 +368,7 @@ Nodes (26): _codes(), delete_device(), DeviceListResponse, enroll_device(), Enro
 
 ### Community 4 - "Tree Collection Traversal"
 Cohesion: 0.05
-Nodes (110): Ad(), addEventListener(), al(), announce(), ap(), at(), bd(), bl() (+102 more)
+Nodes (112): Ad(), addEventListener(), al(), announce(), ap(), at(), bd(), bl() (+104 more)
 
 ### Community 5 - "Tool Dispatch Interfaces"
 Cohesion: 0.09
@@ -405,8 +403,8 @@ Cohesion: 0.06
 Nodes (90): ac(), ae(), Am(), ao(), bc(), be(), bf(), Bi() (+82 more)
 
 ### Community 13 - "Voice Conversation State"
-Cohesion: 0.09
-Nodes (38): ai(), as(), Bo(), bs(), bu(), ds(), es(), G() (+30 more)
+Cohesion: 0.08
+Nodes (39): ai(), as(), Bo(), bu(), cs(), ds(), et(), ex() (+31 more)
 
 ### Community 14 - "React Collection Rendering"
 Cohesion: 0.11
@@ -463,10 +461,6 @@ Nodes (13): LLMProviderUnavailableError, No LLM provider is available to handle 
 ### Community 27 - "Logging Event Buffer"
 Cohesion: 0.16
 Nodes (9): LogRecord, LogBuffer, AbstractEventLoop, Any, Queue, Stdlib log handler that retains recent records and fans them out live., Register the event loop used to deliver live records to subscribers., Return the most recent records (oldest first), capped at ``limit``. (+1 more)
-
-### Community 28 - "WhatsApp Channel Integration"
-Cohesion: 0.07
-Nodes (27): Any, Message, WhatsApp channel — sends responses via Evolution API v2.  Incoming messages are, Send a voice note via Evolution API v2.          POST /message/sendWhatsAppAudio, WhatsApp outbound channel via Evolution API v2.      Sends text (and optionally, Initialize the HTTP client for Evolution API calls., Close the HTTP client., Send a response message to a WhatsApp contact.          The recipient JID is ext (+19 more)
 
 ### Community 29 - "TypeScript Compiler Configuration"
 Cohesion: 0.08
@@ -525,12 +519,12 @@ Cohesion: 0.12
 Nodes (18): Any, System-prompt assembly for the agent.  Builds the per-turn system prompt from th, Append a concrete live tool inventory to the base system prompt.      Grouping b, Assembles the per-turn system prompt (tools + memory + voice style)., Replace the editable base prompt for subsequent turns., Return the full system prompt for this turn., Read user-curated memory files and format them for the system prompt.          E, SystemPromptBuilder (+10 more)
 
 ### Community 43 - "Frontend Development Dependencies"
-Cohesion: 0.05
-Nodes (73): aa(), an(), bn(), cn(), Cx(), dk(), dn(), dt() (+65 more)
+Cohesion: 0.10
+Nodes (42): an(), bn(), cn(), Cx(), dn(), dt(), Dx(), en() (+34 more)
 
 ### Community 44 - "Logs and Configuration Types"
 Cohesion: 0.08
-Nodes (53): health, authoritativeHealthIdentity(), browserDefaults(), clearToken(), connectionCandidates(), currentToken(), discardActiveCredential(), getConnectionSettings() (+45 more)
+Nodes (52): health, authoritativeHealthIdentity(), browserDefaults(), clearToken(), connectionCandidates(), currentToken(), discardActiveCredential(), getConnectionSettings() (+44 more)
 
 ### Community 45 - "Gemini Provider Adapter"
 Cohesion: 0.16
@@ -553,12 +547,12 @@ Cohesion: 0.18
 Nodes (23): auth_status(), AuthStatus, _client_key(), health(), HealthResponse, _is_loopback_request(), _limit_attempts(), login() (+15 more)
 
 ### Community 50 - "Shell Command Allowlist"
-Cohesion: 0.12
-Nodes (38): af(), appendChild(), bt(), constructor(), createElement(), createLog(), currentNode(), destroy() (+30 more)
+Cohesion: 0.11
+Nodes (40): af(), appendChild(), bt(), constructor(), createElement(), createLog(), currentNode(), destroy() (+32 more)
 
 ### Community 51 - "Voice Activity Detection"
-Cohesion: 0.05
-Nodes (39): Speech-to-text transcription failed., STTError, AudioPlayer, Audio I/O — microphone capture and speaker playback.  Uses sounddevice for cross, Bounded source fed by authenticated WebSocket PCM frames., Validate and enqueue one little-endian PCM16 frame without blocking., Play audio through the default output device., RemoteAudioSource (+31 more)
+Cohesion: 0.04
+Nodes (51): CallbackFlags, Speech-to-text transcription failed., STTError, AudioPlayer, LocalAudioSource, ndarray, Audio I/O — microphone capture and speaker playback.  Uses sounddevice for cross, sounddevice callback — runs on the audio thread. (+43 more)
 
 ### Community 52 - "Audio Capture Playback"
 Cohesion: 0.06
@@ -597,7 +591,7 @@ Cohesion: 0.24
 Nodes (7): Scope, Response, SPA-aware static file serving.  Subclasses Starlette's StaticFiles to return ind, StaticFiles that falls back to index.html for SPA routing.      For any path tha, Serve index.html as fallback., SPAStaticFiles, StaticFiles
 
 ### Community 61 - "Application Settings Models"
-Cohesion: 0.11
+Cohesion: 0.10
 Nodes (12): CredentialStore, Boolean, Int, Long, String, AppModule, Context, CoroutineDispatcher (+4 more)
 
 ### Community 62 - "Voice Model Downloads"
@@ -642,7 +636,7 @@ Nodes (47): usesRemoteAudio(), MCPServerStatus, ToolAuditEntry, CommandDeck(), L
 
 ### Community 72 - "Application Shell Theming"
 Cohesion: 0.05
-Nodes (74): CapabilityNode, NodePolicy, CapabilityNodes(), mockApi, mockStatus, RESIZE_HANDLES, ResizeHandles(), TitleBar() (+66 more)
+Nodes (78): CapabilityNode, NodePolicy, CapabilityNodes(), mockApi, mockStatus, ServerForm(), RESIZE_HANDLES, ResizeHandles() (+70 more)
 
 ### Community 73 - "Streaming Speech Synthesis"
 Cohesion: 0.18
@@ -661,8 +655,8 @@ Cohesion: 0.25
 Nodes (7): Capability nodes and deployment, Desktop architecture, Desktop behavior, graphify, Project architecture, Realtime contracts, Verification gates
 
 ### Community 78 - "Single Page Middleware"
-Cohesion: 0.06
-Nodes (21): Wake word detection failed., WakeWordError, AbstractEventLoop, VoiceConfig, ndarray, Voice Activity Detection via Silero VAD.  Wraps Silero VAD behind a chunk-orient, Reset the iterator state between utterances., Detect speech start and end boundaries in streaming audio.      Args:         th (+13 more)
+Cohesion: 0.05
+Nodes (31): DaxError, Exception, Domain exception hierarchy for Dax Assistant., MCP tool execution failed., Tool was found but execution failed., Database or persistence operation failed., Wake word detection failed., Base exception for all Dax errors. (+23 more)
 
 ### Community 79 - "Conversation API Routes"
 Cohesion: 0.27
@@ -705,8 +699,8 @@ Cohesion: 0.50
 Nodes (4): Built Frontend Assets, Production SPA Shell, Development SPA Shell, React TypeScript Entrypoint
 
 ### Community 95 - "Speaker Voice Enrollment"
-Cohesion: 0.12
-Nodes (16): createRemotePtt(), encodePcm16(), PcmFrameBatcher, pushToTalk, RemoteMicrophone, remotePtt, resampleMono(), StreamingMonoResampler (+8 more)
+Cohesion: 0.14
+Nodes (13): createRemotePtt(), encodePcm16(), PcmFrameBatcher, pushToTalk, RemoteMicrophone, remotePtt, resampleMono(), StreamingMonoResampler (+5 more)
 
 ### Community 96 - "MemoryTab.tsx"
 Cohesion: 0.07
@@ -805,8 +799,8 @@ Cohesion: 0.16
 Nodes (27): ChatActivity, ChatApproval, ApprovalDialog(), assistantBrush(), AssistantMark(), AssistantTurn(), ChatThread(), decisionLabel() (+19 more)
 
 ### Community 169 - ".from_config_path"
-Cohesion: 0.07
-Nodes (23): DaxApp, Path, Create a DaxApp instance from a config file path., Apply the configured prompt to the live agent for its next turn., Expose FastAPI app for testing., Initialize all components in dependency order., Restart the Telegram channel to apply config changes without a full         app, Serialize live voice reloads so repeated UI saves remain safe. (+15 more)
+Cohesion: 0.04
+Nodes (40): DaxApp, Path, Create a DaxApp instance from a config file path., Apply the configured prompt to the live agent for its next turn., Expose FastAPI app for testing., Initialize all components in dependency order., Restart the Telegram channel to apply config changes without a full         app, Serialize live voice reloads so repeated UI saves remain safe. (+32 more)
 
 ### Community 170 - "Dax Desktop"
 Cohesion: 0.33
@@ -889,7 +883,7 @@ Cohesion: 0.09
 Nodes (19): CapabilityCheck, CapabilityReport, CheckId, AUDIO_FORMAT, COMMUNICATION_DEVICE_SELECTABLE, HFP_PROFILE, MEDIA_BUTTON, MICROPHONE_CAPTURE (+11 more)
 
 ### Community 222 - ".server_lookup"
-Cohesion: 0.21
+Cohesion: 0.23
 Nodes (12): Failed, Final, Boolean, Int, Pair, String, Partial, ReadyForSpeech (+4 more)
 
 ### Community 223 - ".events"
@@ -1120,10 +1114,6 @@ Nodes (4): Any, Send data to all connected WebSocket clients., Route *data* by i
 Cohesion: 0.22
 Nodes (6): AppViewModel, Boolean, StateFlow, String, ViewModel, SetupUiState
 
-### Community 291 - "isValidPairingCode"
-Cohesion: 0.33
-Nodes (3): Map a spoken answer to a decision string (es/en)., The spoken-confirmation parser (voice approval)., TestYesNoParser
-
 ### Community 292 - "RemoteVoiceClientTest"
 Cohesion: 0.25
 Nodes (8): android, backend, capability_node, desktop, additionalProperties, required, type, api_compatibility
@@ -1196,11 +1186,11 @@ Nodes (3): Path, Encrypted persistence tests for MCP OAuth credentials., test_le
 ## Suggested Questions
 _Questions this graph is uniquely positioned to answer:_
 
-- **Why does `VoiceConfig` connect `Configuration API Routes` to `FirstRun.tsx`, `Frontend Runtime Internals`, `isValidPairingCode`, `test_settings_coverage.py`, `Agent Message Processing`, `.to_json`, `WebChannel`, `Encrypted Secret Storage`, `registry.py`, `.connection`, `Voice Activity Detection`, `WebChannel`, `Core Configuration Models`?**
+- **Why does `VoiceConfig` connect `Configuration API Routes` to `FirstRun.tsx`, `Frontend Runtime Internals`, `test_settings_coverage.py`, `Agent Message Processing`, `.to_json`, `WebChannel`, `Encrypted Secret Storage`, `registry.py`, `.connection`, `Voice Activity Detection`, `WebChannel`, `Core Configuration Models`?**
   _High betweenness centrality (0.031) - this node is a cross-community bridge._
-- **Why does `MessageBus` connect `Webhook API Tests` to `Frontend Runtime Internals`, `Application Storage Lifecycle`, `Collection Cursor Operations`, `.connection`, `Configuration API Routes`, `MCP Configuration Routes`, `System API Tests`, `Selection and Syntax Utilities`, `TestYesNoParser`, `6.2 Parity checklist`, `Web Dependency Injection`, `Human Approval Workflow`, `FirstRun.tsx`, `10. Phased milestones`, `isValidPairingCode`, `.from_config_path`, `WebChannel`, `Voice Activity Detection`, `Shared Test Fixtures`, `filter_tools_by_relevance`, `websocket_logs`, `websocket_capabilities`, `_make_app`, `TestInitialSetup`, `Single Page Middleware`, `Authentication Flow Tests`, `AppViewModel`, `.from_config_path`, `Speaker`?**
+- **Why does `MessageBus` connect `Webhook API Tests` to `Frontend Runtime Internals`, `Application Storage Lifecycle`, `Collection Cursor Operations`, `.connection`, `Configuration API Routes`, `MCP Configuration Routes`, `System API Tests`, `Selection and Syntax Utilities`, `TestYesNoParser`, `6.2 Parity checklist`, `Web Dependency Injection`, `Human Approval Workflow`, `FirstRun.tsx`, `10. Phased milestones`, `.from_config_path`, `WebChannel`, `Voice Activity Detection`, `Shared Test Fixtures`, `filter_tools_by_relevance`, `websocket_logs`, `websocket_capabilities`, `_make_app`, `TestInitialSetup`, `Single Page Middleware`, `Authentication Flow Tests`, `AppViewModel`, `.from_config_path`, `Speaker`?**
   _High betweenness centrality (0.029) - this node is a cross-community bridge._
-- **Why does `SecretStore` connect `Encrypted Secret Storage` to `test_config_io.py`, `Application Storage Lifecycle`, `Agent Message Processing`, `OAuth Webhook Integration`, `React Collection Rendering`, `Configuration API Routes`, `System API Tests`, `Webhook API Tests`, `Core Configuration Models`, `WhatsApp Channel Integration`, `Web Dependency Injection`, `whatsapp_webhook`, `FirstRun.tsx`, `10. Phased milestones`, `Secure Configuration Serialization`, `6.0 SETTINGS INFORMATION ARCHITECTURE (authoritative, 2026-07-19)`, `LLM Provider Factory`, `.from_config_path`, `websocket_capabilities`, `TestInitialSetup`, `test_legacy_oauth_files_migrate_encrypted`, `Authentication Flow Tests`, `.from_config_path`?**
+- **Why does `SecretStore` connect `Encrypted Secret Storage` to `test_config_io.py`, `Application Storage Lifecycle`, `Agent Message Processing`, `OAuth Webhook Integration`, `React Collection Rendering`, `Configuration API Routes`, `System API Tests`, `Webhook API Tests`, `Core Configuration Models`, `Web Dependency Injection`, `whatsapp_webhook`, `FirstRun.tsx`, `10. Phased milestones`, `Secure Configuration Serialization`, `6.0 SETTINGS INFORMATION ARCHITECTURE (authoritative, 2026-07-19)`, `LLM Provider Factory`, `.from_config_path`, `websocket_capabilities`, `TestInitialSetup`, `test_legacy_oauth_files_migrate_encrypted`, `Authentication Flow Tests`, `.from_config_path`?**
   _High betweenness centrality (0.028) - this node is a cross-community bridge._
 - **Are the 80 inferred relationships involving `i()` (e.g. with `ac()` and `Ad()`) actually correct?**
   _`i()` has 80 INFERRED edges - model-reasoned connections that need verification._
