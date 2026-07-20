@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import threading
 from typing import Any
 
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect
@@ -24,6 +25,7 @@ logger = logging.getLogger(__name__)
 # keeps a misbehaving or hostile client from growing the interest set forever.
 _MAX_SESSIONS_PER_CLIENT = 32
 _SESSION_CONTROL_TYPES = frozenset({"session_subscribe", "session_unsubscribe"})
+_SEND_TIMEOUT_SECONDS = 5.0
 
 
 def _parse_session_control(data: dict[str, Any]) -> tuple[str, list[str], bool]:
@@ -54,13 +56,13 @@ class WebSocketManager:
     """Manages active WebSocket connections and their session interests.
 
     A single-user assistant still has several concurrent clients — a browser
-    tab, the desktop app, and the phone. They must not see each other's
-    frames: ``session_id`` scopes a conversation, and a client only receives
-    frames for sessions it has spoken on.
+    tab, the desktop app, and the phone. Text messages are shared across those
+    authenticated clients, while ``session_id`` keeps transient agent controls
+    and approval decisions attached to the clients participating in that turn.
 
     Interest is registered explicitly by subscription frames and implicitly
-    when a client publishes a message with a ``session_id``. Frames with no
-    session still broadcast; session-scoped frames never do.
+    when a client publishes a message with a ``session_id``. Unscoped frames
+    and text messages broadcast; scoped control frames never do.
     """
 
     def __init__(self) -> None:
@@ -71,30 +73,39 @@ class WebSocketManager:
         # the desktop can show whether the phone is actually attached rather
         # than only when it last asked for a token.
         self._devices: dict[int, str] = {}
+        self._send_locks: dict[int, asyncio.Lock] = {}
+        self._state_lock = threading.RLock()
 
     async def connect(self, websocket: WebSocket, device_id: str | None = None) -> None:
         await websocket.accept()
-        self._connections.append(websocket)
-        self._interests[id(websocket)] = set()
-        if device_id:
-            self._devices[id(websocket)] = device_id
+        with self._state_lock:
+            self._connections.append(websocket)
+            self._interests[id(websocket)] = set()
+            self._send_locks[id(websocket)] = asyncio.Lock()
+            if device_id:
+                self._devices[id(websocket)] = device_id
+            connection_count = len(self._connections)
         logger.info(
             "WebSocket client connected (total: %d%s)",
-            len(self._connections),
+            connection_count,
             f", device {device_id}" if device_id else "",
         )
 
     def disconnect(self, websocket: WebSocket) -> None:
-        if websocket in self._connections:
-            self._connections.remove(websocket)
-        self._interests.pop(id(websocket), None)
-        self._devices.pop(id(websocket), None)
-        logger.info("WebSocket client disconnected (total: %d)", len(self._connections))
+        with self._state_lock:
+            if websocket in self._connections:
+                self._connections.remove(websocket)
+            self._interests.pop(id(websocket), None)
+            self._devices.pop(id(websocket), None)
+            self._send_locks.pop(id(websocket), None)
+            connection_count = len(self._connections)
+        logger.info("WebSocket client disconnected (total: %d)", connection_count)
 
     @property
     def connected_device_ids(self) -> set[str]:
         """Devices with a live chat socket right now."""
-        return set(self._devices.values())
+        with self._state_lock:
+            return set(self._devices.values())
 
     def register_interest(self, websocket: WebSocket, session_id: str) -> bool:
         """Record that *websocket* owns ``session_id``.
@@ -102,33 +113,36 @@ class WebSocketManager:
         Called when a client publishes on a session. Bounded so a client that
         churns through sessions cannot grow this set without limit.
         """
-        interests = self._interests.get(id(websocket))
-        if interests is None:
-            return False
-        if session_id not in interests and len(interests) >= _MAX_SESSIONS_PER_CLIENT:
-            logger.warning(
-                "WebSocket client reached the %d-session limit",
-                _MAX_SESSIONS_PER_CLIENT,
-            )
-            return False
-        interests.add(session_id)
-        return True
+        with self._state_lock:
+            interests = self._interests.get(id(websocket))
+            if interests is None:
+                return False
+            if session_id not in interests and len(interests) >= _MAX_SESSIONS_PER_CLIENT:
+                logger.warning(
+                    "WebSocket client reached the %d-session limit",
+                    _MAX_SESSIONS_PER_CLIENT,
+                )
+                return False
+            interests.add(session_id)
+            return True
 
     def subscribe(self, websocket: WebSocket, session_ids: list[str]) -> bool:
         """Atomically add session ownership, respecting the per-client cap."""
-        interests = self._interests.get(id(websocket))
-        if interests is None:
-            return False
-        if len(interests | set(session_ids)) > _MAX_SESSIONS_PER_CLIENT:
-            return False
-        interests.update(session_ids)
-        return True
+        with self._state_lock:
+            interests = self._interests.get(id(websocket))
+            if interests is None:
+                return False
+            if len(interests | set(session_ids)) > _MAX_SESSIONS_PER_CLIENT:
+                return False
+            interests.update(session_ids)
+            return True
 
     def unsubscribe(self, websocket: WebSocket, session_ids: list[str]) -> None:
         """Release session ownership for a connected client."""
-        interests = self._interests.get(id(websocket))
-        if interests is not None:
-            interests.difference_update(session_ids)
+        with self._state_lock:
+            interests = self._interests.get(id(websocket))
+            if interests is not None:
+                interests.difference_update(session_ids)
 
     def owns_session(self, websocket: WebSocket, session_id: str) -> bool:
         """True when *websocket* has subscribed to or published on ``session_id``.
@@ -136,30 +150,34 @@ class WebSocketManager:
         Gates approval resolution: a client may only answer confirmations for
         conversations it started.
         """
-        return session_id in self._interests.get(id(websocket), frozenset())
+        with self._state_lock:
+            return session_id in self._interests.get(id(websocket), frozenset())
 
     def _subscribers(self, session_id: str) -> list[WebSocket]:
-        return [ws for ws in self._connections if session_id in self._interests.get(id(ws), ())]
+        with self._state_lock:
+            return [
+                ws
+                for ws in self._connections
+                if session_id in self._interests.get(id(ws), ())
+            ]
+
+    def _connection_snapshot(self) -> list[WebSocket]:
+        with self._state_lock:
+            return list(self._connections)
 
     async def send_to(self, websocket: WebSocket, data: dict[str, Any]) -> None:
         """Send data to a specific WebSocket connection."""
-        try:
-            await websocket.send_json(data)
-        except Exception:
-            logger.warning("Failed to send to WebSocket, removing connection")
-            self.disconnect(websocket)
+        await self._send_one(websocket, data)
 
     async def broadcast(self, data: dict[str, Any]) -> None:
         """Send data to all connected WebSocket clients."""
-        await self._send_many(self._connections, data)
+        await self._send_many(self._connection_snapshot(), data)
 
     async def dispatch(self, data: dict[str, Any]) -> None:
         """Route *data* by its ``session_id``.
 
-        Session-scoped frames reach only the clients that own the session, so
-        the phone never renders the desktop's conversation and vice versa. A
-        Frames without a session broadcast. A session-scoped frame with no
-        subscriber is discarded instead of leaking to unrelated clients.
+        Every frame carrying a session ID reaches only clients subscribed to
+        that session. Frames without one are intentionally global.
         """
         session_id = data.get("session_id")
         if "session_id" in data:
@@ -170,7 +188,7 @@ class WebSocketManager:
                     return
             logger.warning("Dropping frame for invalid or unowned session %r", session_id)
             return
-        await self._send_many(self._connections, data)
+        await self._send_many(self._connection_snapshot(), data)
 
     async def deliver_approval(self, data: dict[str, Any]) -> None:
         """Deliver a confirmation request only to the client that can answer it.
@@ -189,7 +207,7 @@ class WebSocketManager:
                 else []
             )
         else:
-            targets = self._connections
+            targets = self._connection_snapshot()
         if not targets:
             logger.warning(
                 "No client owns session %r — confirmation for '%s' will be denied",
@@ -200,18 +218,28 @@ class WebSocketManager:
         await self._send_many(targets, data)
 
     async def _send_many(self, targets: list[WebSocket], data: dict[str, Any]) -> None:
-        disconnected: list[WebSocket] = []
-        for ws in targets:
-            try:
-                await ws.send_json(data)
-            except Exception:
-                disconnected.append(ws)
-        for ws in disconnected:
-            self.disconnect(ws)
+        await asyncio.gather(*(self._send_one(ws, data) for ws in targets))
+
+    async def _send_one(self, websocket: WebSocket, data: dict[str, Any]) -> None:
+        with self._state_lock:
+            send_lock = self._send_locks.get(id(websocket))
+        if send_lock is None:
+            return
+        try:
+            async with asyncio.timeout(_SEND_TIMEOUT_SECONDS):
+                async with send_lock:
+                    with self._state_lock:
+                        if websocket not in self._connections:
+                            return
+                    await websocket.send_json(data)
+        except Exception:
+            logger.warning("Failed to send to WebSocket, removing connection")
+            self.disconnect(websocket)
 
     @property
     def connection_count(self) -> int:
-        return len(self._connections)
+        with self._state_lock:
+            return len(self._connections)
 
 
 # Module-level manager instance — shared across the app
@@ -349,8 +377,8 @@ async def websocket_chat(websocket: WebSocket) -> None:
                 continue
             if isinstance(session_id, str) and session_id:
                 metadata["session_id"] = session_id
-                # Claim the session so replies, agent events, and confirmations
-                # for it route back to this connection instead of every client.
+                # Claim the session so transient agent events and confirmations
+                # route only to participating clients. Text replies remain shared.
                 ws_manager.register_interest(websocket, session_id)
 
             message = Message(

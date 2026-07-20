@@ -630,21 +630,21 @@ class TestAgentShellGate:
         tools = _MockTools()
         agent = Agent(
             bus=bus,
-            llm=_shell_then_text("git status"),  # type: ignore[arg-type]
+            llm=_shell_then_text("ls -la"),  # type: ignore[arg-type]
             tools=tools,  # type: ignore[arg-type]
             storage=_MockStorage(),  # type: ignore[arg-type]
             policy=ToolPolicy(),
             approval=approval,
-            shell_allow=ShellAllowlist(["git"]),
+            shell_allow=ShellAllowlist(["ls"]),
         )
         await agent.start()
-        await bus.publish_inbound(Message(content="run git"))
+        await bus.publish_inbound(Message(content="list files"))
         await asyncio.wait_for(bus.consume_outbound(), timeout=2.0)
         assert asked is False  # never prompted
         assert len(tools.executed_calls) == 1
         await agent.stop()
 
-    async def test_unknown_approve_once_runs_without_saving(self):
+    async def test_unsafe_allowlisted_approve_once_still_requires_approval(self):
         from dax.core.policy import ToolPolicy
         from dax.core.shell_allow import ShellAllowlist
         from dax.orchestrator.approval import ApprovalManager
@@ -654,12 +654,12 @@ class TestAgentShellGate:
         approval = ApprovalManager(timeout_seconds=5)
 
         async def notifier(payload: dict[str, Any]) -> None:
-            assert payload["options"] == ["once", "save"]
+            assert payload["options"] == ["once"]
             approval.resolve(payload["approval_id"], "once")
 
         approval.set_notifier(notifier)
         tools = _MockTools()
-        allow = ShellAllowlist(["git"])
+        allow = ShellAllowlist(["ls", "flatpak"])
         agent = Agent(
             bus=bus,
             llm=_shell_then_text("flatpak run spotify"),  # type: ignore[arg-type]
@@ -673,7 +673,7 @@ class TestAgentShellGate:
         await bus.publish_inbound(Message(content="open spotify"))
         await asyncio.wait_for(bus.consume_outbound(), timeout=2.0)
         assert len(tools.executed_calls) == 1
-        assert "flatpak" not in allow.items()  # ran but not remembered
+        assert "flatpak" in allow.items()  # membership did not bypass approval
         await agent.stop()
 
     async def test_unknown_approve_save_persists(self):
@@ -691,10 +691,10 @@ class TestAgentShellGate:
 
         approval.set_notifier(notifier)
         tools = _MockTools()
-        allow = ShellAllowlist(["git"], on_change=lambda cmds: saved.append(cmds[-1]))
+        allow = ShellAllowlist(["ls"], on_change=lambda cmds: saved.append(cmds[-1]))
         agent = Agent(
             bus=bus,
-            llm=_shell_then_text("flatpak run spotify"),  # type: ignore[arg-type]
+            llm=_shell_then_text("date --iso-8601"),  # type: ignore[arg-type]
             tools=tools,  # type: ignore[arg-type]
             storage=_MockStorage(),  # type: ignore[arg-type]
             policy=ToolPolicy(),
@@ -702,11 +702,11 @@ class TestAgentShellGate:
             shell_allow=allow,
         )
         await agent.start()
-        await bus.publish_inbound(Message(content="open spotify"))
+        await bus.publish_inbound(Message(content="show the date"))
         await asyncio.wait_for(bus.consume_outbound(), timeout=2.0)
         assert len(tools.executed_calls) == 1
-        assert "flatpak" in allow.items()  # remembered
-        assert saved == ["flatpak"]  # persistence hook fired
+        assert "date" in allow.items()  # remembered
+        assert saved == ["date"]  # persistence hook fired
         await agent.stop()
 
     async def test_unknown_denied_blocks(self):

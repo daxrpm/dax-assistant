@@ -17,17 +17,24 @@ from __future__ import annotations
 
 import logging
 import secrets
-from typing import Any
+from typing import Annotated, Any
 
-from fastapi import APIRouter, Request, Response, status
-from pydantic import BaseModel
+from fastapi import APIRouter, Depends, HTTPException, Request, Response, status
+from pydantic import BaseModel, ValidationError
 
 from dax.core.models import ChannelType, Language, Message, MessageRole
-from dax.web.dependencies import BusDep, ConfigDep
+from dax.storage.secrets import SecretStore
+from dax.web.dependencies import BusDep, ConfigDep, SecretStoreDep
 
 router = APIRouter(tags=["webhooks"])
 
 logger = logging.getLogger(__name__)
+
+_MAX_WEBHOOK_BYTES = 1_048_576
+_WEBHOOK_SECRET_KEYS = (
+    "DAX_WHATSAPP__WEBHOOK_SECRET",
+    "DAX_WHATSAPP__EVOLUTION_API_KEY",
+)
 
 
 class WebhookEnvelope(BaseModel):
@@ -42,12 +49,47 @@ class WebhookEnvelope(BaseModel):
     apikey: str = ""
 
 
+async def _bounded_payload(request: Request) -> WebhookEnvelope:
+    body = bytearray()
+    async for chunk in request.stream():
+        body.extend(chunk)
+        if len(body) > _MAX_WEBHOOK_BYTES:
+            raise HTTPException(status.HTTP_413_CONTENT_TOO_LARGE)
+    try:
+        return WebhookEnvelope.model_validate_json(body)
+    except ValidationError as exc:
+        raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY) from exc
+
+
+WebhookPayloadDep = Annotated[WebhookEnvelope, Depends(_bounded_payload)]
+
+
+def _webhook_secret(config: ConfigDep, store: SecretStore) -> str | None:
+    """Resolve persisted secrets, failing rather than silently disabling auth."""
+    stored = [store.get(key) for key in _WEBHOOK_SECRET_KEYS]
+    configured = [
+        config.whatsapp.webhook_secret,
+        config.whatsapp.evolution_api_key,
+    ]
+    for configured_value, stored_value in zip(configured, stored, strict=True):
+        if configured_value:
+            if configured_value.startswith("{env:"):
+                if not stored_value:
+                    raise RuntimeError("configured webhook secret is unavailable")
+                return stored_value
+            return configured_value
+        if stored_value:
+            return stored_value
+    return None
+
+
 @router.post("/whatsapp")
 async def whatsapp_webhook(
     request: Request,
-    payload: WebhookEnvelope,
+    payload: WebhookPayloadDep,
     config: ConfigDep,
     bus: BusDep,
+    store: SecretStoreDep,
 ) -> Response:
     """Receive and process WhatsApp messages from Evolution API v2.
 
@@ -57,14 +99,23 @@ async def whatsapp_webhook(
 
     All other event types are logged and acknowledged.
     """
-    # Reject unauthenticated callers when a shared secret is configured.
+    if not config.whatsapp.enabled:
+        return Response(status_code=status.HTTP_404_NOT_FOUND)
+
+    # An enabled public webhook must always have a shared secret.
     # Evolution sends the instance API key in the `apikey` header.
-    expected = config.whatsapp.webhook_secret or config.whatsapp.evolution_api_key
-    if expected:
-        provided = request.headers.get("apikey") or payload.apikey
-        if not provided or not secrets.compare_digest(provided, expected):
-            logger.warning("Rejected WhatsApp webhook with invalid/missing secret")
-            return Response(status_code=status.HTTP_401_UNAUTHORIZED)
+    try:
+        expected = _webhook_secret(config, store)
+    except Exception:
+        logger.exception("WhatsApp webhook secret is unavailable")
+        return Response(status_code=status.HTTP_503_SERVICE_UNAVAILABLE)
+    if not expected:
+        logger.error("WhatsApp is enabled without a webhook secret")
+        return Response(status_code=status.HTTP_503_SERVICE_UNAVAILABLE)
+    provided = request.headers.get("apikey") or payload.apikey
+    if not provided or not secrets.compare_digest(provided, expected):
+        logger.warning("Rejected WhatsApp webhook with invalid/missing secret")
+        return Response(status_code=status.HTTP_401_UNAUTHORIZED)
 
     # Only process message events
     if payload.event != "messages.upsert":

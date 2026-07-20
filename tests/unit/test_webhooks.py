@@ -13,6 +13,8 @@ from dax.orchestrator.bus import MessageBus
 from dax.web.server import create_app
 
 if TYPE_CHECKING:
+    from pathlib import Path
+
     from fastapi import FastAPI
 
 
@@ -24,8 +26,11 @@ def bus() -> MessageBus:
 
 
 @pytest.fixture
-def app(bus: MessageBus) -> FastAPI:
-    config = DaxConfig()
+def app(bus: MessageBus, tmp_path: Path) -> FastAPI:
+    config = DaxConfig(
+        storage={"database_path": str(tmp_path / "dax.db")},
+        whatsapp={"enabled": True, "webhook_secret": "s3cr3t"},
+    )
     fastapi_app = create_app(config=config, bus=bus)
     fastapi_app.state.config = config
     fastapi_app.state.bus = bus
@@ -36,7 +41,11 @@ def app(bus: MessageBus) -> FastAPI:
 @pytest.fixture
 async def client(app: FastAPI) -> AsyncClient:
     transport = ASGITransport(app=app)
-    async with AsyncClient(transport=transport, base_url="http://test") as ac:
+    async with AsyncClient(
+        transport=transport,
+        base_url="http://test",
+        headers={"apikey": "s3cr3t"},
+    ) as ac:
         yield ac  # type: ignore[misc]
 
 
@@ -217,8 +226,11 @@ class TestWhatsAppWebhook:
 
 
 @pytest.fixture
-def secured_app(bus: MessageBus) -> FastAPI:
-    config = DaxConfig(whatsapp={"webhook_secret": "s3cr3t"})
+def secured_app(bus: MessageBus, tmp_path: Path) -> FastAPI:
+    config = DaxConfig(
+        storage={"database_path": str(tmp_path / "dax.db")},
+        whatsapp={"enabled": True, "webhook_secret": "s3cr3t"},
+    )
     app = create_app(config=config, bus=bus)
     app.state.config = config
     app.state.bus = bus
@@ -234,6 +246,23 @@ async def secured_client(secured_app: FastAPI) -> AsyncClient:
 
 
 class TestWebhookSecret:
+    async def test_disabled_integration_is_not_public(
+        self, client: AsyncClient, app: FastAPI, bus: MessageBus,
+    ):
+        app.state.config.whatsapp.enabled = False
+        resp = await client.post("/webhook/whatsapp", json=_make_text_webhook("hi"))
+        assert resp.status_code == 404
+        assert bus.inbound_pending == 0
+
+    async def test_enabled_integration_requires_a_secret(
+        self, client: AsyncClient, app: FastAPI, bus: MessageBus,
+    ):
+        app.state.config.whatsapp.webhook_secret = ""
+        app.state.config.whatsapp.evolution_api_key = ""
+        resp = await client.post("/webhook/whatsapp", json=_make_text_webhook("hi"))
+        assert resp.status_code == 503
+        assert bus.inbound_pending == 0
+
     async def test_missing_secret_rejected(
         self, secured_client: AsyncClient, bus: MessageBus
     ):
@@ -264,3 +293,38 @@ class TestWebhookSecret:
         )
         assert resp.status_code == 200
         assert bus.inbound_pending == 1
+
+    async def test_secret_store_error_fails_closed(
+        self, secured_client: AsyncClient, bus: MessageBus, monkeypatch,
+    ):
+        from dax.storage.secrets import SecretStore
+
+        def fail_get(self, key: str) -> str | None:
+            raise OSError("secret store unavailable")
+
+        monkeypatch.setattr(SecretStore, "get", fail_get)
+        resp = await secured_client.post(
+            "/webhook/whatsapp",
+            json=_make_text_webhook("hi"),
+            headers={"apikey": "s3cr3t"},
+        )
+        assert resp.status_code == 503
+        assert bus.inbound_pending == 0
+
+    async def test_configured_but_unavailable_secret_fails_closed(
+        self, client: AsyncClient, app: FastAPI, bus: MessageBus,
+    ):
+        app.state.config.whatsapp.webhook_secret = (
+            "{env:DAX_WHATSAPP__WEBHOOK_SECRET}"
+        )
+        resp = await client.post("/webhook/whatsapp", json=_make_text_webhook("hi"))
+        assert resp.status_code == 503
+        assert bus.inbound_pending == 0
+
+    async def test_oversized_payload_rejected(
+        self, client: AsyncClient, bus: MessageBus,
+    ):
+        payload = _make_text_webhook("x" * 1_048_576)
+        resp = await client.post("/webhook/whatsapp", json=payload)
+        assert resp.status_code == 413
+        assert bus.inbound_pending == 0

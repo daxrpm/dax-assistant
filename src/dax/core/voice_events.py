@@ -82,6 +82,7 @@ class VoiceEventHub:
     def __init__(self, loop: asyncio.AbstractEventLoop | None = None) -> None:
         self._loop = loop
         self._subscribers: set[asyncio.Queue[VoiceEvent]] = set()
+        self._subscriber_lock = threading.Lock()
         self._last_state: VoiceEvent | None = None
         self._dropped = 0
         self._owner: str | None = None
@@ -107,7 +108,8 @@ class VoiceEventHub:
         The pipeline checks this before computing level frames, so metering
         costs nothing on a headless server with no UI attached.
         """
-        return bool(self._subscribers)
+        with self._subscriber_lock:
+            return bool(self._subscribers)
 
     @property
     def last_state(self) -> VoiceEvent | None:
@@ -121,8 +123,10 @@ class VoiceEventHub:
     def subscribe(self) -> asyncio.Queue[VoiceEvent]:
         """Register a new subscriber and return its queue."""
         queue: asyncio.Queue[VoiceEvent] = asyncio.Queue(maxsize=_QUEUE_MAXSIZE)
-        self._subscribers.add(queue)
-        logger.debug("Voice event subscriber added (total: %d)", len(self._subscribers))
+        with self._subscriber_lock:
+            self._subscribers.add(queue)
+            subscriber_count = len(self._subscribers)
+        logger.debug("Voice event subscriber added (total: %d)", subscriber_count)
         return queue
 
     @property
@@ -140,8 +144,10 @@ class VoiceEventHub:
 
     def unsubscribe(self, queue: asyncio.Queue[VoiceEvent]) -> None:
         """Remove a subscriber's queue."""
-        self._subscribers.discard(queue)
-        logger.debug("Voice event subscriber removed (total: %d)", len(self._subscribers))
+        with self._subscriber_lock:
+            self._subscribers.discard(queue)
+            subscriber_count = len(self._subscribers)
+        logger.debug("Voice event subscriber removed (total: %d)", subscriber_count)
 
     # -- Emission (pipeline thread side) --
 
@@ -160,7 +166,7 @@ class VoiceEventHub:
             # the transition happened.
             self._last_state = event
 
-        if not self._subscribers or self._loop is None:
+        if not self.has_subscribers or self._loop is None:
             return
 
         # A closed loop (shutdown race) has nothing to deliver to.
@@ -169,7 +175,9 @@ class VoiceEventHub:
 
     def _deliver(self, event: VoiceEvent) -> None:
         """Push *event* onto every subscriber queue. Runs on the event loop."""
-        for queue in self._subscribers:
+        with self._subscriber_lock:
+            subscribers = tuple(self._subscribers)
+        for queue in subscribers:
             try:
                 queue.put_nowait(event)
             except asyncio.QueueFull:

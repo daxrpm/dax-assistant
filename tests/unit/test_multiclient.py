@@ -46,7 +46,7 @@ async def _attach(manager: WebSocketManager, *sessions: str) -> _FakeWebSocket:
 
 
 class TestSessionScopedDelivery:
-    async def test_dispatch_reaches_only_the_owning_client(self):
+    async def test_text_messages_reach_only_session_subscribers(self):
         manager = WebSocketManager()
         phone = await _attach(manager, "phone-1")
         desktop = await _attach(manager, "desktop-1")
@@ -54,6 +54,16 @@ class TestSessionScopedDelivery:
         await manager.dispatch({"type": "message", "session_id": "phone-1", "content": "hi"})
 
         assert [f["content"] for f in phone.sent] == ["hi"]
+        assert desktop.sent == []
+
+    async def test_control_frame_reaches_only_the_owning_client(self):
+        manager = WebSocketManager()
+        phone = await _attach(manager, "phone-1")
+        desktop = await _attach(manager, "desktop-1")
+
+        await manager.dispatch({"type": "agent_event", "session_id": "phone-1"})
+
+        assert len(phone.sent) == 1
         assert desktop.sent == []
 
     async def test_unclaimed_session_broadcasts(self):
@@ -71,7 +81,7 @@ class TestSessionScopedDelivery:
         manager = WebSocketManager()
         a = await _attach(manager, "phone-1")
 
-        await manager.dispatch({"type": "message", "session_id": "nobody-owns-this"})
+        await manager.dispatch({"type": "agent_event", "session_id": "nobody-owns-this"})
 
         assert a.sent == []
 
@@ -80,7 +90,7 @@ class TestSessionScopedDelivery:
         manager = WebSocketManager()
         a = await _attach(manager)
 
-        await manager.dispatch({"type": "message", "session_id": session_id})
+        await manager.dispatch({"type": "agent_event", "session_id": session_id})
 
         assert a.sent == []
 
@@ -105,6 +115,56 @@ class TestSessionScopedDelivery:
 
         assert manager.connection_count == 1
         assert len(healthy.sent) == 1
+
+    async def test_slow_client_does_not_delay_healthy_client(self, monkeypatch):
+        from dax.web.routes import chat
+
+        monkeypatch.setattr(chat, "_SEND_TIMEOUT_SECONDS", 0.05)
+        manager = WebSocketManager()
+        healthy = await _attach(manager, "s")
+        blocked = asyncio.Event()
+
+        class SlowWebSocket(_FakeWebSocket):
+            async def send_json(self, data: dict[str, Any]) -> None:
+                await blocked.wait()
+
+        slow = SlowWebSocket()
+        await manager.connect(slow)  # type: ignore[arg-type]
+        manager.register_interest(slow, "s")  # type: ignore[arg-type]
+
+        task = asyncio.create_task(manager.dispatch({"type": "agent_event", "session_id": "s"}))
+        await asyncio.sleep(0.01)
+
+        assert len(healthy.sent) == 1
+        await task
+        assert manager.connection_count == 1
+
+    async def test_concurrent_sends_are_serialized_per_socket(self):
+        manager = WebSocketManager()
+
+        class ConcurrentWebSocket(_FakeWebSocket):
+            def __init__(self) -> None:
+                super().__init__()
+                self.active = 0
+                self.max_active = 0
+
+            async def send_json(self, data: dict[str, Any]) -> None:
+                self.active += 1
+                self.max_active = max(self.max_active, self.active)
+                await asyncio.sleep(0.01)
+                self.sent.append(data)
+                self.active -= 1
+
+        ws = ConcurrentWebSocket()
+        await manager.connect(ws)  # type: ignore[arg-type]
+
+        await asyncio.gather(
+            manager.send_to(ws, {"sequence": 1}),  # type: ignore[arg-type]
+            manager.send_to(ws, {"sequence": 2}),  # type: ignore[arg-type]
+        )
+
+        assert ws.max_active == 1
+        assert [frame["sequence"] for frame in ws.sent] == [1, 2]
 
     async def test_disconnect_clears_interest(self):
         manager = WebSocketManager()
@@ -141,7 +201,7 @@ class TestSessionScopedDelivery:
         manager.unsubscribe(ws, ["released"])  # type: ignore[arg-type]
 
         assert manager.owns_session(ws, "released") is False  # type: ignore[arg-type]
-        await manager.dispatch({"type": "message", "session_id": "released"})
+        await manager.dispatch({"type": "agent_event", "session_id": "released"})
         assert ws.sent == []
 
     async def test_subscription_limit_is_atomic(self):

@@ -24,13 +24,12 @@ from pathlib import Path
 
 from mcp.server.fastmcp import FastMCP
 
+from dax.core.shell_allow import DEFAULT_SHELL_ALLOW
+
 # Characters that would let a string break out of a single argv token.
 _SHELL_METACHARS = set(";&|`$><\n\\\"'*?(){}[]~!#")
 
-_DEFAULT_SHELL_ALLOW = (
-    "ls,cat,echo,pwd,date,whoami,uname,uptime,df,free,du,ps,hostname,"
-    "id,env,which,head,tail,wc,find,grep,git,python3,node,npm,uv"
-)
+_DEFAULT_SHELL_ALLOW = ",".join(DEFAULT_SHELL_ALLOW)
 
 _MAX_OUTPUT = 8000
 _SHELL_TIMEOUT = 30
@@ -83,12 +82,19 @@ def validate_command(command: str, allowlist: set[str] | None = None) -> list[st
     if not argv:
         raise ValueError("Empty command")
     binary = Path(argv[0]).name
-    if allowlist is not None and binary not in allowlist:
+    if allowlist is not None and (binary not in allowlist or argv[0] != binary):
         raise ValueError(
             f"Command '{binary}' is not in the allowlist. "
             f"Allowed: {', '.join(sorted(allowlist))}"
         )
     return argv
+
+
+def _command_environment() -> dict[str, str]:
+    """Keep inherited settings but prevent user PATH entries shadowing utilities."""
+    env = os.environ.copy()
+    env["PATH"] = os.defpath
+    return env
 
 
 def _truncate(text: str) -> str:
@@ -187,6 +193,7 @@ def build_server() -> FastMCP:
                 text=True,
                 timeout=_SHELL_TIMEOUT,
                 cwd=str(allowed_roots()[0]),
+                env=_command_environment(),
             )
         except subprocess.TimeoutExpired:
             return f"Error: command timed out after {_SHELL_TIMEOUT}s"

@@ -176,6 +176,43 @@ class TestDeviceManagement:
         )
         assert response.status_code == 401
 
+    async def test_revocation_invalidates_an_existing_token(self, client: AsyncClient):
+        device_id, secret = await _enroll(client)
+        token = (
+            await client.post(
+                "/api/auth/devices/token",
+                json={"device_id": device_id, "device_secret": secret},
+            )
+        ).json()["token"]
+        assert client._transport.app.state.auth.validate_token(token) is True  # type: ignore[union-attr]
+
+        assert (await client.post(f"/api/auth/devices/{device_id}/revoke")).status_code == 200
+
+        assert client._transport.app.state.auth.validate_token(token) is False  # type: ignore[union-attr]
+
+    async def test_device_secret_verification_runs_off_event_loop(
+        self, client: AsyncClient, app: FastAPI, monkeypatch
+    ):
+        import threading
+
+        event_loop_thread = threading.get_ident()
+        verification_thread = None
+
+        def verify_secret(_device_id: str, _secret: str) -> bool:
+            nonlocal verification_thread
+            verification_thread = threading.get_ident()
+            return False
+
+        monkeypatch.setattr(app.state.auth.devices, "verify_secret", verify_secret)
+        response = await client.post(
+            "/api/auth/devices/token",
+            json={"device_id": "device", "device_secret": "secret"},
+        )
+
+        assert response.status_code == 401
+        assert verification_thread is not None
+        assert verification_thread != event_loop_thread
+
     async def test_revoked_device_is_still_listed_as_revoked(self, client: AsyncClient):
         device_id, _ = await _enroll(client)
         await client.post(f"/api/auth/devices/{device_id}/revoke")
@@ -266,6 +303,38 @@ class TestAuthGating:
 
         response = await secured.get("/api/status", headers={"Authorization": f"Bearer {token}"})
         assert response.status_code == 200
+
+    async def test_revoked_existing_token_cannot_authenticate_again(self, secured: AsyncClient):
+        login = await secured.post("/api/auth/login", json={"password": "correct-horse"})
+        session_headers = {"Authorization": f"Bearer {login.json()['token']}"}
+        code = (
+            await secured.post("/api/auth/devices/pair", headers=session_headers)
+        ).json()["code"]
+        enrolled = (
+            await secured.post(
+                "/api/auth/devices/enroll",
+                json={"code": code, "name": "phone", "platform": "android"},
+            )
+        ).json()
+        device_token = (
+            await secured.post(
+                "/api/auth/devices/token",
+                json={
+                    "device_id": enrolled["device_id"],
+                    "device_secret": enrolled["device_secret"],
+                },
+            )
+        ).json()["token"]
+        device_headers = {"Authorization": f"Bearer {device_token}"}
+        secured.cookies.clear()
+        assert (await secured.get("/api/status", headers=device_headers)).status_code == 200
+
+        revoke = await secured.post(
+            f"/api/auth/devices/{enrolled['device_id']}/revoke", headers=session_headers
+        )
+
+        assert revoke.status_code == 200
+        assert (await secured.get("/api/status", headers=device_headers)).status_code == 401
 
     async def _device_headers(self, secured: AsyncClient) -> dict[str, str]:
         login = await secured.post("/api/auth/login", json={"password": "correct-horse"})

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 import tomllib
 from typing import TYPE_CHECKING
 
@@ -25,9 +26,7 @@ def store(tmp_path: Path) -> SecretStore:
     return SecretStore(str(tmp_path / "dax.db"))
 
 
-def test_roundtrip_preserves_non_default_fields(
-    tmp_path: Path, store: SecretStore
-) -> None:
+def test_roundtrip_preserves_non_default_fields(tmp_path: Path, store: SecretStore) -> None:
     """A modified config survives dump → load unchanged (no silent field loss)."""
     cfg = DaxConfig()
     cfg.storage.database_path = str(tmp_path / "dax.db")
@@ -58,9 +57,7 @@ def test_roundtrip_preserves_non_default_fields(
     assert reloaded.system_prompt == "Custom encrypted system prompt"
 
 
-def test_secrets_are_never_written_to_toml(
-    tmp_path: Path, store: SecretStore
-) -> None:
+def test_secrets_are_never_written_to_toml(tmp_path: Path, store: SecretStore) -> None:
     """Every declared secret stays out of the TOML file."""
     cfg = DaxConfig()
     cfg.llm.anthropic.api_key = "sk-ant-secret"
@@ -90,9 +87,7 @@ def test_secrets_are_never_written_to_toml(
     assert store.get("DAX_SECURITY__PASSWORD_HASH") == "$argon2id$secret"
 
 
-def test_empty_secret_not_written_as_placeholder(
-    tmp_path: Path, store: SecretStore
-) -> None:
+def test_empty_secret_not_written_as_placeholder(tmp_path: Path, store: SecretStore) -> None:
     """An unset api key must not leak an empty {env:…} ref into the file."""
     cfg = DaxConfig()  # all secrets empty
     path = tmp_path / "dax.toml"
@@ -103,9 +98,7 @@ def test_empty_secret_not_written_as_placeholder(
     assert store.get("ANTHROPIC_API_KEY") is None
 
 
-def test_existing_env_ref_is_not_double_wrapped(
-    tmp_path: Path, store: SecretStore
-) -> None:
+def test_existing_env_ref_is_not_double_wrapped(tmp_path: Path, store: SecretStore) -> None:
     """A field already holding an {env:…} ref is kept verbatim, not re-stored."""
     cfg = DaxConfig()
     cfg.llm.openai.api_key = "{env:OPENAI_API_KEY}"
@@ -117,9 +110,7 @@ def test_existing_env_ref_is_not_double_wrapped(
     assert store.get("OPENAI_API_KEY") is None  # nothing re-persisted
 
 
-def test_sensitive_mcp_headers_are_extracted(
-    tmp_path: Path, store: SecretStore
-) -> None:
+def test_sensitive_mcp_headers_are_extracted(tmp_path: Path, store: SecretStore) -> None:
     """Authorization-style headers move to the store as {env:…} refs."""
     cfg = DaxConfig()
     cfg.mcp.servers["coolify"] = MCPServerConfig(
@@ -149,9 +140,7 @@ def test_secret_fields_cover_known_secret_paths() -> None:
             obj = getattr(obj, part)
 
 
-def test_complete_config_and_mcp_env_are_encrypted(
-    tmp_path: Path, store: SecretStore
-) -> None:
+def test_complete_config_and_mcp_env_are_encrypted(tmp_path: Path, store: SecretStore) -> None:
     cfg = DaxConfig(name="Private Dax")
     cfg.storage.database_path = str(tmp_path / "dax.db")
     cfg.mcp.servers["home"] = MCPServerConfig(
@@ -168,7 +157,30 @@ def test_complete_config_and_mcp_env_are_encrypted(
     stored = load_encrypted_config(store)
     assert stored is not None
     assert stored["name"] == "Private Dax"
-    assert stored["mcp"]["servers"]["home"]["env"]["API_ACCESS_TOKEN"].startswith(
-        "{env:DAX_MCP_"
-    )
+    assert stored["mcp"]["servers"]["home"]["env"]["API_ACCESS_TOKEN"].startswith("{env:DAX_MCP_")
     assert store.get("DAX_MCP_HOME_ENV_API_ACCESS_TOKEN") == "plaintext-token"
+
+
+def test_encrypted_config_secret_batch_rolls_back_on_failure(
+    store: SecretStore, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    cfg = DaxConfig()
+    cfg.llm.anthropic.api_key = "first-secret"
+    cfg.llm.openai.api_key = "second-secret"
+    real_set = store.set
+    calls = 0
+
+    def fail_on_second_set(name: str, value: str) -> None:
+        nonlocal calls
+        calls += 1
+        if calls == 2:
+            raise RuntimeError("injected failure")
+        real_set(name, value)
+
+    monkeypatch.setattr(store, "set", fail_on_second_set)
+
+    with pytest.raises(RuntimeError, match="injected failure"):
+        save_encrypted_config(cfg, store)
+
+    assert store.get("ANTHROPIC_API_KEY") is None
+    assert "ANTHROPIC_API_KEY" not in os.environ

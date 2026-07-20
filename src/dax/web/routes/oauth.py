@@ -15,15 +15,19 @@ and exchanges the auth code for tokens.
 
 from __future__ import annotations
 
+import asyncio
 import hashlib
+import html
+import ipaddress
 import json
 import logging
 import secrets
+import socket
 import time
 from base64 import urlsafe_b64encode
 from pathlib import Path
 from typing import Any
-from urllib.parse import urlencode
+from urllib.parse import urlencode, urlparse
 
 import httpx
 from fastapi import APIRouter, HTTPException, Request
@@ -39,6 +43,7 @@ logger = logging.getLogger(__name__)
 # In-memory pending auth flows (state → flow data)
 # For production with multiple workers, use DB/Redis instead.
 _pending_flows: dict[str, dict[str, Any]] = {}
+_PENDING_FLOW_TTL_SECONDS = 600
 
 # Legacy plaintext files, imported and removed by configure_oauth_store().
 _TOKEN_FILE = Path("data/mcp-tokens.json")
@@ -98,7 +103,10 @@ async def start_auth(name: str, request: Request, config: ConfigDep) -> dict[str
         reg_endpoint = auth_info.get("registration_endpoint")
         if reg_endpoint:
             client_info = await _register_client(
-                reg_endpoint, redirect_uri, name,
+                reg_endpoint,
+                redirect_uri,
+                name,
+                allowed_host=urlparse(server_url).hostname,
             )
             if client_info:
                 _store_client_info(name, client_info)
@@ -118,6 +126,7 @@ async def start_auth(name: str, request: Request, config: ConfigDep) -> dict[str
     state = secrets.token_hex(16)
 
     # Step 5: Store flow data
+    _prune_pending_flows()
     _pending_flows[state] = {
         "mcp_name": name,
         "server_url": server_url,
@@ -173,10 +182,19 @@ async def oauth_callback(
         )
 
     flow = _pending_flows.pop(state)
+    if time.time() - flow.get("created_at", 0) > _PENDING_FLOW_TTL_SECONDS:
+        return HTMLResponse(
+            _callback_html(success=False, message="Invalid or expired state."),
+            status_code=400,
+        )
 
     # Exchange code for tokens
     try:
-        async with httpx.AsyncClient(timeout=30) as client:
+        if not await _safe_outbound_url(
+            flow["token_endpoint"], allowed_host=urlparse(flow["server_url"]).hostname,
+        ):
+            raise ValueError("unsafe OAuth token endpoint")
+        async with httpx.AsyncClient(timeout=30, follow_redirects=False) as client:
             data: dict[str, str] = {
                 "grant_type": "authorization_code",
                 "code": code,
@@ -273,7 +291,7 @@ async def _discover_auth(server_url: str) -> dict[str, str] | None:
     3. Fetch Authorization Server metadata
     """
     try:
-        async with httpx.AsyncClient(timeout=15) as client:
+        async with httpx.AsyncClient(timeout=15, follow_redirects=False) as client:
             # Step 1: Try to connect, expect 401
             resp = await client.post(
                 server_url,
@@ -282,7 +300,9 @@ async def _discover_auth(server_url: str) -> dict[str, str] | None:
 
             if resp.status_code == 401:
                 www_auth = resp.headers.get("www-authenticate", "")
-                return await _parse_www_authenticate(www_auth, client)
+                return await _parse_www_authenticate(
+                    www_auth, client, allowed_host=urlparse(server_url).hostname,
+                )
 
             # Some servers return 403 or redirect
             if resp.status_code in (403, 302, 307):
@@ -296,7 +316,9 @@ async def _discover_auth(server_url: str) -> dict[str, str] | None:
 
 
 async def _parse_www_authenticate(
-    header: str, client: httpx.AsyncClient,
+    header: str,
+    client: httpx.AsyncClient,
+    allowed_host: str | None = None,
 ) -> dict[str, str] | None:
     """Parse WWW-Authenticate header and discover auth endpoints."""
     # Extract resource_metadata URL
@@ -306,6 +328,8 @@ async def _parse_www_authenticate(
         return None
 
     metadata_url = match.group(1)
+    if not await _safe_outbound_url(metadata_url, allowed_host=allowed_host):
+        return None
 
     # Fetch Protected Resource Metadata
     resp = await client.get(metadata_url)
@@ -319,25 +343,37 @@ async def _parse_www_authenticate(
 
     # Fetch Authorization Server metadata
     as_url = auth_servers[0]
-    as_meta = await _fetch_as_metadata(as_url, client)
+    as_meta = await _fetch_as_metadata(as_url, client, allowed_host=allowed_host)
     if not as_meta:
         return None
 
-    return {
+    result = {
         "authorization_endpoint": as_meta.get("authorization_endpoint", ""),
         "token_endpoint": as_meta.get("token_endpoint", ""),
         "registration_endpoint": as_meta.get("registration_endpoint", ""),
         "scope": " ".join(resource_meta.get("scopes_supported", [])),
     }
+    if not _valid_http_url(result["authorization_endpoint"]):
+        return None
+    for key in ("token_endpoint", "registration_endpoint"):
+        if result[key] and not await _safe_outbound_url(
+            result[key], allowed_host=allowed_host,
+        ):
+            return None
+    if not result["token_endpoint"]:
+        return None
+    return result
 
 
 async def _fetch_as_metadata(
-    as_url: str, client: httpx.AsyncClient,
+    as_url: str,
+    client: httpx.AsyncClient,
+    allowed_host: str | None = None,
 ) -> dict[str, Any] | None:
     """Fetch Authorization Server metadata via well-known endpoints."""
-    from urllib.parse import urlparse
-
     parsed = urlparse(as_url)
+    if not await _safe_outbound_url(as_url, allowed_host=allowed_host):
+        return None
 
     # Try OAuth AS metadata (RFC 8414)
     for well_known in [
@@ -346,6 +382,8 @@ async def _fetch_as_metadata(
         f"{parsed.scheme}://{parsed.netloc}/.well-known/openid-configuration",
     ]:
         try:
+            if not await _safe_outbound_url(well_known, allowed_host=allowed_host):
+                continue
             resp = await client.get(well_known)
             if resp.status_code == 200:
                 data = resp.json()
@@ -361,8 +399,6 @@ async def _try_well_known(
     server_url: str, client: httpx.AsyncClient,
 ) -> dict[str, str] | None:
     """Try to find OAuth metadata via well-known URL patterns."""
-    from urllib.parse import urlparse
-
     parsed = urlparse(server_url)
     base = f"{parsed.scheme}://{parsed.netloc}"
 
@@ -374,11 +410,61 @@ async def _try_well_known(
             return await _parse_www_authenticate(
                 f'resource_metadata="{base}/.well-known/oauth-protected-resource"',
                 client,
+                allowed_host=parsed.hostname,
             )
     except Exception:
         pass
 
     return None
+
+
+def _valid_http_url(url: str) -> bool:
+    if not isinstance(url, str):
+        return False
+    parsed = urlparse(url)
+    return bool(
+        parsed.scheme in {"http", "https"}
+        and parsed.hostname
+        and not parsed.username
+        and not parsed.password
+    )
+
+
+async def _safe_outbound_url(url: str, allowed_host: str | None = None) -> bool:
+    """Reject metadata-controlled URLs that can reach local network services."""
+    if not _valid_http_url(url):
+        return False
+    parsed = urlparse(url)
+    host = parsed.hostname
+    assert host is not None
+    try:
+        addresses = {ipaddress.ip_address(host)}
+    except ValueError:
+        try:
+            infos = await asyncio.get_running_loop().getaddrinfo(
+                host,
+                parsed.port or (443 if parsed.scheme == "https" else 80),
+                type=socket.SOCK_STREAM,
+            )
+        except OSError:
+            return False
+        addresses = {ipaddress.ip_address(info[4][0]) for info in infos}
+    try:
+        literal_host = ipaddress.ip_address(host)
+    except ValueError:
+        literal_host = None
+    trusted_local = host == allowed_host and (
+        host == "localhost"
+        or (literal_host is not None and not literal_host.is_global)
+    )
+    return all(address.is_global for address in addresses) or trusted_local
+
+
+def _prune_pending_flows() -> None:
+    cutoff = time.time() - _PENDING_FLOW_TTL_SECONDS
+    for state, flow in list(_pending_flows.items()):
+        if flow.get("created_at", 0) < cutoff:
+            _pending_flows.pop(state, None)
 
 
 # -- Token storage --
@@ -507,7 +593,12 @@ async def refresh_access_token(name: str) -> str | None:
         return None
 
     try:
-        async with httpx.AsyncClient(timeout=30) as http:
+        token_endpoint = auth_info["token_endpoint"]
+        if not await _safe_outbound_url(
+            token_endpoint, allowed_host=urlparse(tokens.get("server_url", "")).hostname,
+        ):
+            return None
+        async with httpx.AsyncClient(timeout=30, follow_redirects=False) as http:
             data = {
                 "grant_type": "refresh_token",
                 "refresh_token": refresh_token,
@@ -516,7 +607,7 @@ async def refresh_access_token(name: str) -> str | None:
             if client.get("client_secret"):
                 data["client_secret"] = client["client_secret"]
             resp = await http.post(
-                auth_info["token_endpoint"],
+                token_endpoint,
                 data=data,
                 headers={"Content-Type": "application/x-www-form-urlencoded"},
             )
@@ -546,10 +637,15 @@ async def _register_client(
     registration_endpoint: str,
     redirect_uri: str,
     server_name: str,
+    allowed_host: str | None = None,
 ) -> dict[str, Any] | None:
     """Register as an OAuth client via Dynamic Client Registration."""
     try:
-        async with httpx.AsyncClient(timeout=15) as client:
+        if not await _safe_outbound_url(
+            registration_endpoint, allowed_host=allowed_host,
+        ):
+            return None
+        async with httpx.AsyncClient(timeout=15, follow_redirects=False) as client:
             resp = await client.post(
                 registration_endpoint,
                 json={
@@ -615,6 +711,7 @@ def _callback_html(success: bool, message: str = "") -> str:
         <script>setTimeout(()=>window.close(),2000)</script>
         </div></body></html>
         """
+    safe_message = html.escape(message, quote=True)
     return f"""
     <!DOCTYPE html>
     <html><head><title>Dax - Auth Failed</title>
@@ -623,6 +720,6 @@ def _callback_html(success: bool, message: str = "") -> str:
     .box{{text-align:center}}h1{{color:#ef4444}}
     </style></head><body><div class="box">
     <h1>Authentication Failed</h1>
-    <p>{message}</p>
+    <p>{safe_message}</p>
     </div></body></html>
     """

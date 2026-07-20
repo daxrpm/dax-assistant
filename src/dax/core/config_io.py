@@ -66,11 +66,22 @@ SECRET_FIELDS: dict[str, tuple[str, SecretMode]] = {
 _GENERAL_TABLE = "general"
 
 # Header names that carry secrets and must never land in the TOML file.
-_SENSITIVE_HEADER_NAMES: frozenset[str] = frozenset({
-    "authorization", "x-api-key", "api-key", "x-token", "token",
-    "x-auth-token", "x-access-token", "x-secret", "x-session",
-    "cookie", "x-password", "x-bearer",
-})
+_SENSITIVE_HEADER_NAMES: frozenset[str] = frozenset(
+    {
+        "authorization",
+        "x-api-key",
+        "api-key",
+        "x-token",
+        "token",
+        "x-auth-token",
+        "x-access-token",
+        "x-secret",
+        "x-session",
+        "cookie",
+        "x-password",
+        "x-bearer",
+    }
+)
 
 
 def _is_sensitive_header(name: str, value: str) -> bool:
@@ -218,11 +229,12 @@ def _secure_config_data(config: DaxConfig, store: SecretStore) -> dict[str, Any]
 
 def save_encrypted_config(config: DaxConfig, store: SecretStore) -> None:
     """Persist the complete validated configuration as encrypted JSON."""
-    data = _secure_config_data(config, store)
-    store.set(
-        CONFIG_STORE_KEY,
-        json.dumps(data, ensure_ascii=True, separators=(",", ":"), sort_keys=True),
-    )
+    with store.transaction():
+        data = _secure_config_data(config, store)
+        store.set(
+            CONFIG_STORE_KEY,
+            json.dumps(data, ensure_ascii=True, separators=(",", ":"), sort_keys=True),
+        )
 
 
 def load_encrypted_config(store: SecretStore) -> dict[str, Any] | None:

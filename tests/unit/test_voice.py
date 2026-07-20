@@ -258,6 +258,31 @@ class TestPipelineEnabled:
         assert pipeline.output_owner is None
         assert pipeline._audio_source is pipeline._capture
 
+    def test_remote_owner_generation_resets_conversation_and_followup_context(self):
+        pipeline = self._make_pipeline()
+        pipeline._resume_or_start_session()
+        pipeline._recent_turns.extend(["local context"])
+        pipeline._followup_armed = True
+        pipeline._followup_buffer = [np.ones(10, dtype=np.int16)]
+        local_session = pipeline._conversation_id
+
+        pipeline.acquire_remote_owner("mobile")
+
+        assert local_session is not None
+        assert pipeline._conversation_id is None
+        assert list(pipeline._recent_turns) == []
+        assert pipeline._followup_armed is False
+        assert pipeline._followup_buffer == []
+
+        pipeline._resume_or_start_session()
+        remote_session = pipeline._conversation_id
+        pipeline._recent_turns.extend(["remote context"])
+        pipeline.release_remote_owner("mobile")
+
+        assert remote_session is not None
+        assert pipeline._conversation_id is None
+        assert list(pipeline._recent_turns) == []
+
     def test_remote_lease_cannot_be_released_before_idle(self):
         pipeline = self._make_pipeline()
         pipeline.acquire_remote_owner("mobile")

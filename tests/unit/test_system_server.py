@@ -6,7 +6,12 @@ from typing import TYPE_CHECKING
 
 import pytest
 
-from dax.mcp_servers.system.server import build_server, safe_path, validate_command
+from dax.mcp_servers.system.server import (
+    _command_environment,
+    build_server,
+    safe_path,
+    validate_command,
+)
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -36,8 +41,8 @@ class TestValidateCommand:
         assert "-la" in argv
 
     def test_binary_path_basename_checked(self):
-        argv = validate_command("/bin/ls -la", {"ls"})
-        assert argv[0] == "/bin/ls"
+        with pytest.raises(ValueError, match="allowlist"):
+            validate_command("/bin/ls -la", {"ls"})
 
     def test_not_in_allowlist(self):
         with pytest.raises(ValueError, match="allowlist"):
@@ -54,6 +59,10 @@ class TestValidateCommand:
     def test_empty(self):
         with pytest.raises(ValueError, match="Empty"):
             validate_command("   ", {"ls"})
+
+    def test_execution_does_not_inherit_user_controlled_path(self, monkeypatch):
+        monkeypatch.setenv("PATH", "/tmp/attacker-bin")
+        assert _command_environment()["PATH"] != "/tmp/attacker-bin"
 
 
 def test_build_server_registers_tools():

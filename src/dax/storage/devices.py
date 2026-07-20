@@ -95,13 +95,10 @@ class DeviceRegistry:
 
     async def load(self) -> None:
         """Populate the in-memory mirror. Call once after the database starts."""
-        cursor = await self._db.connection.execute(
-            "SELECT id, secret_hash, revoked_at FROM devices"
-        )
-        rows = await cursor.fetchall()
-        self._active = {
-            row["id"]: (row["secret_hash"], bool(row["revoked_at"])) for row in rows
-        }
+        async with self._db.read() as conn:
+            cursor = await conn.execute("SELECT id, secret_hash, revoked_at FROM devices")
+            rows = await cursor.fetchall()
+        self._active = {row["id"]: (row["secret_hash"], bool(row["revoked_at"])) for row in rows}
         logger.info("Loaded %d enrolled device(s)", len(self._active))
 
     # -- Synchronous checks (used during auth) --
@@ -133,12 +130,12 @@ class DeviceRegistry:
         secret = generate_device_secret()
         secret_hash = _hasher.hash(secret)
         created = _now()
-        await self._db.connection.execute(
-            "INSERT INTO devices (id, name, platform, secret_hash, created_at) "
-            "VALUES (?, ?, ?, ?, ?)",
-            (device_id, name, platform, secret_hash, created),
-        )
-        await self._db.connection.commit()
+        async with self._db.transaction() as conn:
+            await conn.execute(
+                "INSERT INTO devices (id, name, platform, secret_hash, created_at) "
+                "VALUES (?, ?, ?, ?, ?)",
+                (device_id, name, platform, secret_hash, created),
+            )
         self._active[device_id] = (secret_hash, False)
         logger.info("Enrolled device %s (%s / %s)", device_id, name, platform)
         return (
@@ -155,20 +152,20 @@ class DeviceRegistry:
 
     async def touch(self, device_id: str) -> None:
         """Record that the device just authenticated."""
-        await self._db.connection.execute(
-            "UPDATE devices SET last_seen_at = ? WHERE id = ?", (_now(), device_id)
-        )
-        await self._db.connection.commit()
+        async with self._db.transaction() as conn:
+            await conn.execute(
+                "UPDATE devices SET last_seen_at = ? WHERE id = ?", (_now(), device_id)
+            )
 
     async def revoke(self, device_id: str) -> bool:
         """Revoke a device. Its outstanding access tokens stop validating."""
         if device_id not in self._active:
             return False
-        await self._db.connection.execute(
-            "UPDATE devices SET revoked_at = ? WHERE id = ? AND revoked_at = ''",
-            (_now(), device_id),
-        )
-        await self._db.connection.commit()
+        async with self._db.transaction() as conn:
+            await conn.execute(
+                "UPDATE devices SET revoked_at = ? WHERE id = ? AND revoked_at = ''",
+                (_now(), device_id),
+            )
         secret_hash, _ = self._active[device_id]
         self._active[device_id] = (secret_hash, True)
         logger.info("Revoked device %s", device_id)
@@ -177,17 +174,19 @@ class DeviceRegistry:
     async def delete(self, device_id: str) -> bool:
         if device_id not in self._active:
             return False
-        await self._db.connection.execute("DELETE FROM devices WHERE id = ?", (device_id,))
-        await self._db.connection.commit()
+        async with self._db.transaction() as conn:
+            await conn.execute("DELETE FROM devices WHERE id = ?", (device_id,))
         self._active.pop(device_id, None)
         logger.info("Deleted device %s", device_id)
         return True
 
     async def list_devices(self) -> list[Device]:
-        cursor = await self._db.connection.execute(
-            "SELECT id, name, platform, created_at, last_seen_at, revoked_at "
-            "FROM devices ORDER BY created_at DESC"
-        )
+        async with self._db.read() as conn:
+            cursor = await conn.execute(
+                "SELECT id, name, platform, created_at, last_seen_at, revoked_at "
+                "FROM devices ORDER BY created_at DESC LIMIT 1000"
+            )
+            rows = await cursor.fetchall()
         return [
             Device(
                 id=row["id"],
@@ -197,5 +196,5 @@ class DeviceRegistry:
                 last_seen_at=row["last_seen_at"],
                 revoked_at=row["revoked_at"],
             )
-            for row in await cursor.fetchall()
+            for row in rows
         ]

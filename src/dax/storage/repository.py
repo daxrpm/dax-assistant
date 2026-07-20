@@ -18,9 +18,18 @@ from dax.core.models import (
 if TYPE_CHECKING:
     from datetime import datetime
 
+    import aiosqlite
+
     from dax.storage.database import Database
 
 logger = logging.getLogger(__name__)
+
+_MAX_QUERY_LIMIT = 500
+_MAX_CONVERSATION_MESSAGES = 10_000
+
+
+def _bounded_limit(limit: int) -> int:
+    return max(0, min(limit, _MAX_QUERY_LIMIT))
 
 
 def _parse_datetime(value: str) -> datetime:
@@ -50,49 +59,53 @@ class ConversationRepository:
 
     async def save_conversation(self, conversation: Conversation) -> None:
         """Persist a conversation and all its messages."""
-        conn = self._db.connection
-
-        await conn.execute(
-            """
-            INSERT OR REPLACE INTO conversations
+        async with self._db.transaction() as conn:
+            await conn.execute(
+                """
+            INSERT INTO conversations
                 (id, channel, session_key, title, created_at, updated_at)
             VALUES (?, ?, ?, COALESCE(
                 (SELECT NULLIF(title, '') FROM conversations WHERE id = ?),
                 ''
             ), ?, ?)
+            ON CONFLICT(id) DO UPDATE SET
+                channel = excluded.channel,
+                session_key = excluded.session_key,
+                created_at = excluded.created_at,
+                updated_at = excluded.updated_at
             """,
-            (
-                conversation.id,
-                conversation.channel.value,
-                conversation.session_key,
-                conversation.id,
-                conversation.created_at.isoformat(),
-                conversation.updated_at.isoformat(),
-            ),
-        )
+                (
+                    conversation.id,
+                    conversation.channel.value,
+                    conversation.session_key,
+                    conversation.id,
+                    conversation.created_at.isoformat(),
+                    conversation.updated_at.isoformat(),
+                ),
+            )
 
-        for msg in conversation.messages:
-            await conn.execute(
-                """
+            for msg in conversation.messages:
+                await conn.execute(
+                    """
                 INSERT OR REPLACE INTO messages
                     (id, conversation_id, role, content, channel, language, timestamp, metadata)
                 VALUES (?, ?, ?, ?, ?, ?, ?, ?)
                 """,
-                (
-                    msg.id,
-                    conversation.id,
-                    msg.role.value,
-                    msg.content,
-                    msg.channel.value,
-                    msg.language.value,
-                    msg.timestamp.isoformat(),
-                    json.dumps(msg.metadata, default=str),
-                ),
-            )
+                    (
+                        msg.id,
+                        conversation.id,
+                        msg.role.value,
+                        msg.content,
+                        msg.channel.value,
+                        msg.language.value,
+                        msg.timestamp.isoformat(),
+                        json.dumps(msg.metadata, default=str),
+                    ),
+                )
 
-        # Auto-set title from first user message if still empty.
-        await conn.execute(
-            """
+            # Auto-set title from first user message if still empty.
+            await conn.execute(
+                """
             UPDATE conversations
             SET title = (
                 SELECT SUBSTR(content, 1, 60)
@@ -103,10 +116,9 @@ class ConversationRepository:
             )
             WHERE id = ? AND (title IS NULL OR title = '')
             """,
-            (conversation.id, conversation.id),
-        )
+                (conversation.id, conversation.id),
+            )
 
-        await conn.commit()
         logger.debug(
             "Saved conversation %s with %d messages",
             conversation.id,
@@ -115,8 +127,13 @@ class ConversationRepository:
 
     async def get_conversation(self, conversation_id: str) -> Conversation | None:
         """Retrieve a conversation by ID, including all messages."""
-        conn = self._db.connection
+        async with self._db.read() as conn:
+            return await self._load_conversation(conn, conversation_id)
 
+    @staticmethod
+    async def _load_conversation(
+        conn: aiosqlite.Connection, conversation_id: str
+    ) -> Conversation | None:
         cursor = await conn.execute(
             "SELECT * FROM conversations WHERE id = ?",
             (conversation_id,),
@@ -134,8 +151,11 @@ class ConversationRepository:
         )
 
         msg_cursor = await conn.execute(
-            "SELECT * FROM messages WHERE conversation_id = ? ORDER BY timestamp",
-            (conversation_id,),
+            "SELECT * FROM ("
+            "SELECT * FROM messages WHERE conversation_id = ? "
+            "ORDER BY timestamp DESC, id DESC LIMIT ?"
+            ") ORDER BY timestamp, id",
+            (conversation_id, _MAX_CONVERSATION_MESSAGES),
         )
         rows = await msg_cursor.fetchall()
 
@@ -163,21 +183,21 @@ class ConversationRepository:
         A new conversation is NOT persisted until the next ``save_conversation``
         — callers append messages and save once per turn.
         """
-        conn = self._db.connection
-        cursor = await conn.execute(
-            """
-            SELECT id FROM conversations
-            WHERE channel = ? AND session_key = ?
-            ORDER BY updated_at DESC
-            LIMIT 1
-            """,
-            (channel.value, session_key),
-        )
-        row = await cursor.fetchone()
-        if row is not None:
-            existing = await self.get_conversation(row["id"])
-            if existing is not None:
-                return existing
+        async with self._db.read() as conn:
+            cursor = await conn.execute(
+                """
+                SELECT id FROM conversations
+                WHERE channel = ? AND session_key = ?
+                ORDER BY updated_at DESC
+                LIMIT 1
+                """,
+                (channel.value, session_key),
+            )
+            row = await cursor.fetchone()
+            if row is not None:
+                existing = await self._load_conversation(conn, row["id"])
+                if existing is not None:
+                    return existing
 
         return Conversation(channel=channel, session_key=session_key)
 
@@ -192,33 +212,32 @@ class ConversationRepository:
         """Append a tool-execution record to the audit log."""
         from datetime import datetime
 
-        conn = self._db.connection
-        await conn.execute(
-            """
+        async with self._db.transaction() as conn:
+            await conn.execute(
+                """
             INSERT INTO tool_audit (timestamp, server_name, tool_name, arguments, status)
             VALUES (?, ?, ?, ?, ?)
             """,
-            (
-                datetime.now(UTC).isoformat(),
-                server_name,
-                tool_name,
-                json.dumps(arguments, default=str),
-                status,
-            ),
-        )
-        await conn.commit()
+                (
+                    datetime.now(UTC).isoformat(),
+                    server_name,
+                    tool_name,
+                    json.dumps(arguments, default=str),
+                    status,
+                ),
+            )
 
     async def get_tool_audit(self, limit: int = 50) -> list[dict[str, object]]:
         """Return the most recent tool-audit entries (newest first)."""
-        conn = self._db.connection
-        cursor = await conn.execute(
-            """
-            SELECT timestamp, server_name, tool_name, arguments, status
-            FROM tool_audit ORDER BY id DESC LIMIT ?
-            """,
-            (limit,),
-        )
-        rows = await cursor.fetchall()
+        async with self._db.read() as conn:
+            cursor = await conn.execute(
+                """
+                SELECT timestamp, server_name, tool_name, arguments, status
+                FROM tool_audit ORDER BY id DESC LIMIT ?
+                """,
+                (_bounded_limit(limit),),
+            )
+            rows = await cursor.fetchall()
         return [
             {
                 "timestamp": r["timestamp"],
@@ -239,9 +258,9 @@ class ConversationRepository:
 
         Does NOT load full message objects — suitable for sidebar listings.
         """
-        conn = self._db.connection
-        cursor = await conn.execute(
-            """
+        async with self._db.read() as conn:
+            cursor = await conn.execute(
+                """
             SELECT
                 c.id,
                 c.session_key,
@@ -257,9 +276,9 @@ class ConversationRepository:
             ORDER BY c.updated_at DESC
             LIMIT ?
             """,
-            (channel, limit),
-        )
-        rows = await cursor.fetchall()
+                (channel, _bounded_limit(limit)),
+            )
+            rows = await cursor.fetchall()
         return [
             {
                 "id": r["id"],
@@ -274,12 +293,11 @@ class ConversationRepository:
 
     async def delete_conversation(self, conversation_id: str) -> None:
         """Delete a conversation and all its messages (cascade)."""
-        conn = self._db.connection
-        await conn.execute(
-            "DELETE FROM conversations WHERE id = ?",
-            (conversation_id,),
-        )
-        await conn.commit()
+        async with self._db.transaction() as conn:
+            await conn.execute(
+                "DELETE FROM conversations WHERE id = ?",
+                (conversation_id,),
+            )
         logger.debug("Deleted conversation %s", conversation_id)
 
     async def get_recent_conversations(
@@ -288,23 +306,22 @@ class ConversationRepository:
         limit: int = 5,
     ) -> list[Conversation]:
         """Retrieve the most recent conversations for a channel."""
-        conn = self._db.connection
+        async with self._db.read() as conn:
+            cursor = await conn.execute(
+                """
+                SELECT id FROM conversations
+                WHERE channel = ?
+                ORDER BY updated_at DESC
+                LIMIT ?
+                """,
+                (channel, _bounded_limit(limit)),
+            )
+            rows = await cursor.fetchall()
 
-        cursor = await conn.execute(
-            """
-            SELECT id FROM conversations
-            WHERE channel = ?
-            ORDER BY updated_at DESC
-            LIMIT ?
-            """,
-            (channel, limit),
-        )
-        rows = await cursor.fetchall()
-
-        conversations: list[Conversation] = []
-        for row in rows:
-            conv = await self.get_conversation(row["id"])
-            if conv is not None:
-                conversations.append(conv)
+            conversations: list[Conversation] = []
+            for row in rows:
+                conv = await self._load_conversation(conn, row["id"])
+                if conv is not None:
+                    conversations.append(conv)
 
         return conversations

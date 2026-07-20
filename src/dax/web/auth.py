@@ -15,8 +15,12 @@ Generate a password hash from the command line::
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import secrets
+import time
+from dataclasses import dataclass
+from math import ceil
 from typing import TYPE_CHECKING
 
 from argon2 import PasswordHasher
@@ -25,6 +29,8 @@ from fastapi import HTTPException, Request, status
 from itsdangerous import BadSignature, SignatureExpired, URLSafeTimedSerializer
 
 if TYPE_CHECKING:
+    from collections.abc import Callable
+
     from fastapi import Response, WebSocket
 
     from dax.core.config import SecurityConfig
@@ -44,6 +50,77 @@ _SESSION_SUBJECT = "dax-user"
 # both derive from the same session secret. Their lifetimes differ by orders of
 # magnitude, and that difference has to be unforgeable.
 _DEVICE_SALT = "dax.device.v1"
+
+
+@dataclass(slots=True)
+class _AttemptBucket:
+    count: int
+    expires_at: float
+
+
+class AttemptLimiter:
+    """Small in-memory fixed-window limiter with bounded client state."""
+
+    def __init__(
+        self,
+        *,
+        max_client_keys: int = 1024,
+        clock: Callable[[], float] = time.monotonic,
+    ) -> None:
+        self._max_client_keys = max(1, max_client_keys)
+        self._clock = clock
+        self._clients: dict[tuple[str, str], _AttemptBucket] = {}
+        self._global: dict[str, _AttemptBucket] = {}
+
+    def check(
+        self,
+        scope: str,
+        client_key: str,
+        *,
+        client_limit: int,
+        global_limit: int,
+        window_seconds: int = 60,
+    ) -> int | None:
+        """Consume an attempt, returning retry seconds when it is limited."""
+        now = self._clock()
+        self._prune(now)
+
+        global_bucket = self._global.get(scope)
+        if global_bucket is not None and global_bucket.count >= global_limit:
+            return max(1, ceil(global_bucket.expires_at - now))
+
+        key = (scope, client_key)
+        client_bucket = self._clients.get(key)
+        if client_bucket is not None and client_bucket.count >= client_limit:
+            return max(1, ceil(client_bucket.expires_at - now))
+
+        expires_at = now + window_seconds
+        if global_bucket is None:
+            global_bucket = _AttemptBucket(0, expires_at)
+            self._global[scope] = global_bucket
+        global_bucket.count += 1
+
+        if client_bucket is None:
+            if len(self._clients) >= self._max_client_keys:
+                oldest = min(self._clients, key=lambda item: self._clients[item].expires_at)
+                del self._clients[oldest]
+            client_bucket = _AttemptBucket(0, expires_at)
+            self._clients[key] = client_bucket
+        client_bucket.count += 1
+        return None
+
+    def _prune(self, now: float) -> None:
+        self._clients = {
+            key: bucket for key, bucket in self._clients.items() if bucket.expires_at > now
+        }
+        self._global = {
+            scope: bucket for scope, bucket in self._global.items() if bucket.expires_at > now
+        }
+
+    @property
+    def client_key_count(self) -> int:
+        self._prune(self._clock())
+        return len(self._clients)
 
 
 def hash_password(password: str) -> str:
@@ -89,6 +166,8 @@ class AuthManager:
         self._device_serializer = URLSafeTimedSerializer(secret, salt=_DEVICE_SALT)
         self._device_ttl_seconds = max(60, config.device_token_ttl_minutes * 60)
         self._devices: DeviceRegistry | None = None
+        self.attempt_limiter = AttemptLimiter()
+        self.setup_lock = asyncio.Lock()
 
         if self._enabled and not self._password_hash:
             logger.warning(

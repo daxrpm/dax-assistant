@@ -2,14 +2,57 @@
 
 from __future__ import annotations
 
+import asyncio
+import contextlib
+import fcntl
 import logging
+import os
+import threading
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 import aiosqlite
+
+if TYPE_CHECKING:
+    from collections.abc import AsyncIterator
+    from typing import IO
 
 logger = logging.getLogger(__name__)
 
 SCHEMA_VERSION = 5
+
+_PROCESS_LOCKS: dict[Path, tuple[int, IO[bytes]]] = {}
+_PROCESS_LOCKS_GUARD = threading.Lock()
+
+
+class DatabaseLockedError(RuntimeError):
+    """Raised when another process owns a database's persistence files."""
+
+
+def acquire_process_lock(db_path: str | Path) -> None:
+    """Hold an exclusive advisory lock for this database until process exit."""
+    if str(db_path) == ":memory:":
+        return
+    path = Path(db_path).expanduser().resolve()
+    with _PROCESS_LOCKS_GUARD:
+        existing = _PROCESS_LOCKS.get(path)
+        if existing is not None and existing[0] == os.getpid():
+            return
+        if existing is not None:
+            existing[1].close()
+            _PROCESS_LOCKS.pop(path, None)
+
+        path.parent.mkdir(parents=True, exist_ok=True)
+        lock_file = path.with_name(f"{path.name}.lock").open("a+b")
+        try:
+            fcntl.flock(lock_file.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except BlockingIOError as exc:
+            lock_file.close()
+            raise DatabaseLockedError(
+                f"Persistence database is already in use by another process: {path}"
+            ) from exc
+        _PROCESS_LOCKS[path] = (os.getpid(), lock_file)
+
 
 SCHEMA_SQL = """
 CREATE TABLE IF NOT EXISTS conversations (
@@ -86,17 +129,28 @@ class Database:
     def __init__(self, db_path: str) -> None:
         self._db_path = db_path
         self._connection: aiosqlite.Connection | None = None
+        self._transaction_lock = asyncio.Lock()
 
     async def start(self) -> None:
         """Open the database connection and initialize the schema."""
+        if self._connection is not None:
+            raise RuntimeError("Database already started")
+        acquire_process_lock(self._db_path)
         db_dir = Path(self._db_path).parent
         db_dir.mkdir(parents=True, exist_ok=True)
 
-        self._connection = await aiosqlite.connect(self._db_path)
-        self._connection.row_factory = aiosqlite.Row
-        await self._connection.execute("PRAGMA journal_mode=WAL")
-        await self._connection.execute("PRAGMA foreign_keys=ON")
-        await self._initialize_schema()
+        connection = await aiosqlite.connect(self._db_path, timeout=10)
+        self._connection = connection
+        connection.row_factory = aiosqlite.Row
+        try:
+            await connection.execute("PRAGMA journal_mode=WAL")
+            await connection.execute("PRAGMA foreign_keys=ON")
+            await connection.execute("PRAGMA busy_timeout=10000")
+            await self._initialize_schema()
+        except BaseException:
+            await connection.close()
+            self._connection = None
+            raise
         logger.info("Database initialized at %s", self._db_path)
 
     async def stop(self) -> None:
@@ -113,22 +167,51 @@ class Database:
             raise RuntimeError("Database not started — call start() first")
         return self._connection
 
+    @contextlib.asynccontextmanager
+    async def transaction(self) -> AsyncIterator[aiosqlite.Connection]:
+        """Serialize a write transaction and roll it back on any failure."""
+        async with self._transaction_lock:
+            conn = self.connection
+            await conn.execute("BEGIN IMMEDIATE")
+            try:
+                yield conn
+            except BaseException:
+                await conn.rollback()
+                raise
+            else:
+                await conn.commit()
+
+    @contextlib.asynccontextmanager
+    async def read(self) -> AsyncIterator[aiosqlite.Connection]:
+        """Run one or more reads against a consistent, serialized snapshot."""
+        async with self._transaction_lock:
+            conn = self.connection
+            await conn.execute("BEGIN")
+            try:
+                yield conn
+            finally:
+                await conn.rollback()
+
     async def _initialize_schema(self) -> None:
         """Create tables if they don't exist and track schema version."""
         conn = self.connection
-        await conn.executescript(SCHEMA_SQL)
-        await self._migrate()
+        try:
+            await conn.executescript(f"BEGIN IMMEDIATE;\n{SCHEMA_SQL}")
+            await self._migrate()
 
-        cursor = await conn.execute("SELECT version FROM schema_version LIMIT 1")
-        row = await cursor.fetchone()
-        if row is None:
-            await conn.execute(
-                "INSERT INTO schema_version (version) VALUES (?)",
-                (SCHEMA_VERSION,),
-            )
-        else:
-            await conn.execute("UPDATE schema_version SET version = ?", (SCHEMA_VERSION,))
-        await conn.commit()
+            cursor = await conn.execute("SELECT version FROM schema_version LIMIT 1")
+            row = await cursor.fetchone()
+            if row is None:
+                await conn.execute(
+                    "INSERT INTO schema_version (version) VALUES (?)",
+                    (SCHEMA_VERSION,),
+                )
+            else:
+                await conn.execute("UPDATE schema_version SET version = ?", (SCHEMA_VERSION,))
+            await conn.commit()
+        except BaseException:
+            await conn.rollback()
+            raise
         logger.debug("Schema version: %d", SCHEMA_VERSION)
 
     async def _migrate(self) -> None:
@@ -150,4 +233,3 @@ class Database:
             "CREATE INDEX IF NOT EXISTS idx_conversations_channel_session "
             "ON conversations(channel, session_key)"
         )
-        await conn.commit()

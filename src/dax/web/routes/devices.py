@@ -25,11 +25,11 @@ import time
 from dataclasses import dataclass
 from urllib.parse import urlencode
 
-from fastapi import APIRouter, Depends, Request, Response
+from fastapi import APIRouter, Depends, HTTPException, Request, Response, status
 from pydantic import BaseModel, Field
 
 from dax.storage.devices import generate_pairing_code
-from dax.web.auth import require_session
+from dax.web.auth import AuthManager, require_session
 from dax.web.dependencies import AuthDep, ConfigDep
 
 router = APIRouter(tags=["devices"])
@@ -101,7 +101,7 @@ class PairResponse(BaseModel):
 
 
 class EnrollRequest(BaseModel):
-    code: str
+    code: str = Field(max_length=32)
     name: str = Field(default="", max_length=64)
     platform: str = Field(default="", max_length=32)
 
@@ -115,8 +115,8 @@ class EnrollResponse(BaseModel):
 
 
 class TokenRequest(BaseModel):
-    device_id: str
-    device_secret: str
+    device_id: str = Field(max_length=128)
+    device_secret: str = Field(max_length=256)
 
 
 class TokenResponse(BaseModel):
@@ -133,13 +133,37 @@ class OkResponse(BaseModel):
     ok: bool
 
 
+def _limit_attempts(
+    request: Request,
+    auth: AuthManager,
+    scope: str,
+    *,
+    client_limit: int,
+    global_limit: int,
+) -> None:
+    client_key = request.client.host if request.client is not None else "<unknown>"
+    retry_after = auth.attempt_limiter.check(
+        scope,
+        client_key,
+        client_limit=client_limit,
+        global_limit=global_limit,
+    )
+    if retry_after is not None:
+        raise HTTPException(
+            status.HTTP_429_TOO_MANY_REQUESTS,
+            "Too many attempts",
+            headers={"Retry-After": str(retry_after)},
+        )
+
+
 @router.post(
     "/auth/devices/pair",
     response_model=PairResponse,
     dependencies=[Depends(require_session)],
 )
-async def pair_device(request: Request, config: ConfigDep) -> PairResponse:
+async def pair_device(request: Request, config: ConfigDep, auth: AuthDep) -> PairResponse:
     """Mint a one-time pairing code for a new device."""
+    _limit_attempts(request, auth, "device_pair", client_limit=10, global_limit=50)
     ttl = max(60, config.security.pairing_code_ttl_minutes * 60)
     entry = _codes(request).issue(ttl)
     backend_url = str(request.base_url).rstrip("/")
@@ -163,6 +187,8 @@ async def enroll_device(
         response.status_code = 503
         return EnrollResponse(ok=False)
 
+    _limit_attempts(request, auth, "device_enroll", client_limit=10, global_limit=50)
+
     if not _codes(request).redeem(body.code):
         # Same delay as a failed login: the code space is small enough that
         # online guessing is the realistic attack.
@@ -180,7 +206,7 @@ async def enroll_device(
 
 @router.post("/auth/devices/token", response_model=TokenResponse)
 async def issue_device_token(
-    body: TokenRequest, response: Response, auth: AuthDep
+    request: Request, body: TokenRequest, response: Response, auth: AuthDep
 ) -> TokenResponse:
     """Exchange a device secret for a short-lived access token."""
     devices = auth.devices
@@ -188,7 +214,9 @@ async def issue_device_token(
         response.status_code = 503
         return TokenResponse(ok=False)
 
-    if not devices.verify_secret(body.device_id, body.device_secret):
+    _limit_attempts(request, auth, "device_token", client_limit=10, global_limit=100)
+
+    if not await asyncio.to_thread(devices.verify_secret, body.device_id, body.device_secret):
         await asyncio.sleep(0.5)
         response.status_code = 401
         logger.warning("Rejected token request for device %s", body.device_id)

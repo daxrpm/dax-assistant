@@ -286,6 +286,30 @@ def test_remote_lease_events_are_delivered_only_to_owner_and_stale_events_are_dr
         assert observer.receive_json()["data"]["text"] == "local again"
 
 
+def test_stale_local_generation_is_dropped_after_remote_lease_turnover():
+    pipeline = FakePipeline()
+    app, hub = _make_app(pipeline=pipeline)
+    client = TestClient(app)
+
+    with client.websocket_connect(f"/ws/voice?token={_token(app)}") as ws:
+        ws.receive_json()
+        stale = VoiceEvent(
+            VoiceEventType.TRANSCRIPT,
+            {"text": "old local", "language": "en", "final": True},
+            owner=None,
+            generation=0,
+        )
+        ws.send_json(_acquire("client_text"))
+        ws.receive_json()
+        ws.send_json({"type": "remote_audio.release"})
+        ws.receive_json()
+        assert hub._loop is not None
+        hub._loop.call_soon_threadsafe(hub._deliver, stale)
+        hub.emit_transcript("current local", "en")
+
+        assert ws.receive_json()["data"]["text"] == "current local"
+
+
 def test_remote_lease_owns_input_output_and_cleanup_restores_host_only_when_idle():
     pipeline = FakePipeline()
     app, _hub = _make_app(pipeline=pipeline)

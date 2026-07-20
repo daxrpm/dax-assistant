@@ -29,6 +29,7 @@ router = APIRouter(tags=["voice"])
 logger = logging.getLogger(__name__)
 
 _REMOTE_MAX_BYTES = 16_000 * 2 * 30
+_SEND_TIMEOUT_SECONDS = 5.0
 
 # "client_audio" (server-synthesised PCM streamed to the client) is deliberately
 # absent: it is not implemented, and advertising it would be a lie a client
@@ -163,20 +164,28 @@ async def websocket_voice(websocket: WebSocket) -> None:
     send_lock = asyncio.Lock()
 
     async def send_json(frame: dict[str, object]) -> None:
-        async with send_lock:
-            await websocket.send_json(frame)
+        async with asyncio.timeout(_SEND_TIMEOUT_SECONDS):
+            async with send_lock:
+                await websocket.send_json(frame)
 
     async def send_events() -> None:
         while True:
             event = await queue.get()
             current_owner = lease.owner
+            context_owner, context_generation = hub.event_context
             if current_owner is None:
-                if event.owner is not None:
+                if (
+                    context_owner is not None
+                    or event.owner is not None
+                    or event.generation != context_generation
+                ):
                     continue
             elif (
                 current_owner != owner
+                or context_owner != owner
                 or event.owner != owner
                 or event.generation != owner_generation
+                or context_generation != owner_generation
             ):
                 continue
             await send_json(event.to_json())
@@ -403,6 +412,7 @@ async def websocket_voice(websocket: WebSocket) -> None:
                 ) from exc
 
     event_task: asyncio.Task[None] | None = None
+    receive_task: asyncio.Task[None] | None = None
     try:
         # Replay the current state so a client connecting mid-conversation
         # renders correctly instead of showing "idle" until the next
@@ -414,7 +424,15 @@ async def websocket_voice(websocket: WebSocket) -> None:
             else _idle_state()
         )
         event_task = asyncio.create_task(send_events())
-        await receive_audio()
+        receive_task = asyncio.create_task(receive_audio())
+        done, pending = await asyncio.wait(
+            {event_task, receive_task},
+            return_when=asyncio.FIRST_COMPLETED,
+        )
+        for task in pending:
+            task.cancel()
+        for task in done:
+            task.result()
     except VoiceProtocolError as exc:
         try:
             await send_json(
@@ -437,8 +455,11 @@ async def websocket_voice(websocket: WebSocket) -> None:
         hub.unsubscribe(queue)
         if event_task is not None:
             event_task.cancel()
+        if receive_task is not None:
+            receive_task.cancel()
         try:
             await asyncio.shield(cleanup_remote())
         finally:
-            if event_task is not None:
-                await asyncio.gather(event_task, return_exceptions=True)
+            tasks = [task for task in (event_task, receive_task) if task is not None]
+            if tasks:
+                await asyncio.gather(*tasks, return_exceptions=True)

@@ -448,6 +448,7 @@ class VoicePipeline:
             raise VoiceError(f"Voice pipeline is busy ({self._state})")
         if self._input_owner is not None and self._input_owner != owner:
             raise VoiceError("Remote voice is owned by another client")
+        self._reset_conversation_context()
         self._input_owner = owner
         self._output_owner = owner
         self._owner_generation = self._events.set_event_owner(owner)
@@ -462,6 +463,7 @@ class VoicePipeline:
             raise VoiceError(f"Cannot release remote voice while pipeline is {self._state}")
         with self._source_lock:
             self._audio_source = self._capture
+        self._reset_conversation_context()
         self._input_owner = None
         self._output_owner = None
         self._owner_generation = self._events.set_event_owner(None)
@@ -1246,14 +1248,21 @@ class VoicePipeline:
         Called on an explicit farewell — the one signal that the user really is
         done, as opposed to merely pausing.
         """
+        self._reset_conversation_context()
+        logger.info("Voice session ended")
+
+    def _reset_conversation_context(self) -> None:
+        """Drop all conversational state at an input/output ownership boundary."""
         self._conversation_id = None
         self._session_last_activity = 0.0
-        # Drop the STT biasing context too: priming a new conversation with the
-        # previous one's vocabulary is exactly the bleed the session boundary
-        # exists to prevent.
         self._recent_turns.clear()
         self._last_reply_was_question = False
-        logger.info("Voice session ended")
+        self._last_user_text = ""
+        self._last_language = Language.AUTO
+        self._followup_armed = False
+        self._followup_buffer = []
+        self._followup_voiced_ms = 0
+        self._followup_silence_ms = 0
 
     # -- State transitions --
 

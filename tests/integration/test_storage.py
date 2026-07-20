@@ -2,7 +2,10 @@
 
 from __future__ import annotations
 
+import asyncio
 from typing import TYPE_CHECKING
+
+import pytest
 
 from dax.core.models import (
     ChannelType,
@@ -69,8 +72,58 @@ class TestToolAudit:
         assert entries[1]["status"] == "approved"
         assert entries[1]["arguments"] == {"path": "/tmp/x"}
 
+    async def test_concurrent_writes_are_serialized(self, database: Database):
+        repo = ConversationRepository(database)
+
+        await asyncio.gather(
+            *(
+                repo.log_tool_execution(
+                    server_name="server",
+                    tool_name=f"tool-{index}",
+                    arguments={},
+                    status="executed",
+                )
+                for index in range(40)
+            )
+        )
+
+        entries = await repo.get_tool_audit(limit=100)
+        assert len(entries) == 40
+
+    async def test_negative_limit_does_not_disable_query_bound(self, database: Database):
+        repo = ConversationRepository(database)
+        for index in range(2):
+            await repo.log_tool_execution(
+                server_name="server",
+                tool_name=f"tool-{index}",
+                arguments={},
+                status="executed",
+            )
+
+        assert await repo.get_tool_audit(limit=-1) == []
+
 
 class TestConversationRepository:
+    async def test_saving_capped_history_does_not_delete_older_messages(
+        self, database: Database, monkeypatch,
+    ):
+        repo = ConversationRepository(database)
+        conv = Conversation(channel=ChannelType.WEB)
+        conv.add_message(Message(role=MessageRole.USER, content="old"))
+        conv.add_message(Message(role=MessageRole.ASSISTANT, content="new"))
+        await repo.save_conversation(conv)
+
+        monkeypatch.setattr("dax.storage.repository._MAX_CONVERSATION_MESSAGES", 1)
+        capped = await repo.get_conversation(conv.id)
+        assert capped is not None
+        assert [message.content for message in capped.messages] == ["new"]
+        await repo.save_conversation(capped)
+
+        cursor = await database.connection.execute(
+            "SELECT COUNT(*) FROM messages WHERE conversation_id = ?", (conv.id,)
+        )
+        assert (await cursor.fetchone())[0] == 2
+
     async def test_save_and_retrieve(self, database: Database):
         repo = ConversationRepository(database)
         conv = Conversation(channel=ChannelType.WEB)
@@ -111,9 +164,7 @@ class TestConversationRepository:
 
         for i in range(3):
             conv = Conversation(channel=ChannelType.VOICE)
-            conv.add_message(
-                Message(content=f"Voice message {i}", channel=ChannelType.VOICE)
-            )
+            conv.add_message(Message(content=f"Voice message {i}", channel=ChannelType.VOICE))
             await repo.save_conversation(conv)
 
         # Also save a web conversation
@@ -139,6 +190,19 @@ class TestConversationRepository:
         retrieved = await repo.get_conversation(conv.id)
         assert retrieved is not None
         assert len(retrieved.messages) == 2
+
+    async def test_failed_save_rolls_back_every_statement(self, database: Database):
+        repo = ConversationRepository(database)
+        conv = Conversation(channel=ChannelType.WEB)
+        conv.add_message(Message(content="valid", channel=ChannelType.WEB))
+        circular: dict[str, object] = {}
+        circular["self"] = circular
+        conv.add_message(Message(content="invalid", channel=ChannelType.WEB, metadata=circular))
+
+        with pytest.raises(ValueError, match="Circular reference"):
+            await repo.save_conversation(conv)
+
+        assert await repo.get_conversation(conv.id) is None
 
 
 class TestSchemaMigration:
@@ -174,9 +238,7 @@ class TestSchemaMigration:
 
 class TestDatabase:
     async def test_schema_version(self, database: Database):
-        cursor = await database.connection.execute(
-            "SELECT version FROM schema_version"
-        )
+        cursor = await database.connection.execute("SELECT version FROM schema_version")
         row = await cursor.fetchone()
         assert row is not None
         assert row["version"] == 5

@@ -291,6 +291,5 @@
   "289": ".request",
   "290": "DaxApplication",
   "291": "test_legacy_oauth_files_migrate_encrypted",
-  "292": "RemoteVoiceClientTest",
-  "293": ".`level burst cannot close socket or displace turn completion`"
+  "292": "RemoteVoiceClientTest"
 }

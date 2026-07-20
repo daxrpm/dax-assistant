@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 from typing import TYPE_CHECKING
 
 import pytest
@@ -10,10 +11,12 @@ from httpx import ASGITransport, AsyncClient
 
 from dax.core.config import DaxConfig
 from dax.orchestrator.bus import MessageBus
-from dax.web.auth import AuthManager, hash_password, verify_password
+from dax.web.auth import AttemptLimiter, AuthManager, hash_password, verify_password
 from dax.web.server import create_app
 
 if TYPE_CHECKING:
+    from pathlib import Path
+
     from fastapi import FastAPI
 
 PASSWORD = "correct horse battery staple"
@@ -37,6 +40,20 @@ def test_token_roundtrip():
     assert not mgr.validate_token("garbage")
     assert not mgr.validate_token(None)
     assert mgr.is_session_token(token)
+
+
+def test_attempt_limiter_is_bounded_global_and_expires():
+    now = 100.0
+    limiter = AttemptLimiter(max_client_keys=2, clock=lambda: now)
+
+    assert limiter.check("login", "one", client_limit=2, global_limit=3) is None
+    assert limiter.check("login", "two", client_limit=2, global_limit=3) is None
+    assert limiter.check("login", "three", client_limit=2, global_limit=3) is None
+    assert limiter.client_key_count == 2
+    assert limiter.check("login", "rotated", client_limit=2, global_limit=3) == 60
+
+    now += 61
+    assert limiter.check("login", "rotated", client_limit=2, global_limit=3) is None
 
 
 @pytest.fixture
@@ -95,6 +112,29 @@ class TestAuthFlow:
         assert resp.status_code == 401
         assert resp.json()["ok"] is False
 
+    async def test_login_verification_runs_off_event_loop(
+        self, auth_client: AsyncClient, auth_app: FastAPI, monkeypatch
+    ):
+        import threading
+
+        event_loop_thread = threading.get_ident()
+        verification_thread = None
+
+        def verify_login(_password: str) -> bool:
+            nonlocal verification_thread
+            verification_thread = threading.get_ident()
+            return False
+
+        monkeypatch.setattr(auth_app.state.auth, "verify_login", verify_login)
+        await auth_client.post("/api/auth/login", json={"password": "wrong"})
+
+        assert verification_thread is not None
+        assert verification_thread != event_loop_thread
+
+    async def test_login_password_size_is_limited(self, auth_client: AsyncClient):
+        response = await auth_client.post("/api/auth/login", json={"password": "x" * 1025})
+        assert response.status_code == 422
+
     async def test_login_then_access(self, auth_client: AsyncClient):
         login = await auth_client.post("/api/auth/login", json={"password": PASSWORD})
         assert login.status_code == 200
@@ -109,6 +149,78 @@ class TestAuthFlow:
         await auth_client.post("/api/auth/logout")
         assert (await auth_client.get("/api/status")).status_code == 401
 
+
+class TestInitialSetup:
+    @staticmethod
+    def _app(tmp_path: Path) -> FastAPI:
+        bus = MessageBus()
+        bus.start()
+        config = DaxConfig(
+            security={"auth_enabled": True, "session_secret": "setup-secret"},
+            storage={"database_path": str(tmp_path / "setup.db")},
+        )
+        app = create_app(config=config, bus=bus)
+        app.state.config = config
+        app.state.bus = bus
+        return app
+
+    async def test_remote_request_cannot_claim_initial_setup(self, tmp_path: Path):
+        app = self._app(tmp_path)
+        transport = ASGITransport(app=app, client=("203.0.113.10", 1234))
+        async with AsyncClient(transport=transport, base_url="http://test") as client:
+            response = await client.post("/api/auth/setup", json={"password": PASSWORD})
+
+        assert response.status_code == 403
+        assert app.state.auth.configured is False
+
+    async def test_only_one_concurrent_setup_request_can_win(self, tmp_path: Path):
+        app = self._app(tmp_path)
+        transport = ASGITransport(app=app, client=("127.0.0.1", 1234))
+        async with AsyncClient(transport=transport, base_url="http://test") as client:
+            first, second = await asyncio.gather(
+                client.post("/api/auth/setup", json={"password": PASSWORD}),
+                client.post(
+                    "/api/auth/setup",
+                    json={"password": "another sufficiently long password"},
+                ),
+            )
+
+        assert sorted((first.status_code, second.status_code)) == [200, 409]
+        assert sum(response.json()["ok"] for response in (first, second)) == 1
+
+    async def test_unknown_client_cannot_claim_initial_setup(self, tmp_path: Path):
+        app = self._app(tmp_path)
+        transport = ASGITransport(app=app, client=None)  # type: ignore[arg-type]
+        async with AsyncClient(transport=transport, base_url="http://test") as client:
+            response = await client.post("/api/auth/setup", json={"password": PASSWORD})
+
+        assert response.status_code == 403
+        assert app.state.auth.configured is False
+
+    async def test_loopback_setup_hashes_off_event_loop(
+        self, tmp_path: Path, monkeypatch
+    ):
+        import threading
+
+        app = self._app(tmp_path)
+        event_loop_thread = threading.get_ident()
+        hashing_thread = None
+
+        def fake_hash(_password: str) -> str:
+            nonlocal hashing_thread
+            hashing_thread = threading.get_ident()
+            return "test-password-hash"
+
+        monkeypatch.setattr("dax.web.routes.auth.hash_password", fake_hash)
+        transport = ASGITransport(app=app, client=("127.0.0.1", 1234))
+        async with AsyncClient(transport=transport, base_url="http://test") as client:
+            response = await client.post("/api/auth/setup", json={"password": PASSWORD})
+
+        assert response.status_code == 200
+        assert response.json()["token"]
+        assert app.state.auth.configured is True
+        assert hashing_thread is not None
+        assert hashing_thread != event_loop_thread
 
 class TestBearerToken:
     """The desktop client can't rely on a SameSite=lax cookie from a webview

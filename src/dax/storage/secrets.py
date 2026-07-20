@@ -26,9 +26,17 @@ import logging
 import os
 import sqlite3
 import stat
+import threading
+from contextlib import contextmanager
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 from cryptography.fernet import Fernet, InvalidToken
+
+from dax.storage.database import acquire_process_lock
+
+if TYPE_CHECKING:
+    from collections.abc import Iterator
 
 logger = logging.getLogger(__name__)
 
@@ -37,14 +45,23 @@ logger = logging.getLogger(__name__)
 # to be exported). We export everything; this set is documentation only.
 
 
+class SecretStoreError(RuntimeError):
+    """Encrypted secret material cannot be accessed safely."""
+
+
 class SecretStore:
     """Encrypted key/value secret store on top of SQLite + a Fernet key file."""
 
     def __init__(self, db_path: str) -> None:
         self._db_path = Path(db_path)
         self._key_path = self._db_path.parent / "dax.key"
+        acquire_process_lock(self._db_path)
+        self._write_lock = threading.RLock()
+        self._transaction_connection: sqlite3.Connection | None = None
+        self._pending_env: dict[str, str | None] | None = None
         self._fernet = Fernet(self._load_or_create_key())
         self._ensure_table()
+        self._validate_existing_material()
 
     # -- key management --
 
@@ -55,17 +72,39 @@ class SecretStore:
         self._db_path.parent.mkdir(parents=True, exist_ok=True)
         if self._key_path.exists():
             return self._key_path.read_bytes().strip()
+        if self._has_encrypted_material():
+            raise SecretStoreError(
+                f"Secret key is unavailable for existing encrypted data: {self._key_path}"
+            )
         key = Fernet.generate_key()
         # Write with restrictive perms from the start (0600).
-        fd = os.open(
-            self._key_path,
-            os.O_WRONLY | os.O_CREAT | os.O_TRUNC,
-            stat.S_IRUSR | stat.S_IWUSR,
-        )
+        try:
+            fd = os.open(
+                self._key_path,
+                os.O_WRONLY | os.O_CREAT | os.O_EXCL,
+                stat.S_IRUSR | stat.S_IWUSR,
+            )
+        except FileExistsError:
+            return self._key_path.read_bytes().strip()
         with os.fdopen(fd, "wb") as f:
             f.write(key)
         logger.info("Generated new secret key at %s", self._key_path)
         return key
+
+    def _has_encrypted_material(self) -> bool:
+        if not self._db_path.exists():
+            return False
+        try:
+            with sqlite3.connect(self._db_path, timeout=10) as conn:
+                table = conn.execute(
+                    "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'secrets'"
+                ).fetchone()
+                return (
+                    table is not None
+                    and conn.execute("SELECT 1 FROM secrets LIMIT 1").fetchone() is not None
+                )
+        except sqlite3.DatabaseError as exc:
+            raise SecretStoreError(f"Cannot inspect encrypted secret store: {exc}") from exc
 
     # -- schema --
 
@@ -87,40 +126,91 @@ class SecretStore:
         with contextlib.suppress(OSError):
             self._db_path.chmod(stat.S_IRUSR | stat.S_IWUSR)
 
+    def _validate_existing_material(self) -> None:
+        with self._connect() as conn:
+            rows = conn.execute("SELECT value FROM secrets").fetchall()
+        try:
+            for row in rows:
+                self._fernet.decrypt(row[0].encode("ascii"))
+        except (InvalidToken, UnicodeEncodeError, ValueError) as exc:
+            raise SecretStoreError(
+                "Encrypted secrets cannot be decrypted with the configured master key"
+            ) from exc
+
+    @contextmanager
+    def transaction(self) -> Iterator[None]:
+        """Commit a group of secret mutations and environment updates atomically."""
+        with self._write_lock:
+            if self._transaction_connection is not None:
+                yield
+                return
+            conn = self._connect()
+            self._transaction_connection = conn
+            self._pending_env = {}
+            try:
+                conn.execute("BEGIN IMMEDIATE")
+                yield
+                conn.commit()
+                for name, value in self._pending_env.items():
+                    if value is None:
+                        os.environ.pop(name, None)
+                    else:
+                        os.environ[name] = value
+            except BaseException:
+                conn.rollback()
+                raise
+            finally:
+                self._transaction_connection = None
+                self._pending_env = None
+                conn.close()
+
     # -- CRUD --
 
     def set(self, name: str, value: str) -> None:
         """Encrypt and persist a secret; also export it to ``os.environ``."""
-        token = self._fernet.encrypt(value.encode("utf-8")).decode("ascii")
-        with self._connect() as conn:
-            conn.execute(
-                "INSERT INTO secrets (name, value, updated_at) "
-                "VALUES (?, ?, datetime('now')) "
-                "ON CONFLICT(name) DO UPDATE SET value=excluded.value, "
-                "updated_at=excluded.updated_at",
-                (name, token),
-            )
-            conn.commit()
-        os.environ[name] = value
+        with self._write_lock:
+            token = self._fernet.encrypt(value.encode("utf-8")).decode("ascii")
+            if self._transaction_connection is not None:
+                self._set_on_connection(self._transaction_connection, name, token)
+                assert self._pending_env is not None
+                self._pending_env[name] = value
+                return
+            with self._connect() as conn:
+                self._set_on_connection(conn, name, token)
+                conn.commit()
+            os.environ[name] = value
+
+    @staticmethod
+    def _set_on_connection(conn: sqlite3.Connection, name: str, token: str) -> None:
+        conn.execute(
+            "INSERT INTO secrets (name, value, updated_at) "
+            "VALUES (?, ?, datetime('now')) "
+            "ON CONFLICT(name) DO UPDATE SET value=excluded.value, "
+            "updated_at=excluded.updated_at",
+            (name, token),
+        )
 
     def get(self, name: str) -> str | None:
         with self._connect() as conn:
-            row = conn.execute(
-                "SELECT value FROM secrets WHERE name = ?", (name,)
-            ).fetchone()
+            row = conn.execute("SELECT value FROM secrets WHERE name = ?", (name,)).fetchone()
         if row is None:
             return None
         try:
             return self._fernet.decrypt(row[0].encode("ascii")).decode("utf-8")
-        except (InvalidToken, ValueError):
-            logger.warning("Could not decrypt secret %s — key mismatch?", name)
-            return None
+        except (InvalidToken, UnicodeEncodeError, ValueError) as exc:
+            raise SecretStoreError(f"Encrypted secret {name!r} cannot be decrypted") from exc
 
     def delete(self, name: str) -> None:
-        with self._connect() as conn:
-            conn.execute("DELETE FROM secrets WHERE name = ?", (name,))
-            conn.commit()
-        os.environ.pop(name, None)
+        with self._write_lock:
+            if self._transaction_connection is not None:
+                self._transaction_connection.execute("DELETE FROM secrets WHERE name = ?", (name,))
+                assert self._pending_env is not None
+                self._pending_env[name] = None
+                return
+            with self._connect() as conn:
+                conn.execute("DELETE FROM secrets WHERE name = ?", (name,))
+                conn.commit()
+            os.environ.pop(name, None)
 
     def names(self) -> list[str]:
         with self._connect() as conn:

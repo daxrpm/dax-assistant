@@ -18,7 +18,7 @@ from typing import TYPE_CHECKING
 from dax.core.exceptions import ToolError
 from dax.core.models import ToolCall, ToolResult
 from dax.core.policy import Decision
-from dax.core.shell_allow import shell_binary
+from dax.core.shell_allow import is_auto_allowable, shell_binary
 
 if TYPE_CHECKING:
     from dax.core.policy import ToolPolicy
@@ -167,15 +167,15 @@ class ToolGate:
     ) -> ToolResult | None:
         """Gate a shell_run call against the user-managed command allowlist.
 
-        Allowlisted binaries run with no prompt. Unknown ones ask the user, who
-        can *approve once* (run, don't remember) or *approve & save* (run and add
-        the binary to the allowlist permanently). Denials block the call.
+        Allowlisted, bounded read-only commands run with no prompt. Other forms
+        require explicit per-call approval. Eligible read-only commands can also
+        be saved; denials block the call.
         """
         assert self._shell_allow is not None
         command = str(call.arguments.get("command", ""))
         binary = shell_binary(command)
 
-        if self._shell_allow.is_allowed(binary):
+        if self._shell_allow.allows_command(command):
             await self._audit(call, "executed")
             return None
 
@@ -190,11 +190,12 @@ class ToolGate:
                 is_error=True,
             )
 
+        can_save = is_auto_allowable(command)
         decision = await self._approval.request(
             tool_name=call.tool_name,
             server_name=call.server_name,
             arguments=dict(call.arguments),
-            options=["once", "save"],
+            options=["once", "save"] if can_save else ["once"],
             channel=channel,
             session_id=session_id,
         )
@@ -205,7 +206,7 @@ class ToolGate:
                 content=f"Error: the user declined to run '{binary or command}'.",
                 is_error=True,
             )
-        if decision == "save" and binary:
+        if decision == "save" and binary and can_save:
             self._shell_allow.add(binary)
             logger.info("Added '%s' to the shell allowlist", binary)
         await self._audit(call, "approved")

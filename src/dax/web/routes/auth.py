@@ -8,11 +8,13 @@ cost and a small constant delay on failure.
 from __future__ import annotations
 
 import asyncio
+import ipaddress
 import logging
 
-from fastapi import APIRouter, Request, Response
-from pydantic import BaseModel
+from fastapi import APIRouter, HTTPException, Request, Response, status
+from pydantic import BaseModel, Field
 
+from dax.web.auth import hash_password
 from dax.web.dependencies import AuthDep, ConfigDep, SecretStoreDep
 
 router = APIRouter(tags=["auth"])
@@ -21,11 +23,11 @@ logger = logging.getLogger(__name__)
 
 
 class LoginRequest(BaseModel):
-    password: str
+    password: str = Field(max_length=1024)
 
 
 class SetupRequest(BaseModel):
-    password: str
+    password: str = Field(max_length=1024)
 
 
 class LoginResponse(BaseModel):
@@ -53,6 +55,41 @@ class HealthResponse(BaseModel):
     status: str
 
 
+def _client_key(request: Request) -> str:
+    return request.client.host if request.client is not None else "<unknown>"
+
+
+def _limit_attempts(
+    request: Request,
+    auth: AuthDep,
+    scope: str,
+    *,
+    client_limit: int,
+    global_limit: int,
+) -> None:
+    retry_after = auth.attempt_limiter.check(
+        scope,
+        _client_key(request),
+        client_limit=client_limit,
+        global_limit=global_limit,
+    )
+    if retry_after is not None:
+        raise HTTPException(
+            status.HTTP_429_TOO_MANY_REQUESTS,
+            "Too many attempts",
+            headers={"Retry-After": str(retry_after)},
+        )
+
+
+def _is_loopback_request(request: Request) -> bool:
+    if request.client is None:
+        return False
+    try:
+        return ipaddress.ip_address(request.client.host.split("%", 1)[0]).is_loopback
+    except ValueError:
+        return False
+
+
 @router.get("/health", response_model=HealthResponse)
 async def health() -> HealthResponse:
     """Unauthenticated liveness probe for systemd and reverse proxies."""
@@ -70,6 +107,7 @@ async def auth_status(request: Request, auth: AuthDep) -> AuthStatus:
 
 @router.post("/auth/setup", response_model=LoginResponse)
 async def setup(
+    request: Request,
     body: SetupRequest,
     response: Response,
     auth: AuthDep,
@@ -83,30 +121,35 @@ async def setup(
     .env), and the user is logged in immediately. After this, the endpoint is a
     no-op 409 so it can't be used to reset an existing account.
     """
-    from dax.web.auth import hash_password
-
-    if auth.configured:
-        response.status_code = 409
+    if not _is_loopback_request(request):
+        response.status_code = 403
         return LoginResponse(ok=False)
+
+    _limit_attempts(request, auth, "setup", client_limit=5, global_limit=20)
 
     if len(body.password) < 8:
         response.status_code = 400
         return LoginResponse(ok=False)
 
-    new_hash = hash_password(body.password)
+    async with auth.setup_lock:
+        if auth.configured:
+            response.status_code = 409
+            return LoginResponse(ok=False)
 
-    # Persist encrypted, then update the live config + auth manager in place.
-    store.set("DAX_SECURITY__PASSWORD_HASH", new_hash)
+        new_hash = await asyncio.to_thread(hash_password, body.password)
 
-    object.__setattr__(config.security, "password_hash", new_hash)
-    object.__setattr__(config.security, "auth_enabled", True)
-    auth._password_hash = new_hash
-    auth._enabled = True
+        # Persist encrypted, then update the live config + auth manager in place.
+        store.set("DAX_SECURITY__PASSWORD_HASH", new_hash)
 
-    token = auth.issue_token()
-    auth.set_cookie(response, token)
-    logger.info("First-run account created and signed in")
-    return LoginResponse(ok=True, token=token)
+        object.__setattr__(config.security, "password_hash", new_hash)
+        object.__setattr__(config.security, "auth_enabled", True)
+        auth._password_hash = new_hash
+        auth._enabled = True
+
+        token = auth.issue_token()
+        auth.set_cookie(response, token)
+        logger.info("First-run account created and signed in")
+        return LoginResponse(ok=True, token=token)
 
 
 @router.post("/auth/login", response_model=LoginResponse)
@@ -116,7 +159,9 @@ async def login(
     if not auth.enabled:
         return LoginResponse(ok=True)
 
-    if not auth.verify_login(body.password):
+    _limit_attempts(request, auth, "login", client_limit=5, global_limit=30)
+
+    if not await asyncio.to_thread(auth.verify_login, body.password):
         # Constant-ish delay to blunt online guessing.
         await asyncio.sleep(0.5)
         response.status_code = 401
