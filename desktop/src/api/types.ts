@@ -324,6 +324,42 @@ export interface ToolsConfig {
   };
 }
 
+/** What one laptop is asked to do when it is up. */
+export interface NodePolicy {
+  /** False leaves it lending tools without ever hosting a session. */
+  process_locally: boolean;
+  /**
+   * Keep this on "auto". It pins inference to the node only when the model is
+   * itself local; a cloud provider is dominated by the round trip to the
+   * provider, so routing that call through a laptop adds a hop and removes none.
+   */
+  inference: "auto" | "local" | "server";
+  voice: "auto" | "local" | "server";
+}
+
+export interface NodesConfig {
+  enabled: boolean;
+  prefer_when_available: boolean;
+  policies: Record<string, NodePolicy>;
+}
+
+/** A capability node as listed by `/api/nodes`, with live presence. */
+export interface CapabilityNode {
+  id: string;
+  name: string;
+  platform: string;
+  last_seen_at: string | null;
+  revoked: boolean;
+  connected: boolean;
+  policy: NodePolicy;
+}
+
+export interface NodeFleet {
+  enabled: boolean;
+  prefer_when_available: boolean;
+  nodes: CapabilityNode[];
+}
+
 export interface FullConfig {
   general: GeneralConfig;
   voice: VoiceConfig;
@@ -336,6 +372,7 @@ export interface FullConfig {
   mcp: {
     servers: Record<string, MCPServerConfig>;
   };
+  nodes: NodesConfig;
   storage: {
     database_path: string;
     models_path: string;

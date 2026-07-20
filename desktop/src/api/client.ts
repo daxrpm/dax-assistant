@@ -26,6 +26,8 @@ import type {
   MCPServerConfig,
   MCPServerStatus,
   MemoryEntry,
+  NodeFleet,
+  NodePolicy,
   OllamaModel,
   RegistrySearchResponse,
   ShellAllowResponse,
@@ -162,6 +164,16 @@ export const api = {
 
   devices: () => request<{ devices: PairedDevice[] }>("/auth/devices"),
 
+  /* ---------------- capability nodes ---------------- */
+
+  nodes: () => request<NodeFleet>("/nodes"),
+
+  updateNodePolicy: (id: string, policy: Partial<NodePolicy>) =>
+    request<{ status: string; policy: NodePolicy }>(`/nodes/${encodeURIComponent(id)}`, {
+      method: "PATCH",
+      body: JSON.stringify(policy),
+    }),
+
   revokeDevice: (id: string) =>
     request<{ ok: boolean }>(`/auth/devices/${encodeURIComponent(id)}/revoke`, {
       method: "POST",
@@ -239,6 +251,9 @@ export const api = {
 
   updateTools: (data: Record<string, unknown>) =>
     request<unknown>("/config/tools", { method: "PATCH", body: JSON.stringify(data) }),
+
+  updateNodes: (data: Record<string, unknown>) =>
+    request<unknown>("/config/nodes", { method: "PATCH", body: JSON.stringify(data) }),
 
   updateSecurity: (data: Record<string, unknown>) =>
     request<unknown>("/config/security", { method: "PATCH", body: JSON.stringify(data) }),

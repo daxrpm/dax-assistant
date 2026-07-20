@@ -1,6 +1,7 @@
 import { useId, useState, type ReactNode } from "react";
 import { api } from "../../api/client";
 import type { FullConfig } from "../../api/types";
+import { CapabilityNodes } from "../../components/CapabilityNodes";
 import { McpServers } from "../../components/McpServers";
 import { ChevronRightIcon } from "../../components/icons";
 import { Button, Panel, PanelBody, PanelHeader, useToast } from "../../design/primitives";
@@ -38,6 +39,8 @@ function CustomGroup({ group, context }: { group: GroupSpec; context: RendererCo
       return <VoiceGallery config={context.config} />;
     case "mcp-servers":
       return <McpServers config={context.config} onSaved={context.onSaved} />;
+    case "capability-nodes":
+      return <CapabilityNodes />;
     case "shell-allow":
       return (
         <div className={s.embeddedPage}>

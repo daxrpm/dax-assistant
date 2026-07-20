@@ -28,6 +28,7 @@ const SAVERS: Record<ApiSection, Saver> = {
   telegram: api.updateTelegram,
   security: api.updateSecurity,
   tools: api.updateTools,
+  nodes: api.updateNodes,
 };
 
 function readPath(root: unknown, path: string): unknown {

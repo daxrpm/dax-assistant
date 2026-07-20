@@ -23,7 +23,8 @@ export type ApiSection =
   | "whatsapp"
   | "telegram"
   | "security"
-  | "tools";
+  | "tools"
+  | "nodes";
 
 export type ControlKind =
   | "text"
@@ -50,6 +51,7 @@ export type CustomGroup =
   | "voice-enrollment"
   | "voice-gallery"
   | "mcp-servers"
+  | "capability-nodes"
   | "shell-allow"
   | "system-prompt"
   | "memory-files"

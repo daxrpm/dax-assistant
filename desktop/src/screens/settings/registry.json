@@ -917,6 +917,39 @@
           ]
         },
         {
+          "id": "cap-nodos",
+          "title": "Nodos de capacidad",
+          "description": "Portátiles que prestan sus herramientas y, si los dejas, ejecutan el turno. El backend sigue siendo el dueño del historial.",
+          "custom": "capability-nodes",
+          "api": "nodes",
+          "fields": [
+            {
+              "key": "nodes.enabled",
+              "api": "nodes",
+              "path": "enabled",
+              "label": "Aceptar nodos",
+              "description": "Con esto apagado el backend rechaza todo nodo y hace el trabajo él mismo.",
+              "control": "toggle",
+              "apply": "live"
+            },
+            {
+              "key": "nodes.prefer_when_available",
+              "api": "nodes",
+              "path": "prefer_when_available",
+              "label": "Preferir el nodo cuando esté encendido",
+              "description": "Los clientes usan el portátil en cuanto aparece. Apágalo para trabajar siempre contra el backend.",
+              "control": "toggle",
+              "apply": "live"
+            },
+            {
+              "key": "nodes.policies",
+              "label": "Política por nodo",
+              "description": "Colección dinámica: qué hace cada portátil y si está conectado ahora.",
+              "control": "custom"
+            }
+          ]
+        },
+        {
           "id": "cap-politica",
           "title": "Permisos de herramientas",
           "description": "Qué se ejecuta solo, qué te pregunta y qué se rechaza. Se aplica en vivo.",
