@@ -1,0 +1,254 @@
+/*
+ * The post-login half of setup. Shares the shape of `Onboarding` on purpose —
+ * the two are one flow interrupted by a login — but follows Órbita rule 1
+ * throughout: the option cards separate by elevation, not by a border.
+ */
+
+.wrap {
+  display: grid;
+  min-height: 100vh;
+  padding: var(--space-6);
+  place-items: center;
+  background:
+    radial-gradient(
+      circle at 18% 10%,
+      color-mix(in srgb, var(--accent) 12%, transparent),
+      transparent 36%
+    ),
+    var(--bg-window);
+}
+
+.card {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-6);
+  width: min(720px, 100%);
+  min-height: 520px;
+  padding: clamp(24px, 5vw, 48px);
+  background: var(--bg-panel);
+  border-radius: var(--radius-xl);
+  box-shadow: var(--shadow-3);
+}
+
+.progress {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: var(--space-2);
+}
+
+.progress span {
+  height: 3px;
+  background: var(--separator);
+  border-radius: 2px;
+  transition: background var(--dur-normal) var(--ease-standard);
+}
+
+.progress .progressActive {
+  background: var(--accent);
+}
+
+.content {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: var(--space-4);
+}
+
+.content h1 {
+  margin: 0;
+  font-size: clamp(28px, 5vw, 42px);
+  font-weight: 500;
+  letter-spacing: -0.03em;
+}
+
+.content p {
+  max-width: 62ch;
+  margin: 0;
+  color: var(--fg-secondary);
+  line-height: 1.6;
+}
+
+.eyebrow {
+  font-size: var(--text-caption);
+  font-weight: 600;
+  letter-spacing: var(--tracking-label);
+  color: var(--accent) !important;
+}
+
+.choices {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: var(--space-3);
+  width: 100%;
+}
+
+/* Raised, not outlined — the accent stays reserved for the selected state. */
+.choice,
+.choiceActive {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+  min-height: 96px;
+  padding: var(--space-4);
+  color: var(--fg-primary);
+  text-align: left;
+  background: var(--bg-elevated);
+  border: none;
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-1);
+  cursor: default;
+  transition:
+    background var(--dur-fast) var(--ease-standard),
+    box-shadow var(--dur-fast) var(--ease-standard);
+}
+
+.choice:hover {
+  background: var(--bg-hover);
+}
+
+.choiceActive {
+  background: var(--bg-selected);
+  box-shadow: var(--shadow-2);
+}
+
+.choice strong,
+.choiceActive strong {
+  font-weight: 500;
+  text-transform: capitalize;
+}
+
+.choice span,
+.choiceActive span {
+  font-size: var(--text-footnote);
+  line-height: 1.4;
+  color: var(--fg-tertiary);
+}
+
+.field {
+  display: grid;
+  gap: var(--space-2);
+  width: 100%;
+  color: var(--fg-secondary);
+}
+
+.commandRow {
+  display: flex;
+  gap: var(--space-2);
+  align-items: center;
+  width: 100%;
+}
+
+.command {
+  flex: 1;
+  min-width: 0;
+  padding: var(--space-3);
+  overflow-x: auto;
+  font-family: var(--font-mono);
+  font-size: var(--text-footnote);
+  color: var(--fg-primary);
+  white-space: nowrap;
+  user-select: text;
+  background: var(--bg-window);
+  border-radius: var(--radius-md);
+}
+
+.pairing {
+  display: flex;
+  gap: var(--space-5);
+  align-items: center;
+}
+
+.qr {
+  padding: var(--space-3);
+  background: #ffffff;
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-1);
+}
+
+.pairingBody {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+
+.code {
+  font-family: var(--font-mono);
+  font-size: var(--text-title2);
+  letter-spacing: 0.12em;
+  color: var(--fg-primary);
+  user-select: text;
+}
+
+.hint {
+  font-size: var(--text-footnote);
+  color: var(--fg-tertiary) !important;
+}
+
+.status {
+  padding: var(--space-3);
+  background: var(--bg-elevated);
+  border-radius: var(--radius-md);
+}
+
+.summary {
+  display: grid;
+  gap: var(--space-2);
+  width: 100%;
+  margin: 0;
+}
+
+.summary div {
+  display: grid;
+  grid-template-columns: 140px 1fr;
+  gap: var(--space-3);
+  padding: var(--space-3) 0;
+  box-shadow: inset 0 -1px 0 var(--separator);
+}
+
+.summary dt {
+  color: var(--fg-secondary);
+}
+
+.summary dd {
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+
+.footer {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+  justify-content: space-between;
+}
+
+.footerRight {
+  display: flex;
+  gap: var(--space-2);
+}
+
+@media (max-width: 640px) {
+  .wrap {
+    align-items: start;
+    padding: var(--space-3);
+  }
+
+  .card {
+    min-height: calc(100vh - 24px);
+    padding: var(--space-5);
+  }
+
+  .choices {
+    grid-template-columns: repeat(2, 1fr);
+  }
+
+  .pairing {
+    flex-direction: column;
+    align-items: flex-start;
+  }
+
+  .summary div {
+    grid-template-columns: 1fr;
+    gap: var(--space-1);
+  }
+}

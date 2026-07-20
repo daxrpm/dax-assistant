@@ -31,6 +31,7 @@ import { useHashRoute } from "./lib/useHashRoute";
 import { useTheme } from "./lib/useTheme";
 import { useI18n } from "./i18n/I18n";
 import { BackendConnection } from "./native/BackendConnection";
+import { FirstRun, isFirstRunComplete } from "./native/FirstRun";
 import { Onboarding } from "./native/Onboarding";
 import { VoiceHud } from "./native/VoiceHud";
 import { MediaDuckingBridge } from "./native/mediaDucking";
@@ -66,6 +67,9 @@ function AppInner() {
   const { locale, setLocale, t } = useI18n();
   const toast = useToast();
   const [paletteOpen, setPaletteOpen] = useState(false);
+  // Read once: the flag is written when the flow finishes, and re-reading it on
+  // every render would fight the state that dismisses the flow.
+  const [firstRunDone, setFirstRunDone] = useState(isFirstRunComplete);
   const authCheckGeneration = useRef(0);
 
   const openOnboarding = useCallback(() => {
@@ -125,6 +129,12 @@ function AppInner() {
     window.addEventListener("dax:open-onboarding", openOnboarding);
     return () => window.removeEventListener("dax:open-onboarding", openOnboarding);
   }, [openOnboarding]);
+
+  useEffect(() => {
+    const reopen = () => setFirstRunDone(false);
+    window.addEventListener("dax:open-setup", reopen);
+    return () => window.removeEventListener("dax:open-setup", reopen);
+  }, []);
 
   useEffect(() => {
     if (!isTauriRuntime() || phase !== "authenticated") return;
@@ -260,6 +270,13 @@ function AppInner() {
         />
       </div>
     );
+  }
+
+  // The half of setup that needs a session: model, node, phone. It runs here
+  // rather than in `Onboarding` because all three call an authenticated
+  // backend, and nothing is authenticated until the login above has passed.
+  if (!firstRunDone) {
+    return <FirstRun onDone={() => setFirstRunDone(true)} />;
   }
 
   // Screens that lay out their own full-height chrome opt out of the shell's

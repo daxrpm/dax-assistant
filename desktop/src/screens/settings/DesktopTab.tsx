@@ -25,6 +25,7 @@ import {
 } from "../../design/primitives";
 import type { ThemeMode } from "../../lib/useTheme";
 import type { BackendStrategy } from "../../native/backend";
+import { resetFirstRun } from "../../native/FirstRun";
 import { shutdownRealtimeStores } from "../../stores/realtime";
 import { useI18n } from "../../i18n/I18n";
 import p from "../page.module.css";
@@ -250,6 +251,15 @@ export function DesktopTab({
               <Button variant="primary" onClick={() => void applyConnection()}>{t("settings.desktop.apply")}</Button>
               <Button variant="secondary" loading={checking} onClick={() => void reevaluate()}>{text("Reevaluar ahora", "Re-evaluate now")}</Button>
               <Button variant="ghost" onClick={() => window.dispatchEvent(new Event("dax:open-onboarding"))}>{text("Abrir onboarding", "Open onboarding")}</Button>
+              <Button
+                variant="ghost"
+                onClick={() => {
+                  resetFirstRun();
+                  window.dispatchEvent(new Event("dax:open-setup"));
+                }}
+              >
+                {text("Repetir configuración", "Run setup again")}
+              </Button>
             </div>
 
             <div className={p.notice}>
