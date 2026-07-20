@@ -421,13 +421,22 @@ class TestAuthGating:
         assert status_response.status_code == 200
         assert config_response.status_code == 200
         payload = config_response.json()
-        assert set(payload) == {"general", "llm", "voice"}
+        assert set(payload) == {"nodes", "general", "llm", "voice"}
         assert payload["llm"]["openai_configured"] is True
         assert payload["voice"]["stt_openai_configured"] is True
         assert "sk-never-return" not in config_response.text
         assert "api_key" not in config_response.text
         assert "base_url" not in config_response.text
         assert "binary" not in config_response.text
+        # The phone learns that a node is up and which one would serve it, but
+        # never the fleet: enumerating siblings stays behind a session, exactly
+        # as it does for `/auth/devices`.
+        assert set(payload["nodes"]) == {
+            "enabled",
+            "prefer_when_available",
+            "available",
+            "name",
+        }
 
     async def test_device_token_can_patch_safe_mobile_settings(self, secured: AsyncClient):
         headers = await self._device_headers(secured)

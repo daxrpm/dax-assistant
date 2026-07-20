@@ -21,13 +21,34 @@ class ExecuteRequest:
     timeout_seconds: float
 
 
-def hello_frame(node_name: str, tools: list[dict[str, Any]]) -> dict[str, object]:
+def hello_frame(
+    node_name: str,
+    tools: list[dict[str, Any]],
+    endpoints: list[str] | None = None,
+) -> dict[str, object]:
     return {
         "type": "hello",
         "version": PROTOCOL_VERSION,
         "node_name": node_name,
         "tools": tools,
+        # Proposed, not asserted: the backend re-validates these and drops any
+        # address that is not on a private network.
+        "endpoints": list(endpoints or []),
     }
+
+
+def parse_ready(frame: dict[str, object]) -> str | None:
+    """The backend's ticket-signing public key, from the ready frame.
+
+    Absent on an older backend, in which case the node simply cannot verify
+    tickets and must refuse direct sessions rather than accept unverified ones.
+    """
+    if frame.get("type") != "ready":
+        return None
+    key = frame.get("public_key")
+    if not isinstance(key, str) or not key or len(key) > 128:
+        return None
+    return key
 
 
 def parse_frame(raw: str | bytes) -> dict[str, object]:

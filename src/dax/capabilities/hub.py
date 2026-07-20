@@ -20,11 +20,15 @@ from dax.capabilities.protocol import (
     InboundFrame,
     ResultFrame,
     canonical_prefix,
+    trusted_endpoints,
     trusted_inventory,
 )
+from dax.core.config import NodesConfig
 from dax.core.models import ToolCall, ToolResult
 
 if TYPE_CHECKING:
+    from collections.abc import Callable
+
     from fastapi import WebSocket
 
     from dax.mcp.manager import MCPManager
@@ -47,6 +51,8 @@ class _Connection:
     websocket: WebSocket
     generation: int
     inventory: frozenset[str]
+    # Validated by `trusted_endpoints`, never taken as advertised.
+    endpoints: tuple[str, ...] = ()
     send_lock: asyncio.Lock = field(default_factory=asyncio.Lock)
     calls: asyncio.Semaphore = field(
         default_factory=lambda: asyncio.Semaphore(_MAX_CONCURRENT_CALLS)
@@ -114,17 +120,65 @@ def _failure(call_id: str, reason: str) -> ToolResult:
 class CapabilityHub:
     """Owns ephemeral inventories and one generation-fenced socket per node."""
 
-    def __init__(self, manager: MCPManager, devices: DeviceRegistry) -> None:
+    def __init__(
+        self,
+        manager: MCPManager,
+        devices: DeviceRegistry,
+        nodes: NodesConfig | None = None,
+        public_key: Callable[[], str] | None = None,
+    ) -> None:
         self.manager = manager
         self.devices = devices
+        # A callable rather than the key itself: it is generated on first use,
+        # and a node that connects before anything has needed it should still
+        # get the key that eventually signs its tickets.
+        self._public_key = public_key
+        # Held live rather than copied: settings edits mutate the config object
+        # in place, so a node's next policy push reflects them without a reload.
+        self.nodes = nodes if nodes is not None else NodesConfig()
         self._connections: dict[str, _Connection] = {}
         self._generations: dict[str, int] = {}
         self._lock = asyncio.Lock()
         self._stopping = False
 
+    async def send_policy(self, node_id: str) -> None:
+        """Push *node_id*'s current policy to it, if it is connected.
+
+        Best effort by design: a node that misses the push re-reads the policy
+        on its next connect, and the backend never depends on the node having
+        obeyed. Nothing here is a security control — the backend still refuses
+        to route work a policy forbids.
+        """
+        connection = self._connections.get(node_id)
+        if connection is None or connection.closed:
+            return
+        policy = self.nodes.policy_for(node_id)
+        with contextlib.suppress(Exception):
+            await connection.send(
+                {
+                    "type": "policy",
+                    "generation": connection.generation,
+                    "process_locally": self.nodes.hosts_sessions(node_id),
+                    "inference": policy.inference,
+                    "voice": policy.voice,
+                }
+            )
+
     def is_present(self, node_id: str) -> bool:
         connection = self._connections.get(node_id)
         return connection is not None and not connection.closed
+
+    def endpoints_for(self, node_id: str) -> list[str]:
+        """Validated LAN addresses this node is currently reachable at.
+
+        Empty when the node is gone, which is what a client should see: an
+        address for a laptop that is not connected is an invitation to talk to
+        whatever now holds that IP.
+        """
+        connection = self._connections.get(node_id)
+        if connection is None or connection.closed:
+            return []
+        return list(connection.endpoints)
 
     def is_current(self, connection: _Connection) -> bool:
         return self._connections.get(connection.node_id) is connection and not connection.closed
@@ -136,6 +190,7 @@ class CapabilityHub:
                 raise ValueError("Hello frame exceeds limit")
             hello = HelloFrame.model_validate_json(raw)
             tools = trusted_inventory(node_id, hello)
+            endpoints = tuple(trusted_endpoints(hello))
         except (TimeoutError, ValueError, ValidationError):
             await self._close_socket(websocket, code=1008)
             return
@@ -154,6 +209,7 @@ class CapabilityHub:
                     websocket,
                     generation,
                     frozenset(str(tool["name"]) for tool in tools),
+                    endpoints,
                 )
                 try:
                     self.manager.register_dynamic_provider(
@@ -178,9 +234,18 @@ class CapabilityHub:
         try:
             if not self.is_current(connection):
                 return
-            await connection.send(
-                {"type": "ready", "version": 1, "generation": generation}
-            )
+            ready: dict[str, object] = {
+                "type": "ready",
+                "version": 1,
+                "generation": generation,
+            }
+            # The node needs this to verify session tickets on its own, without
+            # asking the backend on every connection a phone makes.
+            if self._public_key is not None:
+                with contextlib.suppress(Exception):
+                    ready["public_key"] = self._public_key()
+            await connection.send(ready)
+            await self.send_policy(node_id)
             await self._receive_loop(connection)
         finally:
             close = False

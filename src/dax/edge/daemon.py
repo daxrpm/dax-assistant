@@ -3,16 +3,19 @@
 from __future__ import annotations
 
 import asyncio
+import ipaddress
 import json
 import logging
 import os
 import random
+import socket
 import sys
 from collections.abc import Awaitable, Callable
 from contextlib import suppress
 from typing import Any, Protocol
 
 import httpx
+import psutil
 from websockets.asyncio.client import ClientConnection, connect
 
 from dax.core.models import ToolCall
@@ -21,12 +24,20 @@ from dax.mcp.manager import _session_passthrough_env
 from dax.mcp_servers.system.server import validate_command
 
 from .credentials import NodeCredentials, websocket_url
-from .protocol import ExecuteRequest, hello_frame, parse_execute, parse_frame, result_frame
+from .protocol import (
+    ExecuteRequest,
+    hello_frame,
+    parse_execute,
+    parse_frame,
+    parse_ready,
+    result_frame,
+)
 
 logger = logging.getLogger(__name__)
 
 HEARTBEAT_SECONDS = 20.0
 MAX_IN_FLIGHT = 8
+MAX_ADVERTISED_ENDPOINTS = 4
 
 
 class WebSocketConnection(Protocol):
@@ -37,6 +48,38 @@ class WebSocketConnection(Protocol):
 
 ConnectFactory = Callable[[str, dict[str, str]], Awaitable[WebSocketConnection]]
 Sleep = Callable[[float], Awaitable[None]]
+
+
+def local_endpoints(port: int) -> list[str]:
+    """Private addresses this machine could be reached at on its own network.
+
+    Only private, non-loopback IPv4. Loopback is useless to a phone, and a
+    globally routable address on a laptop means it is directly exposed to the
+    internet — not somewhere to invite a client to send a credential. The
+    backend re-validates all of this anyway; this side simply avoids proposing
+    addresses that would be thrown away.
+    """
+    if not 1 <= port <= 65535:
+        return []
+    found: list[str] = []
+    try:
+        interfaces = psutil.net_if_addrs()
+    except Exception:  # pragma: no cover - platform dependent
+        return []
+    for addresses in interfaces.values():
+        for address in addresses:
+            if address.family != socket.AF_INET:
+                continue
+            try:
+                parsed = ipaddress.ip_address(address.address)
+            except ValueError:
+                continue
+            if not parsed.is_private or parsed.is_loopback or parsed.is_link_local:
+                continue
+            endpoint = f"{address.address}:{port}"
+            if endpoint not in found:
+                found.append(endpoint)
+    return found[:MAX_ADVERTISED_ENDPOINTS]
 
 
 def backoff_delay(attempt: int, *, random_value: float | None = None) -> float:
@@ -113,6 +156,7 @@ class EdgeDaemon:
         executor: SystemExecutor | None = None,
         connect_factory: ConnectFactory = _connect,
         sleep: Sleep = asyncio.sleep,
+        session_port: int | None = None,
     ) -> None:
         self._credentials = credentials
         self._executor = executor or SystemExecutor()
@@ -120,6 +164,16 @@ class EdgeDaemon:
         self._sleep = sleep
         self._stop = asyncio.Event()
         self._tasks: set[asyncio.Task[None]] = set()
+        # Only advertised once something is actually listening. Publishing an
+        # address nothing answers on would send a phone to whatever else holds
+        # that IP.
+        self._session_port = session_port
+        self._backend_public_key: str | None = None
+
+    @property
+    def backend_public_key(self) -> str | None:
+        """The key session tickets are verified against, once the backend sends it."""
+        return self._backend_public_key
 
     def stop(self) -> None:
         self._stop.set()
@@ -156,8 +210,15 @@ class EdgeDaemon:
                         {"Authorization": f"Bearer {token}"},
                     )
                     connected_at = asyncio.get_running_loop().time()
+                    endpoints = (
+                        local_endpoints(self._session_port)
+                        if self._session_port is not None
+                        else []
+                    )
                     await connection.send(
-                        json.dumps(hello_frame(self._credentials.node_name, tools))
+                        json.dumps(
+                            hello_frame(self._credentials.node_name, tools, endpoints)
+                        )
                     )
                     await self._serve_until_stop(connection, expires)
                 except asyncio.CancelledError:
@@ -214,6 +275,17 @@ class EdgeDaemon:
                 frame = parse_frame(raw)
                 if frame["type"] == "heartbeat":
                     await connection.send(json.dumps({"type": "heartbeat"}))
+                    continue
+                if frame["type"] == "ready":
+                    # Keep the key that signs session tickets. Without it this
+                    # node cannot verify a client's ticket and must refuse
+                    # direct sessions rather than serve unverified ones.
+                    self._backend_public_key = parse_ready(frame)
+                    if self._backend_public_key is None:
+                        logger.warning(
+                            "Backend did not supply a session-signing key; "
+                            "direct client sessions stay disabled"
+                        )
                     continue
                 if frame["type"] != "execute":
                     continue

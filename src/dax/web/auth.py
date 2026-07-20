@@ -364,6 +364,19 @@ class AuthManager:
             return True
         return any(self.is_session_token(token) for token in self._token_candidates(request))
 
+    def requesting_device(self, request: Request) -> str | None:
+        """The enrolled device behind *request*, if it is a device at all.
+
+        A user session deliberately yields None. Sessions belong to the human,
+        not to a piece of hardware, and anything scoped to a specific device
+        needs to know which one.
+        """
+        for token in self._token_candidates(request):
+            device_id = self.device_from_token(token)
+            if device_id is not None:
+                return device_id
+        return None
+
     def authenticate_websocket(self, websocket: WebSocket) -> bool:
         """Validate a WebSocket via cookie, ``?token=``, or bearer header."""
         if not self._enabled:

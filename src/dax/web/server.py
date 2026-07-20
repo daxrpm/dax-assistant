@@ -25,6 +25,7 @@ from dax.web.routes import (
     mcp,
     memory,
     mobile,
+    nodes,
     oauth,
     system,
     voice,
@@ -122,9 +123,17 @@ def create_app(
     ):
         app.include_router(domain_router, prefix="/api", dependencies=device_or_session)
     app.include_router(mobile.router, prefix="/api", dependencies=device_or_session)
+    # Ticket issue is device-authenticated; node management below is not.
+    app.include_router(nodes.client_router, prefix="/api", dependencies=device_or_session)
 
     session_only = [Depends(require_session)]
-    for domain_router in (config_routes.router, mcp.router, memory.router, oauth.router):
+    for domain_router in (
+        config_routes.router,
+        mcp.router,
+        memory.router,
+        oauth.router,
+        nodes.router,
+    ):
         app.include_router(domain_router, prefix="/api", dependencies=session_only)
     # Chat + logs + voice WS authenticate in their own handshake; webhooks use
     # a secret.

@@ -7,7 +7,8 @@ from typing import Any
 from fastapi import APIRouter, Request
 from pydantic import BaseModel, ConfigDict
 
-from dax.web.dependencies import ConfigDep, SecretStoreDep
+from dax.storage.devices import CAPABILITY_NODE_KIND
+from dax.web.dependencies import AuthDep, ConfigDep, SecretStoreDep, persist_config
 from dax.web.routes.config import (
     LLMConfigUpdate,
     VoiceConfigUpdate,
@@ -38,10 +39,51 @@ class MobileVoiceConfigUpdate(VoiceNonSecretConfigUpdate):
     model_config = ConfigDict(extra="forbid")
 
 
+class MobileNodesConfigUpdate(BaseModel):
+    """The phone's share of node control.
+
+    Only the two switches. Choosing which laptop does what stays behind a
+    session, because ``devices.py`` deliberately refuses to let one enrolled
+    device enumerate its siblings, and a per-node policy editor would need
+    exactly that enumeration.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    enabled: bool | None = None
+    prefer_when_available: bool | None = None
+
+
+async def _node_summary(request: Request, config: ConfigDep, auth: AuthDep) -> dict[str, Any]:
+    """Whether a node is up for this phone, without naming the fleet."""
+    hub = getattr(request.app.state, "capability_hub", None)
+    devices = auth.devices
+    name: str | None = None
+    available = 0
+    if hub is not None and devices is not None:
+        for device in await devices.list_devices():
+            if device.kind != CAPABILITY_NODE_KIND or not hub.is_present(device.id):
+                continue
+            available += 1
+            if name is None and config.nodes.hosts_sessions(device.id):
+                name = device.name
+    return {
+        "enabled": config.nodes.enabled,
+        "prefer_when_available": config.nodes.prefer_when_available,
+        "available": available > 0,
+        # Present only when that node may actually host a session, so the phone
+        # never offers a laptop that would refuse the work.
+        "name": name,
+    }
+
+
 @router.get("")
-async def get_mobile_config(config: ConfigDep) -> dict[str, Any]:
+async def get_mobile_config(
+    request: Request, config: ConfigDep, auth: AuthDep
+) -> dict[str, Any]:
     """Return mobile-relevant settings, representing secrets only as flags."""
     return {
+        "nodes": await _node_summary(request, config, auth),
         "general": {
             "name": config.name,
             "language_default": config.language_default,
@@ -88,3 +130,14 @@ async def update_mobile_voice(
 ) -> dict[str, str]:
     """Apply non-secret voice settings through the canonical live updater."""
     return await update_voice(request, VoiceConfigUpdate(**body.model_dump()), config, store)
+
+
+@router.patch("/nodes")
+async def update_mobile_nodes(
+    request: Request, body: MobileNodesConfigUpdate, config: ConfigDep
+) -> dict[str, str]:
+    """Flip the fleet switches from the phone."""
+    for key, value in body.model_dump(exclude_none=True).items():
+        object.__setattr__(config.nodes, key, value)
+    persist_config(request)
+    return {"status": "ok"}

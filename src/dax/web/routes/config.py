@@ -179,6 +179,14 @@ class ToolsConfigUpdate(BaseModel):
     policy: ToolPolicyUpdate | None = None
 
 
+class NodesConfigUpdate(BaseModel):
+    """Fleet-wide node switches. Per-node policy lives on ``/api/nodes/{id}``,
+    because it is a collection keyed by device id rather than a fixed field."""
+
+    enabled: bool | None = None
+    prefer_when_available: bool | None = None
+
+
 class SecurityConfigUpdate(BaseModel):
     auth_enabled: bool | None = None
     session_ttl_hours: int | None = None
@@ -350,6 +358,14 @@ async def get_config(config: ConfigDep) -> dict[str, Any]:
         },
         "mcp": {
             "servers": {name: server_response(srv) for name, srv in config.mcp.servers.items()},
+        },
+        "nodes": {
+            "enabled": config.nodes.enabled,
+            "prefer_when_available": config.nodes.prefer_when_available,
+            "policies": {
+                node_id: policy.model_dump()
+                for node_id, policy in config.nodes.policies.items()
+            },
         },
         "storage": {
             "database_path": config.storage.database_path,
@@ -526,6 +542,17 @@ async def update_telegram(
         except Exception as e:
             return {"status": "saved", "note": f"Saved, but reload failed: {e}"}
 
+    return {"status": "ok"}
+
+
+@router.patch("/config/nodes")
+async def update_nodes(
+    request: Request, body: NodesConfigUpdate, config: ConfigDep
+) -> dict[str, str]:
+    """Update the fleet-wide capability-node switches."""
+    for key, value in body.model_dump(exclude_none=True).items():
+        object.__setattr__(config.nodes, key, value)
+    persist_config(request)
     return {"status": "ok"}
 
 

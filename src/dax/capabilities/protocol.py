@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import hashlib
+import ipaddress
 import json
 import re
 from typing import Annotated, Literal
@@ -12,6 +13,7 @@ from pydantic import AliasChoices, BaseModel, ConfigDict, Field
 PROTOCOL_VERSION = 1
 MAX_FRAME_BYTES = 256 * 1024
 MAX_TOOLS = 16
+MAX_ENDPOINTS = 4
 MAX_SCHEMA_BYTES = 32_000
 MAX_ARGUMENT_BYTES = 64_000
 MAX_RESULT_CHARS = 64 * 1024
@@ -88,6 +90,9 @@ class HelloFrame(StrictModel):
     version: Literal[1]
     node_name: str = Field(default="", max_length=64)
     tools: list[InventoryTool] = Field(max_length=MAX_TOOLS)
+    # Where a client on the same network could reach this node directly. The
+    # node proposes; `trusted_endpoints` decides. See below for why.
+    endpoints: list[str] = Field(default_factory=list, max_length=MAX_ENDPOINTS)
 
 
 class ResultFrame(StrictModel):
@@ -149,6 +154,51 @@ def trusted_inventory(node_id: str, hello: HelloFrame) -> list[dict[str, object]
             }
         )
     return tools
+
+
+def trusted_endpoints(hello: HelloFrame) -> list[str]:
+    """Filter a node's advertised addresses down to ones worth handing out.
+
+    The node is not trusted to name its own address any more than it is trusted
+    to describe its own tools. An address the backend repeats to a phone is an
+    instruction about where to send credentials, so a node that advertised a
+    public IP — or a neighbour's — would be redirecting clients somewhere the
+    user never enrolled.
+
+    The rule is therefore: private, link-local, or loopback only. Anything a
+    laptop could legitimately be reached at on a home network passes; nothing
+    routable from outside it does. Unparseable entries are dropped rather than
+    rejected outright, so one bad address does not cost a node its connection.
+    """
+    accepted: list[str] = []
+    for candidate in hello.endpoints:
+        endpoint = _validated_endpoint(candidate)
+        if endpoint is not None and endpoint not in accepted:
+            accepted.append(endpoint)
+    return accepted
+
+
+def _validated_endpoint(candidate: str) -> str | None:
+    if not candidate or len(candidate) > 64:
+        return None
+    host, separator, port_text = candidate.rpartition(":")
+    if not separator or not host:
+        return None
+    # A bracketed IPv6 literal, as it appears in a URL authority.
+    host = host.removeprefix("[").removesuffix("]")
+    try:
+        port = int(port_text)
+    except ValueError:
+        return None
+    if not 1 <= port <= 65535:
+        return None
+    try:
+        address = ipaddress.ip_address(host)
+    except ValueError:
+        return None
+    if not (address.is_private or address.is_link_local or address.is_loopback):
+        return None
+    return candidate
 
 
 def _matches_schema(

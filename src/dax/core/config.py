@@ -366,6 +366,48 @@ class ToolsConfig(BaseModel):
     shell_allow: list[str] = Field(default_factory=_default_shell_allow)
 
 
+class NodePolicyConfig(BaseModel):
+    """What one enrolled capability node is asked to do.
+
+    Keyed by device id in :class:`NodesConfig`. The backend owns this because
+    the backend owns configuration; a node reads its own entry when it connects,
+    and the desktop app running on that laptop edits it like any other setting.
+    That keeps one source of truth, so revoking a node's local processing from
+    the phone has the same effect as doing it on the laptop itself.
+    """
+
+    # False turns the laptop back into a plain tool lender: it still executes
+    # the dax-system calls the backend routes to it, but never hosts a session.
+    process_locally: bool = True
+    # "auto" is the value to keep. It pins inference to the node only when the
+    # model itself is local — Ollama on the node's GPU — because a cloud
+    # provider is dominated by the round trip to the provider, and routing that
+    # HTTPS call through a laptop adds a hop while removing none.
+    inference: Literal["auto", "local", "server"] = "auto"
+    # Speech is the real win. Audio is bulky and today it crosses the network
+    # twice to reach a backend that may be off-LAN.
+    voice: Literal["auto", "local", "server"] = "auto"
+
+
+class NodesConfig(BaseModel):
+    """Capability-node fleet settings."""
+
+    enabled: bool = True
+    # Whether clients should prefer a reachable node over the backend. Turning
+    # this off is the fleet-wide kill switch; a single node is disabled through
+    # its own ``process_locally``.
+    prefer_when_available: bool = True
+    policies: dict[str, NodePolicyConfig] = Field(default_factory=dict)
+
+    def policy_for(self, node_id: str) -> NodePolicyConfig:
+        """The stored policy for *node_id*, or the default one."""
+        return self.policies.get(node_id, NodePolicyConfig())
+
+    def hosts_sessions(self, node_id: str) -> bool:
+        """Whether *node_id* may terminate a client session and run the turn."""
+        return self.enabled and self.policy_for(node_id).process_locally
+
+
 class DaxConfig(BaseSettings):
     """Root configuration for Dax Assistant.
 
@@ -415,6 +457,7 @@ class DaxConfig(BaseSettings):
     storage: StorageConfig = Field(default_factory=StorageConfig)
     mcp: MCPConfig = Field(default_factory=MCPConfig)
     tools: ToolsConfig = Field(default_factory=ToolsConfig)
+    nodes: NodesConfig = Field(default_factory=NodesConfig)
 
 
 def load_config(config_path: Path | None = None) -> DaxConfig:

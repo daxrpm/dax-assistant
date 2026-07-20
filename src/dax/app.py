@@ -16,6 +16,7 @@ import structlog
 import uvicorn
 
 from dax.capabilities import CapabilityHub
+from dax.capabilities.tickets import public_key_for, signing_key
 from dax.channels.telegram_channel import TelegramChannel
 from dax.channels.voice_channel import VoiceChannel
 from dax.channels.web_channel import WebChannel
@@ -194,7 +195,14 @@ class DaxApp:
         # WebSocket handshake, where awaiting SQLite is not an option.
         self._devices = DeviceRegistry(self._database)
         await self._devices.load()
-        self._capability_hub = CapabilityHub(self._mcp, self._devices)
+        self._capability_hub = CapabilityHub(
+            self._mcp,
+            self._devices,
+            self.config.nodes,
+            # Deferred: the key is generated the first time something needs it,
+            # which may be this call or may be a phone asking for a ticket.
+            public_key=lambda: public_key_for(signing_key(self._secrets)),
+        )
         if hasattr(self._web_app, "state"):
             auth_manager = getattr(self._web_app.state, "auth", None)
             if auth_manager is not None:
