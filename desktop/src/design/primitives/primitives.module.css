@@ -18,6 +18,8 @@
   transition:
     background-color var(--dur-instant) var(--ease-standard),
     box-shadow var(--dur-instant) var(--ease-standard),
+    /* the ghost variant moves `color` on hover, which snapped without this */
+    color var(--dur-instant) var(--ease-standard),
     opacity var(--dur-instant) var(--ease-standard);
 }
 
@@ -156,10 +158,18 @@
   /* Native chevron is inconsistent across GTK themes; draw our own. */
   appearance: none;
   padding-right: var(--space-8);
-  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 12 12'%3E%3Cpath d='M3 4.5 6 7.5 9 4.5' fill='none' stroke='%23888' stroke-width='1.5' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E");
+  /* --fg-tertiary, dark theme. A var() cannot be interpolated into a url(), so
+     the glyph is restated per theme below rather than left on a fixed grey that
+     sat too dark on the dark well and too light on the paper one. */
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 12 12'%3E%3Cpath d='M3 4.5 6 7.5 9 4.5' fill='none' stroke='%239aa4b5' stroke-width='1.5' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E");
   background-repeat: no-repeat;
   background-position: right var(--space-3) center;
   background-size: 12px;
+}
+
+/* --fg-tertiary, light theme. */
+:global(:root.light) .select {
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 12 12'%3E%3Cpath d='M3 4.5 6 7.5 9 4.5' fill='none' stroke='%23586377' stroke-width='1.5' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E");
 }
 
 /* ---------------- Field ---------------- */
@@ -243,8 +253,23 @@
   border: none;
   border-radius: 999px;
   background: var(--fg-quaternary);
+  /* The track is a well the knob rides in, so it takes an inset rather than a
+     drop — the same elevation language read in the other direction. */
+  box-shadow: inset 0 1px 2px rgb(0 0 0 / 18%);
   cursor: default;
   transition: background-color var(--dur-fast) var(--ease-standard);
+}
+
+/*
+ * The drawn switch stays 38x22 — that is the macOS proportion — but 22px is a
+ * mean pointer target. This lifts the hit area to 44x36 without touching
+ * layout or the visual size.
+ */
+.toggle::before {
+  content: "";
+  position: absolute;
+  inset: -7px -3px;
+  border-radius: inherit;
 }
 
 .toggleOn {
@@ -317,11 +342,18 @@
 
 /* ---------------- Spinner ---------------- */
 
+/*
+ * Keyed to `currentColor` rather than a fixed neutral: the spinner's only
+ * in-app home is inside a loading Button, where a grey ring sat muddy on the
+ * indigo primary and the red destructive fill. Inheriting the button's own
+ * text colour makes it correct on every variant, and standalone it picks up
+ * --fg-primary from the body.
+ */
 .spinner {
   display: inline-block;
   border-radius: 50%;
-  border: 2px solid var(--fg-quaternary);
-  border-top-color: var(--fg-secondary);
+  border: 2px solid color-mix(in srgb, currentColor 26%, transparent);
+  border-top-color: currentColor;
   animation: spin 700ms linear infinite;
 }
 
@@ -331,9 +363,16 @@
   }
 }
 
+/*
+ * global.css clamps every animation to 1ms/1 iteration under reduced motion,
+ * which froze the spinner mid-arc — a busy indicator that communicates nothing.
+ * These need !important to outrank that blanket rule and restore the authored
+ * intent: still turning, just slowly.
+ */
 @media (prefers-reduced-motion: reduce) {
   .spinner {
-    animation-duration: 2s;
+    animation-duration: 2s !important;
+    animation-iteration-count: infinite !important;
   }
 }
 

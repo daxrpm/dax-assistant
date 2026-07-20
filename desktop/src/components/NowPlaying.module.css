@@ -45,6 +45,13 @@
   pointer-events: none;
 }
 
+/*
+ * Artwork scrim. Its job is to hold the track text legible over whatever cover
+ * art arrives, so it has to run the same direction as the theme: a dark scrim
+ * under light text, a light scrim under dark text. It used to be dark in both,
+ * which put the light theme's near-black --fg-primary title on a 42–78% black
+ * wash every time a track had cover art.
+ */
 .island.hasArtwork::after {
   content: "";
   position: absolute;
@@ -54,6 +61,19 @@
   background:
     linear-gradient(180deg, rgb(5 9 16 / 42%), rgb(5 9 16 / 78%)),
     linear-gradient(110deg, color-mix(in srgb, var(--bg-panel) 45%, transparent), transparent 62%);
+}
+
+:global(:root.light) .island.hasArtwork::after {
+  background:
+    linear-gradient(180deg, rgb(255 255 255 / 66%), rgb(255 255 255 / 88%)),
+    linear-gradient(110deg, color-mix(in srgb, var(--bg-panel) 45%, transparent), transparent 62%);
+}
+
+/* The dark theme sinks the art behind the text; the light theme has to lift it
+   instead or the blurred cover reads as a smudge of dirt on white. */
+:global(:root.light) .artwork {
+  opacity: 0.3;
+  filter: blur(7px) saturate(0.95) brightness(1.08);
 }
 
 .island[data-provider="spotify"] { --media-accent: #52a875; }

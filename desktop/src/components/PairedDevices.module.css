@@ -20,7 +20,7 @@
   font-size: var(--text-callout);
   line-height: var(--text-callout-lh);
   padding: var(--space-3) var(--space-4);
-  cursor: pointer;
+  cursor: default;
   transition: background var(--dur-fast) var(--ease-standard);
 }
 
@@ -33,10 +33,8 @@
   cursor: default;
 }
 
-.pairButton:focus-visible {
-  outline: var(--focus-ring-width) solid var(--focus-ring);
-  outline-offset: 2px;
-}
+/* Focus is the global :focus-visible halo — restating it here drew a second
+   ring on top of it. */
 
 .pairActions {
   display: flex;
@@ -217,18 +215,13 @@
   font-size: var(--text-caption);
   padding: var(--space-1) var(--space-2);
   border-radius: var(--radius-xs);
-  cursor: pointer;
+  cursor: default;
   flex: none;
 }
 
 .revoke:hover:not(:disabled) {
   color: var(--danger);
   background: var(--bg-hover);
-}
-
-.revoke:focus-visible {
-  outline: var(--focus-ring-width) solid var(--focus-ring);
-  outline-offset: 2px;
 }
 
 .empty,

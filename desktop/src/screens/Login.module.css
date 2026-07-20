@@ -18,10 +18,15 @@
   margin-bottom: var(--space-6);
 }
 
+/*
+ * Elevation only. The `0 0 0 1px rgb(255 255 255 / 8%)` ring that used to ride
+ * along here was a border in disguise (rule 1), and being a hardcoded white it
+ * drew a pale seam around the mark on the light theme's white card.
+ */
 .appIcon {
   margin-bottom: var(--space-3);
   border-radius: 16px;
-  box-shadow: var(--shadow-2), 0 0 0 1px rgb(255 255 255 / 8%);
+  box-shadow: var(--shadow-2);
 }
 
 .title {

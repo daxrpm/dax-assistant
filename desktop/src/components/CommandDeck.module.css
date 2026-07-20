@@ -43,10 +43,11 @@
   min-width: 0;
 }
 
+/* Elevation, not a hardcoded white ring — see Login.module.css .appIcon. */
 .brandIcon {
   flex: none;
   border-radius: 7px;
-  box-shadow: 0 0 0 1px rgb(255 255 255 / 8%);
+  box-shadow: var(--shadow-1);
 }
 
 .brand {

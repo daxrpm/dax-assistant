@@ -101,7 +101,7 @@
   background: transparent;
   border: none;
   border-radius: var(--radius-md);
-  cursor: pointer;
+  cursor: default;
   transition:
     background var(--dur-instant) var(--ease-standard),
     color var(--dur-instant) var(--ease-standard);
@@ -151,7 +151,7 @@
   background: transparent;
   border: none;
   border-radius: var(--radius-md);
-  cursor: pointer;
+  cursor: default;
   white-space: nowrap;
   min-height: 36px;
   transition:
@@ -189,7 +189,7 @@
   background: transparent;
   border: none;
   border-radius: calc(var(--radius-lg) - 3px);
-  cursor: pointer;
+  cursor: default;
   white-space: nowrap;
   transition:
     background var(--dur-fast) var(--ease-standard),
@@ -220,7 +220,7 @@
   height: 20px;
   appearance: none;
   background: transparent;
-  cursor: pointer;
+  cursor: default;
 }
 
 .slider::-webkit-slider-runnable-track {
@@ -257,7 +257,7 @@
   display: inline-flex;
   align-items: center;
   gap: var(--space-2);
-  cursor: pointer;
+  cursor: default;
 }
 
 .checkbox {
@@ -314,7 +314,7 @@
 }
 
 .listRowInteractive {
-  cursor: pointer;
+  cursor: default;
 }
 
 .listRowInteractive:hover {
@@ -358,10 +358,16 @@
   font-weight: 500;
 }
 
+/*
+ * Leading comes off the ramp. The hardcoded 17px here was *tighter* than the
+ * 20px --text-callout-lh that the same 14px size gets everywhere else, so the
+ * one paragraph in the app guaranteed to wrap (320px cap) was also the most
+ * cramped.
+ */
 .emptyBody {
   max-width: 320px;
   font-size: var(--text-callout);
-  line-height: 17px;
+  line-height: var(--text-callout-lh);
   color: var(--fg-secondary);
 }
 
@@ -374,7 +380,7 @@
   overflow: auto;
   font-family: var(--font-mono);
   font-size: var(--text-footnote);
-  line-height: 15px;
+  line-height: var(--text-footnote-lh);
   color: var(--fg-secondary);
   background: var(--bg-inset);
   border-radius: var(--radius-lg);

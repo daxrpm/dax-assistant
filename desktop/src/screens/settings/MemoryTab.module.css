@@ -57,7 +57,7 @@
   background: transparent;
   border: none;
   border-radius: var(--radius-md);
-  cursor: pointer;
+  cursor: default;
 }
 
 .entry:hover {

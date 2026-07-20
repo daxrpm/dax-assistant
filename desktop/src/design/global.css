@@ -59,17 +59,29 @@ textarea {
 }
 
 /*
- * macOS focus treatment (5.8): a soft wide halo, never a hard outline, and
- * only on :focus-visible so mouse clicks stay ring-free.
+ * macOS focus treatment (5.8): a translucent halo sitting just off the control's
+ * edge, only on :focus-visible so mouse clicks stay ring-free.
+ *
+ * This is an `outline`, not a `box-shadow`, for two reasons that were both live
+ * bugs:
+ *   - `box-shadow` here *replaces* the element's own shadow, so every elevated
+ *     control (primary button, raised row, selected tab) collapsed flat the
+ *     moment it took keyboard focus. An outline composes instead of competing.
+ *   - the ring must follow the control's own shape. `border-radius: inherit`
+ *     took the *parent's* radius, which squared off every pill — toggles,
+ *     badges, the palette rows. Outline follows the element's real radius with
+ *     no help.
+ * global.css is injected after the CSS modules (main.tsx imports ./App first),
+ * so this rule wins ties against component classes — it has to be safe to apply
+ * to literally everything, which the outline form is and the shadow form was not.
  */
 :focus {
   outline: none;
 }
 
 :focus-visible {
-  outline: none;
-  box-shadow: 0 0 0 var(--focus-ring-width) var(--focus-ring);
-  border-radius: inherit;
+  outline: var(--focus-ring-width) solid var(--focus-ring);
+  outline-offset: 2px;
 }
 
 ::selection {
@@ -86,15 +98,25 @@ textarea {
   background: transparent;
 }
 
+/*
+ * The thumb recedes at rest and asserts on hover, which is the macOS overlay
+ * behaviour. It was previously a solid --fg-quaternary throughout, bright
+ * enough to read as a permanent rail down the side of every scrolling pane.
+ */
 ::-webkit-scrollbar-thumb {
-  background: var(--fg-quaternary);
+  background: color-mix(in srgb, var(--fg-quaternary) 52%, transparent);
   border: 3px solid transparent;
   background-clip: padding-box;
   border-radius: 999px;
 }
 
 ::-webkit-scrollbar-thumb:hover {
-  background: var(--fg-tertiary);
+  background: color-mix(in srgb, var(--fg-tertiary) 88%, transparent);
+  background-clip: padding-box;
+}
+
+::-webkit-scrollbar-thumb:active {
+  background: var(--fg-secondary);
   background-clip: padding-box;
 }
 

@@ -82,9 +82,12 @@
   color: var(--fg-tertiary);
 }
 
-.searchInput:focus-visible {
-  box-shadow: var(--shadow-1), 0 0 0 var(--focus-ring-width) var(--focus-ring);
-}
+/*
+ * No :focus-visible override. This used to re-state --shadow-1 alongside the
+ * ring because the old box-shadow-based focus treatment would otherwise wipe
+ * the field's elevation; the global outline now composes with it, and keeping
+ * the override would paint a second ring inside the first.
+ */
 
 .searchClear {
   position: absolute;
@@ -98,7 +101,7 @@
   background: transparent;
   border: none;
   border-radius: var(--radius-md);
-  cursor: pointer;
+  cursor: default;
 }
 
 .searchClear:hover {
@@ -159,7 +162,7 @@
   background: transparent;
   border: none;
   border-radius: var(--radius-md);
-  cursor: pointer;
+  cursor: default;
   transition: background var(--dur-fast) var(--ease-standard),
     color var(--dur-fast) var(--ease-standard);
 }
@@ -243,7 +246,7 @@
   color: var(--fg-primary);
   background: transparent;
   border: none;
-  cursor: pointer;
+  cursor: default;
 }
 
 .groupChevron {
@@ -286,7 +289,7 @@
   background: var(--bg-inset);
   border: none;
   border-radius: var(--radius-md);
-  cursor: pointer;
+  cursor: default;
 }
 
 .advancedToggle:hover {
