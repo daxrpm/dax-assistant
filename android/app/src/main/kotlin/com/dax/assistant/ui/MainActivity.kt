@@ -5,8 +5,6 @@ import android.content.Intent
 import android.content.pm.PackageManager
 import android.os.Build
 import android.os.Bundle
-import android.provider.Settings
-import androidx.activity.ComponentActivity
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
@@ -17,32 +15,58 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
+import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.ui.platform.LocalContext
 import androidx.core.content.ContextCompat
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import androidx.appcompat.app.AppCompatActivity
 import com.dax.assistant.diagnostics.DiagnosticsViewModel
+import com.dax.assistant.preferences.AppPreferences
+import com.dax.assistant.preferences.ThemePreference
 import com.dax.assistant.service.AssistantService
 import com.dax.assistant.trigger.MediaButtonTrigger
-import com.dax.assistant.ui.assistant.AssistantScreen
 import com.dax.assistant.ui.design.OrbitaTheme
-import com.dax.assistant.ui.diagnostics.DiagnosticsScreen
 import com.dax.assistant.ui.setup.SetupScreen
+import com.journeyapps.barcodescanner.ScanContract
+import com.journeyapps.barcodescanner.ScanOptions
 import dagger.hilt.android.AndroidEntryPoint
 import javax.inject.Inject
-
-private enum class Screen { SETUP, ASSISTANT, DIAGNOSTICS }
+import kotlinx.coroutines.flow.MutableStateFlow
 
 @AndroidEntryPoint
-class MainActivity : ComponentActivity() {
+class MainActivity : AppCompatActivity() {
 
     @Inject
     lateinit var mediaButtons: MediaButtonTrigger
 
+    @Inject
+    lateinit var preferences: AppPreferences
+
+    private val pairingDeepLink = MutableStateFlow<String?>(null)
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        pairingDeepLink.value = intent?.dataString
         enableEdgeToEdge()
-        setContent { OrbitaTheme { DaxApp() } }
+        setContent {
+            val preferenceState by preferences.state.collectAsStateWithLifecycle()
+            val systemDark = isSystemInDarkTheme()
+            val darkTheme = when (preferenceState.theme) {
+                ThemePreference.SYSTEM -> systemDark
+                ThemePreference.DARK -> true
+                ThemePreference.LIGHT -> false
+            }
+            OrbitaTheme(darkTheme = darkTheme) {
+                DaxApp(pairingDeepLink.collectAsStateWithLifecycle().value)
+            }
+        }
+    }
+
+    override fun onNewIntent(intent: Intent) {
+        super.onNewIntent(intent)
+        setIntent(intent)
+        pairingDeepLink.value = intent.dataString
     }
 
     override fun onStart() {
@@ -69,6 +93,7 @@ private val requiredPermissions = buildList {
 
 @Composable
 private fun DaxApp(
+    pairingDeepLink: String?,
     viewModel: AppViewModel = hiltViewModel(),
     diagnostics: DiagnosticsViewModel = hiltViewModel(),
 ) {
@@ -78,8 +103,11 @@ private fun DaxApp(
     val history by viewModel.controller.history.collectAsStateWithLifecycle()
     val diagnosticsState by diagnostics.state.collectAsStateWithLifecycle()
 
-    var screen by remember { mutableStateOf(Screen.SETUP) }
     var micGranted by remember { mutableStateOf(false) }
+
+    val scanner = rememberLauncherForActivityResult(ScanContract()) { result ->
+        result.contents?.let(viewModel::applyPairingPayload)
+    }
 
     val permissionLauncher = rememberLauncherForActivityResult(
         ActivityResultContracts.RequestMultiplePermissions(),
@@ -100,28 +128,37 @@ private fun DaxApp(
 
     LaunchedEffect(setup.enrolled, micGranted) {
         if (setup.enrolled) {
-            screen = Screen.ASSISTANT
             viewModel.connect()
             // The service is what keeps the socket alive and makes a
             // background-triggered turn legal, so it starts as soon as the
             // device is paired and the microphone is granted.
             if (micGranted) AssistantService.ensureRunning(context)
-        } else {
-            screen = Screen.SETUP
         }
     }
 
-    when (screen) {
-        Screen.SETUP -> SetupScreen(
+    LaunchedEffect(pairingDeepLink) {
+        pairingDeepLink?.let(viewModel::applyPairingPayload)
+    }
+
+    if (!setup.enrolled) {
+        SetupScreen(
             state = setup,
             onUrlChange = viewModel::onBackendUrlChanged,
             onCodeChange = viewModel::onPairingCodeChanged,
             onEnrol = viewModel::enrol,
+            onScanQr = {
+                scanner.launch(
+                    ScanOptions().setDesiredBarcodeFormats(ScanOptions.QR_CODE)
+                        .setBeepEnabled(false).setOrientationLocked(false),
+                )
+            },
         )
-
-        Screen.ASSISTANT -> AssistantScreen(
-            state = assistantState,
+    } else {
+        MainNavigation(
+            assistantState = assistantState,
             history = history,
+            diagnosticsState = diagnosticsState,
+            diagnostics = diagnostics,
             onTrigger = {
                 if (micGranted) {
                     viewModel.controller.startTurn()
@@ -131,24 +168,7 @@ private fun DaxApp(
             },
             onCancel = viewModel.controller::cancel,
             onApprove = viewModel.controller::resolveApproval,
-            onOpenSettings = { screen = Screen.DIAGNOSTICS },
-        )
-
-        Screen.DIAGNOSTICS -> DiagnosticsScreen(
-            state = diagnosticsState,
-            onRunProbe = diagnostics::runProbe,
             onRequestPermissions = { permissionLauncher.launch(requiredPermissions) },
-            onBack = { screen = if (setup.enrolled) Screen.ASSISTANT else Screen.SETUP },
-            onOpenAssistantSettings = {
-                // The role cannot be requested programmatically; the user picks
-                // Dax in Settings. Deep-linking is as close as an app can get.
-                runCatching {
-                    context.startActivity(
-                        Intent(Settings.ACTION_VOICE_INPUT_SETTINGS)
-                            .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK),
-                    )
-                }
-            },
             onForgetEverything = viewModel::forgetEverything,
             onDeviceRecognition = viewModel.onDeviceRecognition,
         )

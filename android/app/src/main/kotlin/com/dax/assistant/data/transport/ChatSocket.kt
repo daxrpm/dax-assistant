@@ -1,0 +1,179 @@
+package com.dax.assistant.data.transport
+
+import com.dax.assistant.core.log.DaxLog
+import com.dax.assistant.data.auth.AuthResult
+import com.dax.assistant.data.auth.BackendAuth
+import com.dax.assistant.data.auth.CredentialStore
+import com.dax.assistant.data.protocol.FrameParser
+import com.dax.assistant.data.protocol.ServerFrame
+import java.util.concurrent.atomic.AtomicBoolean
+import kotlin.math.min
+import kotlin.math.pow
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.channels.Channel
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.receiveAsFlow
+import kotlinx.coroutines.isActive
+import kotlinx.coroutines.launch
+import okhttp3.OkHttpClient
+import okhttp3.Request
+import okhttp3.Response
+import okhttp3.WebSocket
+import okhttp3.WebSocketListener
+
+sealed interface ConnectionState {
+    data object Disconnected : ConnectionState
+    data object Connecting : ConnectionState
+    data object Connected : ConnectionState
+    data class Failed(val reason: String, val retryInSeconds: Int) : ConnectionState
+}
+
+/**
+ * The chat WebSocket, kept alive across the app's lifetime.
+ *
+ * Reconnection is the whole job. A phone loses its network constantly — walking
+ * out of Wi-Fi, dozing, switching cells — and an assistant that needs manual
+ * reconnection after each is not an assistant. Backoff is exponential and
+ * capped, and reconnection is silent until it has failed long enough that the
+ * user would want to know.
+ *
+ * Frames arrive as a [SharedFlow] rather than a callback so the state machine
+ * can collect them with structured concurrency and drop them cleanly when the
+ * conversation ends.
+ */
+class ChatSocket(
+    private val client: OkHttpClient,
+    private val credentials: CredentialStore,
+    private val auth: BackendAuth,
+    private val scope: CoroutineScope,
+) {
+
+    private val _state = MutableStateFlow<ConnectionState>(ConnectionState.Disconnected)
+    val state: StateFlow<ConnectionState> = _state.asStateFlow()
+
+    // OkHttp callbacks cannot suspend. An unbounded channel preserves replies
+    // and authorization requests until the single controller consumes them.
+    private val frameBuffer = Channel<ServerFrame>(Channel.UNLIMITED)
+    val frames: Flow<ServerFrame> = frameBuffer.receiveAsFlow()
+
+    private var socket: WebSocket? = null
+    private var connectJob: Job? = null
+    private val shouldRun = AtomicBoolean(false)
+    private var attempt = 0
+
+    fun connect() {
+        if (!shouldRun.compareAndSet(false, true)) return
+        connectJob = scope.launch { runConnectionLoop() }
+    }
+
+    fun disconnect() {
+        shouldRun.set(false)
+        connectJob?.cancel()
+        socket?.close(NORMAL_CLOSURE, "client disconnect")
+        socket = null
+        _state.value = ConnectionState.Disconnected
+    }
+
+    /** Queues text for the backend. False when the socket is not up. */
+    fun send(payload: String): Boolean = socket?.send(payload) ?: false
+
+    private suspend fun runConnectionLoop() {
+        while (scope.isActive && shouldRun.get()) {
+            _state.value = ConnectionState.Connecting
+
+            when (val token = auth.accessToken()) {
+                is AuthResult.NotEnrolled -> {
+                    // Nothing to retry: this needs the user to pair the device.
+                    _state.value = ConnectionState.Failed("This device is not paired yet", 0)
+                    shouldRun.set(false)
+                    return
+                }
+
+                is AuthResult.Failed -> {
+                    val wait = backoffSeconds(++attempt)
+                    _state.value = ConnectionState.Failed(token.reason, wait)
+                    delay(wait * 1_000L)
+                    continue
+                }
+
+                is AuthResult.Success -> {
+                    val closed = openSocket(token.token)
+                    if (!shouldRun.get()) return
+                    val wait = backoffSeconds(++attempt)
+                    _state.value = ConnectionState.Failed(closed, wait)
+                    delay(wait * 1_000L)
+                }
+            }
+        }
+    }
+
+    /** Opens the socket and suspends until it closes, returning why. */
+    private suspend fun openSocket(token: String): String {
+        val base = credentials.backendUrl
+        val wsUrl = base.replaceFirst(
+            Regex("^https?"),
+            if (base.startsWith("https")) "wss" else "ws",
+        ) + "/ws/chat"
+        val request = Request.Builder()
+            .url(wsUrl)
+            .header("Authorization", "Bearer $token")
+            .build()
+
+        val closeReason = kotlinx.coroutines.CompletableDeferred<String>()
+
+        socket = client.newWebSocket(
+            request,
+            object : WebSocketListener() {
+                override fun onOpen(webSocket: WebSocket, response: Response) {
+                    DaxLog.i(TAG, "Chat socket open")
+                    attempt = 0
+                    _state.value = ConnectionState.Connected
+                }
+
+                override fun onMessage(webSocket: WebSocket, text: String) {
+                    FrameParser.parse(text)?.let { frame ->
+                        if (frame !is ServerFrame.Unknown) frameBuffer.trySend(frame)
+                    }
+                }
+
+                override fun onFailure(webSocket: WebSocket, t: Throwable, response: Response?) {
+                    DaxLog.w(TAG, "Chat socket failed: ${t.message}")
+                    if (response?.code == 401 || response?.code == 403) {
+                        // The token was rejected — force a fresh one rather
+                        // than reconnecting with the same dead credential.
+                        credentials.invalidateToken()
+                    }
+                    closeReason.complete(t.message ?: "Connection lost")
+                }
+
+                override fun onClosed(webSocket: WebSocket, code: Int, reason: String) {
+                    if (code == POLICY_VIOLATION) credentials.invalidateToken()
+                    closeReason.complete(reason.ifBlank { "Connection closed" })
+                }
+            },
+        )
+
+        return try {
+            closeReason.await()
+        } finally {
+            socket?.cancel()
+            socket = null
+        }
+    }
+
+    /** 1s, 2s, 4s… capped, so a long outage does not become a hot loop. */
+    private fun backoffSeconds(attempt: Int): Int =
+        min(MAX_BACKOFF_SECONDS, 2.0.pow((attempt - 1).coerceIn(0, 10)).toInt())
+
+    private companion object {
+        const val TAG = "ChatSocket"
+        const val NORMAL_CLOSURE = 1000
+        const val POLICY_VIOLATION = 1008
+        const val MAX_BACKOFF_SECONDS = 30
+    }
+}

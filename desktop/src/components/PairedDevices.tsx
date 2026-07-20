@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
+import { QRCodeSVG } from "qrcode.react";
 
 import { api } from "../api/client";
 import type { PairedDevice } from "../api/types";
@@ -22,6 +23,7 @@ export function PairedDevices() {
   const { t } = useI18n();
   const [devices, setDevices] = useState<PairedDevice[] | null>(null);
   const [code, setCode] = useState<string | null>(null);
+  const [pairingUri, setPairingUri] = useState<string | null>(null);
   const [expiresAt, setExpiresAt] = useState<number | null>(null);
   const [remaining, setRemaining] = useState(0);
   const [busy, setBusy] = useState(false);
@@ -59,6 +61,7 @@ export function PairedDevices() {
       setRemaining(left);
       if (left === 0) {
         setCode(null);
+        setPairingUri(null);
         setExpiresAt(null);
       }
     };
@@ -73,6 +76,7 @@ export function PairedDevices() {
     try {
       const response = await api.pairDevice();
       setCode(response.code);
+      setPairingUri(response.pairing_uri);
       setExpiresAt(Date.now() + response.expires_in_seconds * 1000);
     } catch {
       setError(t("devices.pairFailed"));
@@ -100,6 +104,19 @@ export function PairedDevices() {
       {code ? (
         <div className={s.codeCard}>
           <span className={s.codeLabel}>{t("devices.enterOnPhone")}</span>
+          {pairingUri && (
+            <div className={s.qr} aria-label={t("devices.scanQr")}>
+              <QRCodeSVG
+                value={pairingUri}
+                size={144}
+                level="M"
+                marginSize={1}
+                bgColor="#ffffff"
+                fgColor="#0a0f18"
+              />
+            </div>
+          )}
+          <span className={s.or}>{t("devices.orCode")}</span>
           {/* Spaced and oversized because it is transcribed by hand from one
               screen to another; the pairing alphabet already excludes O/0 and
               I/1. */}

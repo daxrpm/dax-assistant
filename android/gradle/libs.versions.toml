@@ -6,10 +6,11 @@ hilt = "2.56.1"
 coreKtx = "1.16.0"
 lifecycle = "2.9.0"
 activityCompose = "1.10.1"
+appcompat = "1.7.1"
 composeBom = "2025.05.00"
 navigation = "2.9.0"
 datastore = "1.1.7"
-security = "1.1.0-alpha07"
+security = "1.1.0"
 okhttp = "5.0.0-alpha.14"
 serialization = "1.8.1"
 coroutines = "1.10.2"
@@ -20,6 +21,7 @@ espresso = "3.6.1"
 mockk = "1.14.2"
 turbine = "1.2.0"
 robolectric = "4.14.1"
+zxingEmbedded = "4.3.0"
 
 [libraries]
 androidx-core-ktx = { group = "androidx.core", name = "core-ktx", version.ref = "coreKtx" }
@@ -27,6 +29,7 @@ androidx-lifecycle-runtime-ktx = { group = "androidx.lifecycle", name = "lifecyc
 androidx-lifecycle-runtime-compose = { group = "androidx.lifecycle", name = "lifecycle-runtime-compose", version.ref = "lifecycle" }
 androidx-lifecycle-service = { group = "androidx.lifecycle", name = "lifecycle-service", version.ref = "lifecycle" }
 androidx-activity-compose = { group = "androidx.activity", name = "activity-compose", version.ref = "activityCompose" }
+androidx-appcompat = { group = "androidx.appcompat", name = "appcompat", version.ref = "appcompat" }
 
 androidx-compose-bom = { group = "androidx.compose", name = "compose-bom", version.ref = "composeBom" }
 androidx-compose-ui = { group = "androidx.compose.ui", name = "ui" }
@@ -42,6 +45,7 @@ androidx-navigation-compose = { group = "androidx.navigation", name = "navigatio
 androidx-datastore-preferences = { group = "androidx.datastore", name = "datastore-preferences", version.ref = "datastore" }
 androidx-security-crypto = { group = "androidx.security", name = "security-crypto", version.ref = "security" }
 androidx-media3-session = { group = "androidx.media3", name = "media3-session", version.ref = "media3" }
+zxing-android-embedded = { group = "com.journeyapps", name = "zxing-android-embedded", version.ref = "zxingEmbedded" }
 
 hilt-android = { group = "com.google.dagger", name = "hilt-android", version.ref = "hilt" }
 hilt-compiler = { group = "com.google.dagger", name = "hilt-android-compiler", version.ref = "hilt" }

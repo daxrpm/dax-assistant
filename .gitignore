@@ -173,6 +173,8 @@ cython_debug/
 # Dax Assistant
 models/
 data/
+!android/app/src/main/kotlin/com/dax/assistant/data/
+!android/app/src/main/kotlin/com/dax/assistant/data/**
 *.db
 *.db-wal
 *.db-shm

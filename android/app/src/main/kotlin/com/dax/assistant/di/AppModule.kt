@@ -3,12 +3,15 @@ package com.dax.assistant.di
 import android.content.Context
 import com.dax.assistant.assistant.AssistantController
 import com.dax.assistant.audio.AudioRouteManager
+import com.dax.assistant.audio.NativeAudioCapture
+import com.dax.assistant.audio.RemoteVoiceClient
 import com.dax.assistant.audio.Speaker
 import com.dax.assistant.audio.SpeechRecognition
 import com.dax.assistant.data.auth.BackendAuth
 import com.dax.assistant.data.auth.CredentialStore
 import com.dax.assistant.data.transport.ChatSocket
 import com.dax.assistant.diagnostics.CapabilityProbe
+import com.dax.assistant.preferences.AppPreferences
 import com.dax.assistant.trigger.MediaButtonTrigger
 import dagger.Module
 import dagger.Provides
@@ -74,6 +77,11 @@ object AppModule {
 
     @Provides
     @Singleton
+    fun provideAppPreferences(@ApplicationContext context: Context): AppPreferences =
+        AppPreferences(context)
+
+    @Provides
+    @Singleton
     fun provideBackendAuth(client: OkHttpClient, credentials: CredentialStore): BackendAuth =
         BackendAuth(client, credentials)
 
@@ -98,6 +106,22 @@ object AppModule {
 
     @Provides
     @Singleton
+    fun provideNativeAudioCapture(
+        @ApplicationContext context: Context,
+        @IoDispatcher io: CoroutineDispatcher,
+    ): NativeAudioCapture = NativeAudioCapture(context, io)
+
+    @Provides
+    @Singleton
+    fun provideRemoteVoiceClient(
+        client: OkHttpClient,
+        credentials: CredentialStore,
+        auth: BackendAuth,
+        capture: NativeAudioCapture,
+    ): RemoteVoiceClient = RemoteVoiceClient(client, credentials, auth, capture)
+
+    @Provides
+    @Singleton
     fun provideSpeaker(@ApplicationContext context: Context): Speaker = Speaker(context)
 
     @Provides
@@ -111,9 +135,21 @@ object AppModule {
         socket: ChatSocket,
         routes: AudioRouteManager,
         recognition: SpeechRecognition,
+        remoteVoice: RemoteVoiceClient,
         speaker: Speaker,
         @AppScope scope: CoroutineScope,
-    ): AssistantController = AssistantController(socket, routes, recognition, speaker, scope)
+        credentials: CredentialStore,
+        preferences: AppPreferences,
+    ): AssistantController = AssistantController(
+        socket,
+        routes,
+        recognition,
+        remoteVoice,
+        speaker,
+        scope,
+        credentials.sessionId,
+        preferences,
+    )
 
     @Provides
     @Singleton

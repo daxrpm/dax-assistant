@@ -1,5 +1,6 @@
 package com.dax.assistant.ui
 
+import android.content.Context
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.dax.assistant.assistant.AssistantController
@@ -9,7 +10,10 @@ import com.dax.assistant.data.auth.BackendAuth
 import com.dax.assistant.data.auth.CredentialStore
 import com.dax.assistant.data.auth.EnrolResult
 import com.dax.assistant.data.transport.ChatSocket
+import com.dax.assistant.ui.setup.PairingPayload
+import com.dax.assistant.R
 import dagger.hilt.android.lifecycle.HiltViewModel
+import dagger.hilt.android.qualifiers.ApplicationContext
 import javax.inject.Inject
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -32,6 +36,7 @@ class AppViewModel @Inject constructor(
     private val auth: BackendAuth,
     private val socket: ChatSocket,
     private val recognition: SpeechRecognition,
+    @ApplicationContext private val context: Context,
 ) : ViewModel() {
 
     private val _setup = MutableStateFlow(
@@ -52,16 +57,27 @@ class AppViewModel @Inject constructor(
         _setup.update { it.copy(pairingCode = value.uppercase(), error = null) }
     }
 
+    fun applyPairingPayload(raw: String) {
+        val payload = PairingPayload.parse(raw)
+        if (payload == null) {
+            _setup.update { it.copy(error = context.getString(R.string.setup_error_invalid_qr)) }
+            return
+        }
+        _setup.update {
+            it.copy(backendUrl = payload.backendUrl, pairingCode = payload.code, error = null)
+        }
+    }
+
     fun enrol() {
         val current = _setup.value
         if (current.backendUrl.isBlank()) {
-            _setup.update { it.copy(error = "Enter the backend URL first") }
+            _setup.update { it.copy(error = context.getString(R.string.setup_error_backend_required)) }
             return
         }
         val url = BackendEndpointPolicy.normalize(current.backendUrl)
         if (url == null) {
             _setup.update {
-                it.copy(error = "Use HTTPS or a literal private-network address without a path")
+                it.copy(error = context.getString(R.string.setup_error_backend_invalid))
             }
             return
         }

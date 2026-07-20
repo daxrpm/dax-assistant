@@ -2,6 +2,8 @@ package com.dax.assistant.assistant
 
 import com.dax.assistant.audio.AudioRouteManager
 import com.dax.assistant.audio.RecognitionEvent
+import com.dax.assistant.audio.RemoteVoiceClient
+import com.dax.assistant.audio.RemoteVoiceEvent
 import com.dax.assistant.audio.Speaker
 import com.dax.assistant.audio.SpeechRecognition
 import com.dax.assistant.core.log.DaxLog
@@ -9,7 +11,10 @@ import com.dax.assistant.data.protocol.ClientFrames
 import com.dax.assistant.data.protocol.ServerFrame
 import com.dax.assistant.data.transport.ChatSocket
 import com.dax.assistant.data.transport.ConnectionState
+import com.dax.assistant.preferences.AppPreferences
+import com.dax.assistant.preferences.RecognitionMode
 import java.util.UUID
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -43,9 +48,11 @@ class AssistantController(
     private val socket: ChatSocket,
     private val routes: AudioRouteManager,
     private val recognition: SpeechRecognition,
+    private val remoteVoice: RemoteVoiceClient,
     private val speaker: Speaker,
     private val scope: CoroutineScope,
-    private val languageTag: String = "es-ES",
+    val sessionId: String,
+    private val preferences: AppPreferences,
 ) {
 
     private val _state = MutableStateFlow<AssistantState>(AssistantState.Idle)
@@ -54,19 +61,11 @@ class AssistantController(
     private val _history = MutableStateFlow<List<Turn>>(emptyList())
     val history: StateFlow<List<Turn>> = _history.asStateFlow()
 
-    /**
-     * Stable per-install conversation key.
-     *
-     * The backend keys persisted conversations on this and scopes frame
-     * delivery to it, so the phone sees its own conversation and not the
-     * desktop's. It also claims the session, which is what lets the phone
-     * answer its own tool confirmations and nobody else's.
-     */
-    val sessionId: String = "android-" + UUID.randomUUID().toString().take(8)
-
     private var turnJob: Job? = null
+    private var playbackJob: Job? = null
     private var pendingUserText: String = ""
     private var streamedReply: String = ""
+    private var acceptingResponse = false
 
     init {
         scope.launch { collectFrames() }
@@ -81,6 +80,7 @@ class AssistantController(
         }
         // Barge-in: a trigger during playback interrupts the reply.
         speaker.stop()
+        playbackJob?.cancel()
         turnJob?.cancel()
         turnJob = scope.launch { runTurn() }
     }
@@ -89,10 +89,13 @@ class AssistantController(
     fun cancel() {
         turnJob?.cancel()
         turnJob = null
+        playbackJob?.cancel()
+        playbackJob = null
         speaker.stop()
         routes.release()
         streamedReply = ""
         pendingUserText = ""
+        acceptingResponse = false
         _state.value = AssistantState.Idle
     }
 
@@ -100,7 +103,7 @@ class AssistantController(
     fun resolveApproval(decision: String) {
         val current = _state.value as? AssistantState.AwaitingApproval ?: return
         val sent = socket.send(
-            ClientFrames.toolConfirmation(current.request.approvalId, decision),
+            ClientFrames.toolConfirmation(current.request.approvalId, decision, sessionId),
         )
         if (!sent) {
             // The backend denies on timeout, so a lost confirmation fails
@@ -128,10 +131,26 @@ class AssistantController(
 
         _state.value = AssistantState.Listening(route)
         streamedReply = ""
+        pendingUserText = ""
 
+        try {
+            when (preferences.state.value.recognitionMode) {
+                RecognitionMode.ANDROID -> runAndroidTurn()
+                RecognitionMode.SERVER -> runRemoteTurn(route)
+            }
+        } catch (cancelled: CancellationException) {
+            throw cancelled
+        } catch (error: Exception) {
+            fail(AssistantError.Backend(error.message ?: "Remote voice failed"))
+        } finally {
+            routes.release()
+        }
+    }
+
+    private suspend fun runAndroidTurn() {
         var finalText: String? = null
         try {
-            recognition.listen(languageTag).collect { event ->
+            recognition.listen(currentLanguageTag()).collect { event ->
                 when (event) {
                     is RecognitionEvent.ReadyForSpeech -> Unit
 
@@ -149,21 +168,20 @@ class AssistantController(
                     is RecognitionEvent.Final -> finalText = event.text
 
                     is RecognitionEvent.Failed -> {
-                        routes.release()
                         fail(AssistantError.Recognition(event.reason), event.recoverable)
                         return@collect
                     }
                 }
             }
+        } catch (cancelled: CancellationException) {
+            throw cancelled
         } catch (error: Exception) {
-            routes.release()
             fail(AssistantError.Recognition(error.message ?: "Recognition failed"))
             return
         }
 
         val text = finalText?.trim()
         if (text.isNullOrBlank()) {
-            routes.release()
             if (_state.value !is AssistantState.Failed) {
                 fail(AssistantError.Recognition("I didn't catch that"))
             }
@@ -179,9 +197,57 @@ class AssistantController(
         routes.release()
 
         _state.value = AssistantState.Processing(text)
+        acceptingResponse = true
         val sent = socket.send(ClientFrames.userMessage(text, sessionId, LANGUAGE_AUTO))
         if (!sent) {
+            acceptingResponse = false
             fail(AssistantError.Network("Not connected to Dax"))
+        }
+    }
+
+    private suspend fun runRemoteTurn(route: com.dax.assistant.audio.AudioRoute) {
+        remoteVoice.runTurn { event ->
+            when (event) {
+                is RemoteVoiceEvent.Listening -> _state.update { current ->
+                    (current as? AssistantState.Listening)?.copy(
+                        route = route,
+                        speechDetected = event.speechDetected,
+                        inputLevel = event.level,
+                    ) ?: current
+                }
+                RemoteVoiceEvent.Transcribing -> {
+                    routes.release()
+                    _state.value = AssistantState.Transcribing(pendingUserText)
+                }
+                is RemoteVoiceEvent.Transcript -> {
+                    pendingUserText = event.text.trim()
+                    _state.value = AssistantState.Transcribing(pendingUserText)
+                }
+                RemoteVoiceEvent.Processing ->
+                    _state.value = AssistantState.Processing(pendingUserText, streamedReply = streamedReply)
+                is RemoteVoiceEvent.Speech -> {
+                    val sentence = event.text.trim()
+                    if (sentence.isBlank()) return@runTurn
+                    streamedReply = listOf(streamedReply, sentence)
+                        .filter { it.isNotBlank() }
+                        .joinToString(" ")
+                    _state.value = AssistantState.Speaking(
+                        fullReply = streamedReply,
+                        spokenText = sentence,
+                        route = routes.activeRoute.value,
+                    )
+                    speaker.setLanguage(event.language?.takeIf { it.isNotBlank() } ?: currentLanguageTag())
+                    speaker.speak(sentence)
+                }
+                RemoteVoiceEvent.Completed -> {
+                    if (pendingUserText.isNotBlank() && streamedReply.isNotBlank()) {
+                        appendHistory(pendingUserText, streamedReply)
+                    }
+                    pendingUserText = ""
+                    streamedReply = ""
+                    _state.value = AssistantState.Idle
+                }
+            }
         }
     }
 
@@ -196,33 +262,28 @@ class AssistantController(
         }
     }
 
-    private suspend fun onAssistantMessage(frame: ServerFrame.Message) {
-        if (frame.sessionId != null && frame.sessionId != sessionId) return
+    private fun onAssistantMessage(frame: ServerFrame.Message) {
+        if (frame.sessionId != sessionId || !acceptingResponse) return
         if (frame.role != "assistant") return
+        acceptingResponse = false
 
         val reply = frame.content
-        _history.update { turns ->
-            (turns + Turn(
-                id = UUID.randomUUID().toString(),
-                userText = pendingUserText,
-                assistantText = reply,
-                timestampMillis = System.currentTimeMillis(),
-            )).takeLast(MAX_HISTORY)
-        }
+        appendHistory(pendingUserText, reply)
 
         val route = routes.activeRoute.value
         _state.value = AssistantState.Speaking(fullReply = reply, spokenText = reply, route = route)
-        speaker.setLanguage(languageTag)
-        speaker.speak(reply)
-
-        // Only settle to idle if nothing else moved the machine on — a barge-in
-        // during playback has already started the next turn.
-        _state.update { if (it is AssistantState.Speaking) AssistantState.Idle else it }
+        speaker.setLanguage(currentLanguageTag())
         pendingUserText = ""
+        playbackJob?.cancel()
+        playbackJob = scope.launch {
+            speaker.speak(reply)
+            // Barge-in may already have moved the machine to the next turn.
+            _state.update { if (it is AssistantState.Speaking) AssistantState.Idle else it }
+        }
     }
 
     private fun onAgentEvent(frame: ServerFrame.AgentEvent) {
-        if (frame.sessionId != null && frame.sessionId != sessionId) return
+        if (frame.sessionId != sessionId || !acceptingResponse) return
         val activity = when (frame.eventType) {
             "thinking" -> AgentActivity.Thinking
             "tool_call" -> AgentActivity.RunningTool(
@@ -243,8 +304,24 @@ class AssistantController(
         }
     }
 
+    private fun currentLanguageTag(): String {
+        val state = preferences.state.value
+        return state.recognitionLanguage.languageTag(state.appLanguage)
+    }
+
+    private fun appendHistory(userText: String, assistantText: String) {
+        _history.update { turns ->
+            (turns + Turn(
+                id = UUID.randomUUID().toString(),
+                userText = userText,
+                assistantText = assistantText,
+                timestampMillis = System.currentTimeMillis(),
+            )).takeLast(MAX_HISTORY)
+        }
+    }
+
     private fun onConfirmation(frame: ServerFrame.ToolConfirmation) {
-        if (frame.sessionId != null && frame.sessionId != sessionId) return
+        if (frame.sessionId != sessionId || !acceptingResponse) return
         _state.value = AssistantState.AwaitingApproval(
             request = ApprovalRequest(
                 approvalId = frame.approvalId,

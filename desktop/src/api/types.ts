@@ -340,6 +340,8 @@ export interface FullConfig {
 export interface PairCodeResponse {
   code: string;
   expires_in_seconds: number;
+  backend_url: string;
+  pairing_uri: string;
 }
 
 /**

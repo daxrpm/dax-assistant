@@ -16,8 +16,8 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
-import androidx.compose.material3.OutlinedTextField
-import androidx.compose.material3.OutlinedTextFieldDefaults
+import androidx.compose.material3.TextField
+import androidx.compose.material3.TextFieldDefaults
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
@@ -26,6 +26,8 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.text.input.KeyboardCapitalization
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.res.stringResource
+import com.dax.assistant.R
 import com.dax.assistant.ui.SetupUiState
 import com.dax.assistant.ui.design.Orbita
 import com.dax.assistant.ui.design.OrbitaType
@@ -45,6 +47,7 @@ fun SetupScreen(
     onUrlChange: (String) -> Unit,
     onCodeChange: (String) -> Unit,
     onEnrol: () -> Unit,
+    onScanQr: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
     Column(
@@ -55,40 +58,42 @@ fun SetupScreen(
             .verticalScroll(rememberScrollState())
             .padding(horizontal = Orbita.spacing.edge, vertical = Orbita.spacing.x8),
     ) {
-        Text(text = "Connect to Dax", style = OrbitaType.largeTitle, color = Orbita.colors.fgPrimary)
+        Text(text = stringResource(R.string.setup_title), style = OrbitaType.largeTitle, color = Orbita.colors.fgPrimary)
         Spacer(Modifier.height(Orbita.spacing.x2))
         Text(
-            text = "Dax runs on your own machine. This phone pairs with it using " +
-                "a one-time code — it never stores your password.",
+            text = stringResource(R.string.setup_intro),
             style = OrbitaType.callout,
             color = Orbita.colors.fgTertiary,
         )
 
         Spacer(Modifier.height(Orbita.spacing.x8))
 
-        Field(
-            label = "Backend address",
-            value = state.backendUrl,
-            onValueChange = onUrlChange,
-            placeholder = "https://dax.example  ·  http://192.168.1.20:8420",
-            keyboardType = KeyboardType.Uri,
-        )
+        StepCard(number = "1", title = stringResource(R.string.setup_step_backend)) {
+            Field(
+                label = stringResource(R.string.setup_backend),
+                value = state.backendUrl,
+                onValueChange = onUrlChange,
+                placeholder = stringResource(R.string.setup_backend_hint),
+                keyboardType = KeyboardType.Uri,
+            )
+        }
 
-        Spacer(Modifier.height(Orbita.spacing.x5))
+        Spacer(Modifier.height(Orbita.spacing.x3))
 
-        Field(
-            label = "Pairing code",
-            value = state.pairingCode,
-            onValueChange = onCodeChange,
-            placeholder = "8 characters",
-            capitalization = KeyboardCapitalization.Characters,
-        )
-        Spacer(Modifier.height(Orbita.spacing.x2))
-        Text(
-            text = "On the desktop app or web UI: Settings → Devices → Pair a device.",
-            style = OrbitaType.footnote,
-            color = Orbita.colors.fgQuaternary,
-        )
+        StepCard(number = "2", title = stringResource(R.string.setup_step_pair)) {
+            Field(
+                label = stringResource(R.string.setup_code),
+                value = state.pairingCode,
+                onValueChange = onCodeChange,
+                placeholder = stringResource(R.string.setup_code_hint),
+                capitalization = KeyboardCapitalization.Characters,
+            )
+            Text(
+                text = stringResource(R.string.setup_code_help),
+                style = OrbitaType.footnote,
+                color = Orbita.colors.fgQuaternary,
+            )
+        }
 
         state.error?.let { error ->
             Spacer(Modifier.height(Orbita.spacing.x4))
@@ -118,7 +123,7 @@ fun SetupScreen(
             contentAlignment = Alignment.Center,
         ) {
             Text(
-                text = if (state.enrolling) "Pairing…" else "Pair this phone",
+                text = if (state.enrolling) stringResource(R.string.setup_pairing) else stringResource(R.string.setup_pair),
                 style = OrbitaType.title3,
                 color = if (state.enrolling) {
                     Orbita.colors.fgQuaternary
@@ -127,6 +132,41 @@ fun SetupScreen(
                 },
             )
         }
+
+        Spacer(Modifier.height(Orbita.spacing.x3))
+
+        Box(
+            modifier = Modifier.fillMaxWidth().heightIn(min = Orbita.sizing.controlHeight)
+                .clip(RoundedCornerShape(Orbita.radii.pill))
+                .background(Orbita.colors.bgElevated)
+                .clickable(role = Role.Button, onClick = onScanQr)
+                .padding(Orbita.spacing.x4),
+            contentAlignment = Alignment.Center,
+        ) {
+            Text(stringResource(R.string.setup_scan_qr), style = OrbitaType.title3, color = Orbita.colors.fgSecondary)
+        }
+    }
+}
+
+@Composable
+private fun StepCard(number: String, title: String, content: @Composable () -> Unit) {
+    Column(
+        Modifier.fillMaxWidth().clip(RoundedCornerShape(Orbita.radii.xxl))
+            .background(Orbita.colors.bgPanel).padding(Orbita.spacing.x5),
+        verticalArrangement = Arrangement.spacedBy(Orbita.spacing.x4),
+    ) {
+        androidx.compose.foundation.layout.Row(verticalAlignment = Alignment.CenterVertically) {
+            Box(
+                Modifier.clip(RoundedCornerShape(Orbita.radii.pill))
+                    .background(Orbita.colors.accentDim)
+                    .padding(horizontal = Orbita.spacing.x3, vertical = Orbita.spacing.x1),
+            ) {
+                Text(number, style = OrbitaType.monoSmall, color = Orbita.colors.accent)
+            }
+            Spacer(Modifier.padding(Orbita.spacing.x2))
+            Text(title, style = OrbitaType.title3, color = Orbita.colors.fgPrimary)
+        }
+        content()
     }
 }
 
@@ -141,7 +181,7 @@ private fun Field(
 ) {
     Column(verticalArrangement = Arrangement.spacedBy(Orbita.spacing.x2)) {
         Text(text = label.uppercase(), style = OrbitaType.label, color = Orbita.colors.fgTertiary)
-        OutlinedTextField(
+        TextField(
             value = value,
             onValueChange = onValueChange,
             placeholder = {
@@ -155,11 +195,11 @@ private fun Field(
                 autoCorrectEnabled = false,
             ),
             shape = RoundedCornerShape(Orbita.radii.lg),
-            colors = OutlinedTextFieldDefaults.colors(
+            colors = TextFieldDefaults.colors(
                 focusedContainerColor = Orbita.colors.bgInset,
                 unfocusedContainerColor = Orbita.colors.bgInset,
-                focusedBorderColor = Orbita.colors.accent,
-                unfocusedBorderColor = Orbita.colors.separator,
+                focusedIndicatorColor = androidx.compose.ui.graphics.Color.Transparent,
+                unfocusedIndicatorColor = androidx.compose.ui.graphics.Color.Transparent,
                 cursorColor = Orbita.colors.accent,
             ),
             modifier = Modifier.fillMaxWidth(),

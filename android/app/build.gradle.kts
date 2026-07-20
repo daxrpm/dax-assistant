@@ -71,6 +71,7 @@ dependencies {
     implementation(libs.androidx.lifecycle.runtime.compose)
     implementation(libs.androidx.lifecycle.service)
     implementation(libs.androidx.activity.compose)
+    implementation(libs.androidx.appcompat)
 
     implementation(platform(libs.androidx.compose.bom))
     implementation(libs.androidx.compose.ui)
@@ -84,6 +85,7 @@ dependencies {
     implementation(libs.androidx.datastore.preferences)
     implementation(libs.androidx.security.crypto)
     implementation(libs.androidx.media3.session)
+    implementation(libs.zxing.android.embedded)
 
     implementation(libs.hilt.android)
     implementation(libs.hilt.navigation.compose)

@@ -100,3 +100,16 @@ class TestApprovalManager:
     def test_resolve_unknown(self):
         m = ApprovalManager()
         assert m.resolve("does-not-exist", "approve") is False
+
+    async def test_rejects_decision_not_offered_by_request(self):
+        m = ApprovalManager(timeout_seconds=5)
+
+        async def notifier(payload: dict[str, Any]) -> None:
+            approval_id = payload["approval_id"]
+            assert m.resolve(approval_id, "unexpected") is False
+            assert m.resolve(approval_id, "approve") is True
+
+        m.set_notifier(notifier)
+        decision = await m.request(tool_name="read", server_name="s", arguments={})
+
+        assert decision == "approve"

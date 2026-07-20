@@ -23,12 +23,13 @@ import asyncio
 import logging
 import time
 from dataclasses import dataclass
+from urllib.parse import urlencode
 
 from fastapi import APIRouter, Depends, Request, Response
 from pydantic import BaseModel, Field
 
 from dax.storage.devices import generate_pairing_code
-from dax.web.auth import require_auth
+from dax.web.auth import require_session
 from dax.web.dependencies import AuthDep, ConfigDep
 
 router = APIRouter(tags=["devices"])
@@ -95,6 +96,8 @@ def _codes(request: Request) -> _PairingCodes:
 class PairResponse(BaseModel):
     code: str
     expires_in_seconds: int
+    pairing_uri: str
+    backend_url: str
 
 
 class EnrollRequest(BaseModel):
@@ -133,14 +136,21 @@ class OkResponse(BaseModel):
 @router.post(
     "/auth/devices/pair",
     response_model=PairResponse,
-    dependencies=[Depends(require_auth)],
+    dependencies=[Depends(require_session)],
 )
 async def pair_device(request: Request, config: ConfigDep) -> PairResponse:
     """Mint a one-time pairing code for a new device."""
     ttl = max(60, config.security.pairing_code_ttl_minutes * 60)
     entry = _codes(request).issue(ttl)
+    backend_url = str(request.base_url).rstrip("/")
+    pairing_uri = f"dax://pair?{urlencode({'url': backend_url, 'code': entry.code})}"
     logger.info("Issued a device pairing code (expires in %ds)", ttl)
-    return PairResponse(code=entry.code, expires_in_seconds=ttl)
+    return PairResponse(
+        code=entry.code,
+        expires_in_seconds=ttl,
+        pairing_uri=pairing_uri,
+        backend_url=backend_url,
+    )
 
 
 @router.post("/auth/devices/enroll", response_model=EnrollResponse)
@@ -195,7 +205,7 @@ async def issue_device_token(
 @router.get(
     "/auth/devices",
     response_model=DeviceListResponse,
-    dependencies=[Depends(require_auth)],
+    dependencies=[Depends(require_session)],
 )
 async def list_devices(auth: AuthDep) -> DeviceListResponse:
     devices = auth.devices
@@ -218,7 +228,7 @@ async def list_devices(auth: AuthDep) -> DeviceListResponse:
 @router.post(
     "/auth/devices/{device_id}/revoke",
     response_model=OkResponse,
-    dependencies=[Depends(require_auth)],
+    dependencies=[Depends(require_session)],
 )
 async def revoke_device(device_id: str, response: Response, auth: AuthDep) -> OkResponse:
     devices = auth.devices
@@ -231,7 +241,7 @@ async def revoke_device(device_id: str, response: Response, auth: AuthDep) -> Ok
 @router.delete(
     "/auth/devices/{device_id}",
     response_model=OkResponse,
-    dependencies=[Depends(require_auth)],
+    dependencies=[Depends(require_session)],
 )
 async def delete_device(device_id: str, response: Response, auth: AuthDep) -> OkResponse:
     devices = auth.devices

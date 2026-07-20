@@ -1,6 +1,8 @@
 package com.dax.assistant.core.network
 
 import java.net.URI
+import java.net.Inet6Address
+import java.net.InetAddress
 
 /** Keeps cleartext device credentials on loopback or literal private networks. */
 object BackendEndpointPolicy {
@@ -17,11 +19,15 @@ object BackendEndpointPolicy {
     }
 
     internal fun isPrivateHost(host: String): Boolean {
-        if (host == "localhost" || host == "::1") return true
-        if (host.startsWith("fc") || host.startsWith("fd")) return true
-        if (host.length >= 3 && host.startsWith("fe")) {
-            val third = host[2].digitToIntOrNull(16)
-            if (third != null && third in 8..11) return true
+        if (host == "localhost") return true
+        if (':' in host) {
+            val address = runCatching { InetAddress.getByName(host) }.getOrNull() as? Inet6Address
+                ?: return false
+            if (address.isLoopbackAddress) return true
+            val bytes = address.address
+            val first = bytes[0].toInt() and 0xff
+            val second = bytes[1].toInt() and 0xff
+            return first and 0xfe == 0xfc || (first == 0xfe && second and 0xc0 == 0x80)
         }
 
         val octets = host.split('.').map { it.toIntOrNull() ?: return false }

@@ -45,6 +45,7 @@ sealed interface AssistantState {
         val route: AudioRoute,
         val partialTranscript: String = "",
         val speechDetected: Boolean = false,
+        val inputLevel: Float = 0f,
     ) : AssistantState
 
     /** Endpointed; finishing recognition. */

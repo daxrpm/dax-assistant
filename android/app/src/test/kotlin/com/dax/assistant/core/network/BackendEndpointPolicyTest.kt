@@ -2,6 +2,7 @@ package com.dax.assistant.core.network
 
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
@@ -39,5 +40,18 @@ class BackendEndpointPolicyTest {
         assertTrue(BackendEndpointPolicy.isPrivateHost("10.255.255.255"))
         assertTrue(BackendEndpointPolicy.isPrivateHost("172.31.255.255"))
         assertTrue(BackendEndpointPolicy.isPrivateHost("192.168.0.1"))
+    }
+
+    @Test
+    fun `only accepts fc fd and fe prefixes on real IPv6 literals`() {
+        assertTrue(BackendEndpointPolicy.isPrivateHost("fc00::1"))
+        assertTrue(BackendEndpointPolicy.isPrivateHost("fd12:3456::1"))
+        assertTrue(BackendEndpointPolicy.isPrivateHost("fe80::1"))
+        assertFalse(BackendEndpointPolicy.isPrivateHost("fc-attacker.example"))
+        assertFalse(BackendEndpointPolicy.isPrivateHost("fd.example"))
+        assertFalse(BackendEndpointPolicy.isPrivateHost("fe80.example"))
+        assertFalse(BackendEndpointPolicy.isPrivateHost("fe-not-ipv6"))
+        assertNull(BackendEndpointPolicy.normalize("http://fc-attacker.example:8420"))
+        assertNull(BackendEndpointPolicy.normalize("http://fe80.example:8420"))
     }
 }

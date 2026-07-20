@@ -54,6 +54,8 @@ describe("PairedDevices", () => {
     mockApi.pairDevice.mockResolvedValue({
       code: "ABCD2345",
       expires_in_seconds: 300,
+      backend_url: "https://dax.example",
+      pairing_uri: "dax://pair?url=https%3A%2F%2Fdax.example&code=ABCD2345",
     } as never);
     renderPane();
 
@@ -62,12 +64,15 @@ describe("PairedDevices", () => {
     // Rendered with separators so it can be read off one screen and typed
     // into another without losing place.
     expect(await screen.findByText("A B C D 2 3 4 5")).toBeTruthy();
+    expect(screen.getByLabelText(/pairing qr|qr de vinculación/i)).toBeTruthy();
   });
 
   it("counts the code down rather than letting it expire silently", async () => {
     mockApi.pairDevice.mockResolvedValue({
       code: "ABCD2345",
       expires_in_seconds: 300,
+      backend_url: "https://dax.example",
+      pairing_uri: "dax://pair?url=https%3A%2F%2Fdax.example&code=ABCD2345",
     } as never);
     renderPane();
 

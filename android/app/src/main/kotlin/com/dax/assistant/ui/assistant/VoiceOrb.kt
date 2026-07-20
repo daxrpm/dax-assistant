@@ -78,7 +78,8 @@ fun VoiceOrb(
     )
 
     val energy = when (state) {
-        is AssistantState.Listening -> if (state.speechDetected) 1f else 0.55f
+        is AssistantState.Listening ->
+            if (state.speechDetected) maxOf(0.65f, state.inputLevel) else maxOf(0.4f, state.inputLevel)
         is AssistantState.Processing, is AssistantState.Transcribing -> 0.8f
         is AssistantState.Speaking -> 0.9f
         is AssistantState.Idle -> 0.32f

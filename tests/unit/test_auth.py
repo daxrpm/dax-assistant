@@ -36,6 +36,7 @@ def test_token_roundtrip():
     assert mgr.validate_token(token)
     assert not mgr.validate_token("garbage")
     assert not mgr.validate_token(None)
+    assert mgr.is_session_token(token)
 
 
 @pytest.fixture

@@ -29,6 +29,7 @@ class ApprovalManager:
     def __init__(self, timeout_seconds: int = 120) -> None:
         self._timeout = timeout_seconds
         self._pending: dict[str, asyncio.Future[str]] = {}
+        self._allowed: dict[str, frozenset[str]] = {}
         # approval_id -> owning session, so a resolution can be checked against
         # the conversation that raised it.
         self._owners: dict[str, str] = {}
@@ -92,6 +93,7 @@ class ApprovalManager:
         loop = asyncio.get_running_loop()
         future: asyncio.Future[str] = loop.create_future()
         self._pending[approval_id] = future
+        self._allowed[approval_id] = frozenset({"deny", *(options or ["approve"])})
 
         payload = {
             "type": "tool_confirmation_request",
@@ -116,6 +118,7 @@ class ApprovalManager:
             return "deny"
         finally:
             self._pending.pop(approval_id, None)
+            self._allowed.pop(approval_id, None)
             self._owners.pop(approval_id, None)
 
     def session_for(self, approval_id: str) -> str | None:
@@ -132,6 +135,9 @@ class ApprovalManager:
         Resolution is single-use: the future is settled once, so a replayed or
         duplicated confirmation frame cannot run a gated tool a second time.
         """
+        if decision not in self._allowed.get(approval_id, frozenset()):
+            logger.warning("Rejected invalid decision for approval %s", approval_id)
+            return False
         future = self._pending.get(approval_id)
         if future is not None and not future.done():
             future.set_result(decision)

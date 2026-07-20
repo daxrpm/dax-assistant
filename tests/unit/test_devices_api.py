@@ -9,6 +9,7 @@ siblings.
 from __future__ import annotations
 
 from typing import TYPE_CHECKING
+from urllib.parse import parse_qs, urlparse
 
 import pytest
 from httpx import ASGITransport, AsyncClient
@@ -83,6 +84,10 @@ class TestEnrolmentFlow:
         assert pair.status_code == 200
         code = pair.json()["code"]
         assert pair.json()["expires_in_seconds"] > 0
+        assert pair.json()["backend_url"] == "http://test"
+        parsed = urlparse(pair.json()["pairing_uri"])
+        assert (parsed.scheme, parsed.netloc) == ("dax", "pair")
+        assert parse_qs(parsed.query) == {"url": ["http://test"], "code": [code]}
 
         enroll = await client.post(
             "/api/auth/devices/enroll",
@@ -261,6 +266,107 @@ class TestAuthGating:
 
         response = await secured.get("/api/status", headers={"Authorization": f"Bearer {token}"})
         assert response.status_code == 200
+
+    async def _device_headers(self, secured: AsyncClient) -> dict[str, str]:
+        login = await secured.post("/api/auth/login", json={"password": "correct-horse"})
+        session_headers = {"Authorization": f"Bearer {login.json()['token']}"}
+        code = (
+            await secured.post("/api/auth/devices/pair", headers=session_headers)
+        ).json()["code"]
+        enrolled = (
+            await secured.post(
+                "/api/auth/devices/enroll",
+                json={"code": code, "name": "phone", "platform": "android"},
+            )
+        ).json()
+        token = (
+            await secured.post(
+                "/api/auth/devices/token",
+                json={
+                    "device_id": enrolled["device_id"],
+                    "device_secret": enrolled["device_secret"],
+                },
+            )
+        ).json()["token"]
+        secured.cookies.clear()
+        return {"Authorization": f"Bearer {token}"}
+
+    @pytest.mark.parametrize(
+        ("method", "path"),
+        [
+            ("POST", "/api/auth/devices/pair"),
+            ("GET", "/api/auth/devices"),
+            ("GET", "/api/config"),
+            ("GET", "/api/config/mcp/servers"),
+            ("GET", "/api/memory"),
+        ],
+    )
+    async def test_device_token_is_rejected_from_session_only_routes(
+        self, secured: AsyncClient, method: str, path: str
+    ):
+        headers = await self._device_headers(secured)
+
+        response = await secured.request(method, path, headers=headers)
+
+        assert response.status_code == 401
+
+    async def test_device_token_can_read_status_and_mobile_config(self, secured: AsyncClient):
+        headers = await self._device_headers(secured)
+        app = secured._transport.app  # type: ignore[union-attr]
+        object.__setattr__(app.state.config.llm.openai, "api_key", "sk-never-return")
+
+        status_response = await secured.get("/api/status", headers=headers)
+        config_response = await secured.get("/api/mobile/config", headers=headers)
+
+        assert status_response.status_code == 200
+        assert config_response.status_code == 200
+        payload = config_response.json()
+        assert set(payload) == {"general", "llm", "voice"}
+        assert payload["llm"]["openai_configured"] is True
+        assert payload["voice"]["stt_openai_configured"] is True
+        assert "sk-never-return" not in config_response.text
+        assert "api_key" not in config_response.text
+        assert "base_url" not in config_response.text
+        assert "binary" not in config_response.text
+
+    async def test_device_token_can_patch_safe_mobile_settings(self, secured: AsyncClient):
+        headers = await self._device_headers(secured)
+        app = secured._transport.app  # type: ignore[union-attr]
+
+        llm = await secured.patch(
+            "/api/mobile/config/llm",
+            headers=headers,
+            json={"ollama_model": "qwen3.5:4b", "max_tool_iterations": 12},
+        )
+        voice = await secured.patch(
+            "/api/mobile/config/voice",
+            headers=headers,
+            json={"stt_language": "en", "vad_threshold": 0.6},
+        )
+
+        assert llm.status_code == voice.status_code == 200
+        assert app.state.config.llm.ollama.model == "qwen3.5:4b"
+        assert app.state.config.llm.max_tool_iterations == 12
+        assert app.state.config.voice.stt_language == "en"
+        assert app.state.config.voice.vad_threshold == 0.6
+
+    @pytest.mark.parametrize(
+        ("path", "body"),
+        [
+            ("/api/mobile/config/llm", {"openai_api_key": "sk-nope"}),
+            ("/api/mobile/config/llm", {"ollama_base_url": "http://evil"}),
+            ("/api/mobile/config/llm", {"codex_binary": "/tmp/codex"}),
+            ("/api/mobile/config/voice", {"stt_openai_api_key": "sk-nope"}),
+        ],
+    )
+    async def test_mobile_patches_reject_sensitive_fields(
+        self, secured: AsyncClient, path: str, body: dict[str, str]
+    ):
+        headers = await self._device_headers(secured)
+
+        response = await secured.patch(path, headers=headers, json=body)
+
+        assert response.status_code == 422
 
     async def test_enrolment_still_needs_a_code_even_with_a_session(
         self, secured: AsyncClient

@@ -8,8 +8,6 @@ import com.dax.assistant.core.log.DaxLog
 import java.util.Locale
 import java.util.concurrent.atomic.AtomicInteger
 import kotlinx.coroutines.CompletableDeferred
-import kotlinx.coroutines.suspendCancellableCoroutine
-import kotlin.coroutines.resume
 
 /**
  * Speaks the assistant's replies locally.
@@ -28,6 +26,8 @@ class Speaker(context: Context) {
 
     private val ready = CompletableDeferred<Boolean>()
     private val counter = AtomicInteger(0)
+    private val playbackLock = Any()
+    private var activePlayback: Playback? = null
 
     private val engine: TextToSpeech = TextToSpeech(context) { status ->
         val ok = status == TextToSpeech.SUCCESS
@@ -68,35 +68,37 @@ class Speaker(context: Context) {
         if (!isReady()) return false
 
         val utteranceId = "dax-${counter.incrementAndGet()}"
-        return suspendCancellableCoroutine { continuation ->
-            engine.setOnUtteranceProgressListener(object : UtteranceProgressListener() {
-                override fun onStart(id: String?) = Unit
+        val completion = CompletableDeferred<Boolean>()
+        synchronized(playbackLock) {
+            activePlayback?.completion?.complete(false)
+            activePlayback = Playback(utteranceId, completion)
+        }
+        engine.setOnUtteranceProgressListener(object : UtteranceProgressListener() {
+            override fun onStart(id: String?) = Unit
 
-                override fun onDone(id: String?) {
-                    if (id == utteranceId && continuation.isActive) continuation.resume(true)
-                }
+            override fun onDone(id: String?) = finish(id, true)
 
-                @Deprecated("Required override", ReplaceWith(""))
-                override fun onError(id: String?) {
-                    if (id == utteranceId && continuation.isActive) continuation.resume(false)
-                }
+            @Deprecated("Required override", ReplaceWith(""))
+            override fun onError(id: String?) = finish(id, false)
 
-                override fun onError(id: String?, errorCode: Int) {
-                    if (id == utteranceId && continuation.isActive) continuation.resume(false)
-                }
-            })
+            override fun onError(id: String?, errorCode: Int) = finish(id, false)
+        })
 
-            continuation.invokeOnCancellation { runCatching { engine.stop() } }
-
-            val queued = engine.speak(text, TextToSpeech.QUEUE_FLUSH, null, utteranceId)
-            if (queued != TextToSpeech.SUCCESS && continuation.isActive) {
-                continuation.resume(false)
-            }
+        val queued = engine.speak(text, TextToSpeech.QUEUE_FLUSH, null, utteranceId)
+        if (queued != TextToSpeech.SUCCESS) finish(utteranceId, false)
+        return try {
+            completion.await()
+        } finally {
+            stop(utteranceId)
         }
     }
 
     fun stop() {
+        val playback = synchronized(playbackLock) {
+            activePlayback.also { activePlayback = null }
+        }
         runCatching { engine.stop() }
+        playback?.completion?.complete(false)
     }
 
     fun shutdown() {
@@ -105,6 +107,28 @@ class Speaker(context: Context) {
             engine.shutdown()
         }
     }
+
+    private fun finish(utteranceId: String?, success: Boolean) {
+        val playback = synchronized(playbackLock) {
+            activePlayback?.takeIf { it.utteranceId == utteranceId }?.also { activePlayback = null }
+        }
+        playback?.completion?.complete(success)
+    }
+
+    private fun stop(utteranceId: String) {
+        val playback = synchronized(playbackLock) {
+            activePlayback?.takeIf { it.utteranceId == utteranceId }?.also { activePlayback = null }
+        }
+        if (playback != null) {
+            runCatching { engine.stop() }
+            playback.completion.complete(false)
+        }
+    }
+
+    private data class Playback(
+        val utteranceId: String,
+        val completion: CompletableDeferred<Boolean>,
+    )
 
     private companion object {
         const val TAG = "Speaker"

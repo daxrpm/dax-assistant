@@ -109,7 +109,7 @@ class LLMConfigUpdate(BaseModel):
     codex_timeout: int | None = None
 
 
-class VoiceConfigUpdate(BaseModel):
+class VoiceNonSecretConfigUpdate(BaseModel):
     enabled: bool | None = None
     wake_word_model: str | None = None
     wake_word_threshold: float | None = None
@@ -122,7 +122,6 @@ class VoiceConfigUpdate(BaseModel):
     stt_openai_model: str | None = None
     stt_openai_timeout_s: int | None = None
     stt_openai_prompt: str | None = None
-    stt_openai_api_key: str | None = None
     stt_fallback_to_local: bool | None = None
     tts_engine: Literal["kokoro", "piper", "openai"] | None = None
     tts_voice_es: str | None = None
@@ -153,6 +152,10 @@ class VoiceConfigUpdate(BaseModel):
     speaker_verification: bool | None = None
     speaker_threshold: float | None = None
     speaker_fail_open: bool | None = None
+
+
+class VoiceConfigUpdate(VoiceNonSecretConfigUpdate):
+    stt_openai_api_key: str | None = None
 
 
 class WhatsAppConfigUpdate(BaseModel):

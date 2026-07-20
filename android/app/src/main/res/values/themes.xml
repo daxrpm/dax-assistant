@@ -2,7 +2,7 @@
 <resources>
     <!-- Compose owns all real styling; this exists so the window background and
          system bars match the Orbita ground before the first frame renders. -->
-    <style name="Theme.Dax" parent="android:Theme.Material.NoActionBar">
+    <style name="Theme.Dax" parent="Theme.AppCompat.DayNight.NoActionBar">
         <item name="android:windowBackground">@color/orbita_bg_window</item>
         <item name="android:statusBarColor">@android:color/transparent</item>
         <item name="android:navigationBarColor">@android:color/transparent</item>

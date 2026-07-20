@@ -13,7 +13,7 @@ from typing import TYPE_CHECKING
 from fastapi import Depends, FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-from dax.web.auth import AuthManager, require_auth
+from dax.web.auth import AuthManager, require_auth, require_session
 from dax.web.routes import (
     auth,
     chat,
@@ -22,6 +22,7 @@ from dax.web.routes import (
     logs,
     mcp,
     memory,
+    mobile,
     oauth,
     system,
     voice,
@@ -108,17 +109,18 @@ def create_app(
     app.include_router(devices.router, prefix="/api")
     # Protected API + OAuth routes require a valid session. The former api.py
     # god-module is now split into cohesive domain routers.
-    protected = [Depends(require_auth)]
+    device_or_session = [Depends(require_auth)]
     for domain_router in (
         system.router,
-        config_routes.router,
-        mcp.router,
         conversations.router,
-        memory.router,
         voice.router,
     ):
-        app.include_router(domain_router, prefix="/api", dependencies=protected)
-    app.include_router(oauth.router, prefix="/api", dependencies=protected)
+        app.include_router(domain_router, prefix="/api", dependencies=device_or_session)
+    app.include_router(mobile.router, prefix="/api", dependencies=device_or_session)
+
+    session_only = [Depends(require_session)]
+    for domain_router in (config_routes.router, mcp.router, memory.router, oauth.router):
+        app.include_router(domain_router, prefix="/api", dependencies=session_only)
     # Chat + logs + voice WS authenticate in their own handshake; webhooks use
     # a secret.
     app.include_router(chat.router, prefix="/ws")

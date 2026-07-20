@@ -56,6 +56,25 @@
   color: var(--fg-tertiary);
 }
 
+.qr {
+  display: grid;
+  place-items: center;
+  padding: var(--space-2);
+  border-radius: var(--radius-lg);
+  background: #fff;
+  box-shadow: var(--shadow-2);
+}
+
+.qr svg {
+  display: block;
+}
+
+.or {
+  color: var(--fg-quaternary);
+  font-size: var(--text-caption);
+  line-height: var(--text-caption-lh);
+}
+
 .code {
   font-family: var(--font-mono);
   font-size: var(--text-title1);

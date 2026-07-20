@@ -134,13 +134,17 @@ class AuthManager:
 
     def validate_token(self, token: str | None) -> bool:
         """True when *token* is a live user session or a live device token."""
+        return self.is_session_token(token) or self.device_from_token(token) is not None
+
+    def is_session_token(self, token: str | None) -> bool:
+        """True only for a live browser/desktop session token."""
         if not token:
             return False
         try:
-            self._serializer.loads(token, max_age=self._ttl_seconds)
+            payload = self._serializer.loads(token, max_age=self._ttl_seconds)
         except (BadSignature, SignatureExpired):
-            return self.device_from_token(token) is not None
-        return True
+            return False
+        return isinstance(payload, dict) and payload.get("sub") == _SESSION_SUBJECT
 
     def device_from_token(self, token: str | None) -> str | None:
         """Return the device id for a valid device token, else None.
@@ -213,6 +217,12 @@ class AuthManager:
             return True
         return any(self.validate_token(token) for token in self._token_candidates(request))
 
+    def is_session_authenticated(self, request: Request) -> bool:
+        """Accept session cookies/bearers, but never enrolled-device tokens."""
+        if not self._enabled:
+            return True
+        return any(self.is_session_token(token) for token in self._token_candidates(request))
+
     def authenticate_websocket(self, websocket: WebSocket) -> bool:
         """Validate a WebSocket via cookie, ``?token=``, or bearer header."""
         if not self._enabled:
@@ -235,6 +245,19 @@ def require_auth(request: Request) -> None:
         raise HTTPException(
             status.HTTP_401_UNAUTHORIZED,
             "Authentication required",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+
+
+def require_session(request: Request) -> None:
+    """Reject requests that do not carry a user session credential."""
+    auth: AuthManager | None = getattr(request.app.state, "auth", None)
+    if auth is None:
+        raise HTTPException(status.HTTP_401_UNAUTHORIZED, "Auth not configured")
+    if not auth.is_session_authenticated(request):
+        raise HTTPException(
+            status.HTTP_401_UNAUTHORIZED,
+            "Session authentication required",
             headers={"WWW-Authenticate": "Bearer"},
         )
 
