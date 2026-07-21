@@ -422,7 +422,7 @@ verify_manifest_checksum
 write_selection
 
 declare -A ARTIFACT_PATHS
-while IFS=$'\t' read -r role name url artifact_arch digest size; do
+while IFS=$'\t' read -r role name url _artifact_arch digest size; do
     if [[ "$role" == "version" ]]; then RESOLVED_VERSION="$name"; continue; fi
     if [[ "$role" == "commit" ]]; then RESOLVED_COMMIT="$name"; continue; fi
     target="$TEMP_DIR/$name"
