@@ -6,7 +6,7 @@ IFS=$'\n\t'
 
 REPOSITORY="${DAX_RELEASE_REPOSITORY:-daxrpm/dax-assistant}"
 GH_COMMAND="${DAX_GH_COMMAND:-gh}"
-VERSION=""
+PIN_VERSION=""
 MANIFEST_SOURCE=""
 CHECKSUMS_SOURCE=""
 COMPONENTS="both"
@@ -75,7 +75,7 @@ EOF
 if [[ "${1:-}" == "install" ]]; then shift; fi
 while [[ $# -gt 0 ]]; do
     case "$1" in
-        --version) VERSION="${2:-}"; shift ;;
+        --version) PIN_VERSION="${2:-}"; shift ;;
         --manifest) MANIFEST_SOURCE="${2:-}"; shift ;;
         --checksums) CHECKSUMS_SOURCE="${2:-}"; shift ;;
         --backend-only) COMPONENTS="backend" ;;
@@ -95,7 +95,7 @@ done
 
 [[ "$(uname -s)" == "Linux" ]] || die "Linux is required"
 [[ "$EUID" -ne 0 ]] || die "run as the desktop user, not root"
-[[ "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ || -z "$VERSION" ]] || die "--version must be MAJOR.MINOR.PATCH"
+[[ "$PIN_VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ || -z "$PIN_VERSION" ]] || die "--version must be MAJOR.MINOR.PATCH"
 [[ "$WITH_NODE" -eq 0 || "$COMPONENTS" != "desktop" ]] || die "--with-node cannot be combined with --desktop-only; use --node-only"
 [[ -z "$SOURCE_MODE" || "$COMPONENTS" == "backend" ]] || die "--source supports --backend-only only"
 if [[ "$COMPONENTS" != "desktop" ]]; then
@@ -164,7 +164,7 @@ verify_attestation() {
 }
 
 write_selection() {
-    python3 - "$TEMP_DIR/release-manifest.json" "$TEMP_DIR/selection.tsv" "$COMPONENTS" "$DISTRO" "$ARCH" "$VERSION" "$MANIFEST_SOURCE" "$WITH_NODE" "$REPOSITORY" <<'PY'
+    python3 - "$TEMP_DIR/release-manifest.json" "$TEMP_DIR/selection.tsv" "$COMPONENTS" "$DISTRO" "$ARCH" "$PIN_VERSION" "$MANIFEST_SOURCE" "$WITH_NODE" "$REPOSITORY" <<'PY'
 import json
 import re
 import sys
@@ -408,7 +408,7 @@ fi
 for command in curl sha256sum python3; do command -v "$command" >/dev/null 2>&1 || die "required command not found: $command"; done
 TEMP_DIR="$(mktemp -d "${TMPDIR:-/tmp}/dax-install.XXXXXXXX")"
 if [[ -z "$MANIFEST_SOURCE" ]]; then
-    if [[ -n "$VERSION" ]]; then RELEASE_BASE="https://github.com/$REPOSITORY/releases/download/v$VERSION"; else RELEASE_BASE="https://github.com/$REPOSITORY/releases/latest/download"; fi
+    if [[ -n "$PIN_VERSION" ]]; then RELEASE_BASE="https://github.com/$REPOSITORY/releases/download/v$PIN_VERSION"; else RELEASE_BASE="https://github.com/$REPOSITORY/releases/latest/download"; fi
     MANIFEST_SOURCE="$RELEASE_BASE/release-manifest.json"
     CHECKSUMS_SOURCE="$RELEASE_BASE/SHA256SUMS"
 elif [[ -z "$CHECKSUMS_SOURCE" ]]; then
