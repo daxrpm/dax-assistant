@@ -259,6 +259,25 @@ PY
     [[ ! -f "$STATE_DIR/dax.key" ]] || install -m 600 "$STATE_DIR/dax.key" "$BACKUP_DIR/dax-$timestamp.key"
 }
 
+fixup_venv_shebangs() {
+    local old_root="$1" new_root="$2"
+    python3 - "$old_root" "$new_root" <<'PY'
+import sys
+from pathlib import Path
+
+old_root, new_root = sys.argv[1], sys.argv[2]
+old_shebang = f"#!{old_root}/.venv/bin/python\n".encode()
+new_shebang = f"#!{new_root}/.venv/bin/python\n".encode()
+bin_dir = Path(new_root) / ".venv" / "bin"
+for script in bin_dir.iterdir():
+    if not script.is_file():
+        continue
+    data = script.read_bytes()
+    if data.startswith(old_shebang):
+        script.write_bytes(new_shebang + data[len(old_shebang):])
+PY
+}
+
 write_units() {
     local backend_asset="$1" node_asset="${2:-}"
     install -d -m 700 "$UNIT_DIR"
@@ -288,6 +307,7 @@ install_node() {
     uv pip install --python "$release_dir.new/.venv/bin/python" --no-deps "$wheel"
     rm -rf "$release_dir"
     mv "$release_dir.new" "$release_dir"
+    fixup_venv_shebangs "$release_dir.new" "$release_dir"
     install -d -m 700 "$UNIT_DIR"
     install -m 600 "$node_asset" "$NODE_UNIT"
     systemctl --user disable dax-assistant-node.service >/dev/null 2>&1 || true
@@ -341,6 +361,7 @@ install_backend() {
     uv pip install --python "$release_dir.new/.venv/bin/python" --no-deps "$wheel"
     rm -rf "$release_dir"
     mv "$release_dir.new" "$release_dir"
+    fixup_venv_shebangs "$release_dir.new" "$release_dir"
     if systemctl --user is-active --quiet dax-assistant.service; then backend_was_active=1; fi
     if systemctl --user is-enabled --quiet dax-assistant.service; then backend_was_enabled=1; fi
     write_units "$backend_asset" "$node_asset"
@@ -350,7 +371,10 @@ install_backend() {
         rollback_backend "$previous_target" "$backend_was_active" "$backend_was_enabled"
         die "backend service activation failed; restored the previous current target and service"
     fi
-    deadline=$((SECONDS + ${DAX_READINESS_TIMEOUT_SECONDS:-60}))
+    # 300s default: a fresh install's first startup fetches voice models (Whisper
+    # STT, Piper TTS) from Hugging Face, which alone took ~64s over a home
+    # connection in practice — comfortably past the old 60s deadline.
+    deadline=$((SECONDS + ${DAX_READINESS_TIMEOUT_SECONDS:-300}))
     while (( SECONDS < deadline )); do
         if ! systemctl --user is-active --quiet dax-assistant.service; then
             break

@@ -21,19 +21,21 @@ Environment="HF_HOME=%h/.cache/dax-assistant/huggingface"
 
 # Safe for a desktop assistant. ProtectHome/PrivateDevices are intentionally not
 # enabled because Dax provides user-approved file, application, and audio tools.
+#
+# CapabilityBoundingSet=, AmbientCapabilities=, RestrictSUIDSGID=, ProtectClock=,
+# ProtectKernelModules=, and ProtectKernelLogs= are deliberately omitted: each one
+# has systemd unconditionally call capset()/prctl(PR_CAPBSET_DROP) to enforce it
+# (even just to narrow the set), which requires CAP_SETPCAP — a capability an
+# ordinary --user login session never has. On a real user account (not root) they
+# don't harden anything; they just make the service fail at exec with
+# 218/CAPABILITIES every time.
 NoNewPrivileges=yes
 PrivateTmp=yes
 ProtectSystem=full
 ProtectKernelTunables=yes
-ProtectKernelModules=yes
-ProtectKernelLogs=yes
 ProtectControlGroups=yes
-ProtectClock=yes
 ProtectHostname=yes
-RestrictSUIDSGID=yes
 LockPersonality=yes
-CapabilityBoundingSet=
-AmbientCapabilities=
 RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
 
 [Install]
