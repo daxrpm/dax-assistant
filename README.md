@@ -128,7 +128,7 @@ Reproducible installs, staged rollouts, and downgrades pin an immutable tag.
 This is the exception, not the normal path:
 
 ```bash
-VERSION=0.1.2
+VERSION=0.2.0
 curl --proto '=https' --tlsv1.2 --fail --location --remote-name \
   "https://github.com/daxrpm/dax-assistant/releases/download/v$VERSION/install.sh"
 gh attestation verify install.sh --repo daxrpm/dax-assistant
