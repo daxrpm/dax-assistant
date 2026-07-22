@@ -91,7 +91,7 @@ able to name a routable one.
    authoritative backend and leaves the node disabled:
 
    ```bash
-   bash install.sh --version "$VERSION" --node-only
+   bash install.sh --node-only
    ```
 
 2. In native Dax Desktop, run post-login setup. Desktop asks the authenticated

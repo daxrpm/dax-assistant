@@ -23,7 +23,13 @@ REPOSITORY = os.environ.get("DAX_RELEASE_REPOSITORY", "daxrpm/dax-assistant")
 # `VERSION=MAJOR.MINOR.PATCH` line, which `sync` rewrites and `check` verifies —
 # a published example that names a version older than the current release sends
 # readers to install something other than what shipped.
-DOCUMENTATION = ("README.md", "docs/installation.md", "docs/releases.md")
+DOCUMENTATION = (
+    "README.md",
+    "docs/installation.md",
+    "docs/releases.md",
+    "docs/deployment.md",
+    "docs/capability-nodes.md",
+)
 DOCUMENTATION_VERSION_RE = r"^VERSION=(" + VERSION_RE + r")$"
 
 

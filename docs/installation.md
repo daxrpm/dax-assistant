@@ -23,12 +23,16 @@ then run it. The short version, once the prerequisites are in place:
 curl --proto '=https' --tlsv1.2 --fail --location --remote-name \
   "https://github.com/daxrpm/dax-assistant/releases/latest/download/install.sh"
 gh attestation verify install.sh --repo daxrpm/dax-assistant
-bash install.sh --both
+bash install.sh --backend-only
 ```
 
 The installer resolves the newest published release; `--version` pins an
 immutable tag when you need one. The operational runbook, backups, rollback, and
 upgrades live in [`deployment.md`](deployment.md).
+
+`--backend-only` installs just this step. If the backend and the desktop client
+live on the same machine, `--both` does steps 1 and 2 in one run and you can skip
+ahead to the first-launch walkthrough below.
 
 The backend is the one piece with no configuration UI of its own, by design. It
 is configured by command on the machine it runs on:
