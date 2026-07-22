@@ -363,6 +363,7 @@ def _run_mocked_backend_upgrade(
     *,
     service_active_after_restart: bool = True,
     deactivate_after_health: bool = False,
+    arguments: tuple[str, ...] = (),
 ) -> tuple[subprocess.CompletedProcess[str], Path, Path]:
     manifest, checksums = _release_fixture(tmp_path)
     mock_bin = tmp_path / "bin"
@@ -414,6 +415,7 @@ def _run_mocked_backend_upgrade(
         checksums,
         "fedora",
         "--backend-only",
+        *arguments,
         dry_run=False,
         check=False,
         extra_env={
@@ -501,6 +503,239 @@ def test_stale_health_listener_cannot_mask_failed_service_restart(tmp_path: Path
     assert current.resolve() == previous
     assert not (tmp_path / "health-called").exists()
     assert "restart dax-assistant.service" in (tmp_path / "systemctl.log").read_text()
+
+
+_HEALTHY = {
+    "status": "ok",
+    "liveness": True,
+    "readiness": True,
+    "role": "authoritative",
+    "api_protocol": "dax",
+    "api_version": 1,
+    "instance_id": "instance-1",
+}
+
+
+def test_successful_upgrade_prunes_superseded_releases(tmp_path: Path) -> None:
+    result, current, previous = _run_mocked_backend_upgrade(
+        tmp_path, dict(_HEALTHY), arguments=("--keep", "1")
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert current.resolve() != previous
+    assert not previous.exists()
+
+
+def test_retention_never_removes_the_active_release(tmp_path: Path) -> None:
+    result, current, previous = _run_mocked_backend_upgrade(tmp_path, dict(_HEALTHY))
+
+    assert result.returncode == 0, result.stderr
+    assert current.resolve().exists()
+    assert previous.exists()
+
+
+def _lifecycle_home(tmp_path: Path, versions: tuple[str, ...], active: str) -> Path:
+    home = tmp_path / "home"
+    releases = home / ".local/share/dax-assistant/releases"
+    for version in versions:
+        binaries = releases / version / ".venv/bin"
+        binaries.mkdir(parents=True)
+        python = binaries / "python"
+        # Stands in for the release interpreter that runs the sqlite3 backup
+        # script, so a rollback produces a real backup file to chmod.
+        python.write_text(
+            '#!/usr/bin/env bash\n[[ $# -lt 3 ]] || cp "$2" "$3"\nexit 0\n', encoding="utf-8"
+        )
+        python.chmod(0o755)
+    (releases.parent / "current").symlink_to(releases / active)
+    units = home / ".config/systemd/user"
+    units.mkdir(parents=True)
+    (units / "dax-assistant.service").write_text("[Unit]\n", encoding="utf-8")
+    state = home / ".local/state/dax-assistant"
+    state.mkdir(parents=True)
+    (state / "dax.db").write_text("database", encoding="utf-8")
+    (state / "dax.key").write_text("key", encoding="utf-8")
+    return home
+
+
+def _run_lifecycle(
+    tmp_path: Path,
+    home: Path,
+    *arguments: str,
+    check: bool = True,
+    healthy: bool = True,
+) -> subprocess.CompletedProcess[str]:
+    mock_bin = tmp_path / "bin"
+    mock_bin.mkdir(exist_ok=True)
+    health_path = tmp_path / "health.json"
+    health_path.write_text(json.dumps(_HEALTHY), encoding="utf-8")
+    for name, content in {
+        "systemctl": (
+            'printf \'%s\\n\' "$*" >> "$DAX_MOCK_SYSTEMCTL_LOG"\n'
+            'if [[ "$*" == *is-active* && "$DAX_MOCK_HEALTHY" != 1 ]]; then exit 1; fi\n'
+            "exit 0\n"
+        ),
+        "curl": 'touch "$DAX_MOCK_CURL_CALLED"\ncommand cat "$DAX_MOCK_HEALTH_JSON"\n',
+        "gh": 'touch "$DAX_MOCK_GH_CALLED"\nexit 0\n',
+        "sleep": "exit 0\n",
+    }.items():
+        path = mock_bin / name
+        path.write_text(f"#!/usr/bin/env bash\n{content}", encoding="utf-8")
+        path.chmod(0o755)
+    env = {
+        **os.environ,
+        "HOME": str(home),
+        "XDG_DATA_HOME": str(home / ".local/share"),
+        "XDG_STATE_HOME": str(home / ".local/state"),
+        "XDG_CACHE_HOME": str(home / ".cache"),
+        "XDG_CONFIG_HOME": str(home / ".config"),
+        "DAX_READINESS_TIMEOUT_SECONDS": "5",
+        "DAX_MOCK_SYSTEMCTL_LOG": str(tmp_path / "systemctl.log"),
+        "DAX_MOCK_HEALTH_JSON": str(health_path),
+        "DAX_MOCK_HEALTHY": "1" if healthy else "0",
+        "DAX_MOCK_CURL_CALLED": str(tmp_path / "curl-called"),
+        "DAX_MOCK_GH_CALLED": str(tmp_path / "gh-called"),
+        "PATH": f"{mock_bin}{os.pathsep}{os.environ['PATH']}",
+    }
+    return subprocess.run(
+        ["bash", "scripts/install.sh", *arguments],
+        cwd=ROOT,
+        check=check,
+        capture_output=True,
+        text=True,
+        env=env,
+    )
+
+
+def test_list_marks_the_active_release(tmp_path: Path) -> None:
+    home = _lifecycle_home(tmp_path, ("0.0.9", "0.1.0", "0.1.2"), "0.1.0")
+    result = _run_lifecycle(tmp_path, home, "list")
+
+    assert "0.1.0  (active)" in result.stdout
+    assert "0.1.2\n" in result.stdout
+    # Newest first, so a reader sees what an unpinned install would move to.
+    assert result.stdout.index("0.1.2") < result.stdout.index("0.0.9")
+
+
+def test_lifecycle_commands_never_invoke_gh(tmp_path: Path) -> None:
+    home = _lifecycle_home(tmp_path, ("0.1.0",), "0.1.0")
+    _run_lifecycle(tmp_path, home, "list")
+    _run_lifecycle(tmp_path, home, "uninstall", "--dry-run")
+
+    assert not (tmp_path / "gh-called").exists()
+    assert not (tmp_path / "curl-called").exists()
+
+
+def test_rollback_defaults_to_the_newest_inactive_release(tmp_path: Path) -> None:
+    home = _lifecycle_home(tmp_path, ("0.0.9", "0.1.0", "0.1.2"), "0.1.2")
+    result = _run_lifecycle(tmp_path, home, "rollback", "--yes")
+
+    current = home / ".local/share/dax-assistant/current"
+    assert result.returncode == 0, result.stderr
+    assert current.resolve().name == "0.1.0"
+    assert "restart dax-assistant.service" in (tmp_path / "systemctl.log").read_text()
+
+
+def test_rollback_restores_the_previous_target_when_the_release_is_not_ready(
+    tmp_path: Path,
+) -> None:
+    home = _lifecycle_home(tmp_path, ("0.1.0", "0.1.2"), "0.1.2")
+    result = _run_lifecycle(
+        tmp_path, home, "rollback", "0.1.0", "--yes", check=False, healthy=False
+    )
+
+    current = home / ".local/share/dax-assistant/current"
+    assert result.returncode != 0
+    assert current.resolve().name == "0.1.2"
+    assert "restored the previous current target and service" in result.stderr
+
+
+def test_rollback_backs_up_the_database_before_switching(tmp_path: Path) -> None:
+    home = _lifecycle_home(tmp_path, ("0.1.0", "0.1.2"), "0.1.2")
+    _run_lifecycle(tmp_path, home, "rollback", "--yes")
+
+    backups = home / ".local/state/dax-assistant/backups"
+    assert list(backups.glob("dax-*.db"))
+    assert list(backups.glob("dax-*.key"))
+
+
+def test_rollback_rejects_a_release_that_is_not_installed(tmp_path: Path) -> None:
+    home = _lifecycle_home(tmp_path, ("0.1.2",), "0.1.2")
+    result = _run_lifecycle(tmp_path, home, "rollback", "0.9.9", "--yes", check=False)
+
+    assert result.returncode != 0
+    assert "is not installed" in result.stderr
+
+
+def test_rollback_refuses_the_already_active_release(tmp_path: Path) -> None:
+    home = _lifecycle_home(tmp_path, ("0.1.0", "0.1.2"), "0.1.2")
+    result = _run_lifecycle(tmp_path, home, "rollback", "0.1.2", "--yes", check=False)
+
+    assert result.returncode != 0
+    assert "already the current target" in result.stderr
+
+
+def test_uninstall_keeps_the_database_and_key_by_default(tmp_path: Path) -> None:
+    home = _lifecycle_home(tmp_path, ("0.1.2",), "0.1.2")
+    _run_lifecycle(tmp_path, home, "uninstall", "--yes")
+
+    state = home / ".local/state/dax-assistant"
+    assert (state / "dax.db").exists()
+    assert (state / "dax.key").exists()
+    assert not (home / ".local/share/dax-assistant/releases").exists()
+    assert not (home / ".config/systemd/user/dax-assistant.service").exists()
+    assert "disable --now dax-assistant.service" in (tmp_path / "systemctl.log").read_text()
+
+
+def test_uninstall_purge_removes_state_only_when_asked(tmp_path: Path) -> None:
+    home = _lifecycle_home(tmp_path, ("0.1.2",), "0.1.2")
+    _run_lifecycle(tmp_path, home, "uninstall", "--purge", "--yes")
+
+    assert not (home / ".local/state/dax-assistant").exists()
+    assert not (home / ".local/share/dax-assistant").exists()
+
+
+def test_destructive_lifecycle_commands_require_explicit_confirmation(tmp_path: Path) -> None:
+    home = _lifecycle_home(tmp_path, ("0.1.0", "0.1.2"), "0.1.2")
+    for arguments in (("uninstall",), ("uninstall", "--purge"), ("rollback",)):
+        result = _run_lifecycle(tmp_path, home, *arguments, check=False)
+        assert result.returncode != 0
+        assert "pass --yes to confirm explicitly" in result.stderr
+    assert (home / ".local/state/dax-assistant/dax.db").exists()
+    assert (home / ".config/systemd/user/dax-assistant.service").exists()
+
+
+def test_purge_is_rejected_outside_uninstall(tmp_path: Path) -> None:
+    home = _lifecycle_home(tmp_path, ("0.1.2",), "0.1.2")
+    result = _run_lifecycle(tmp_path, home, "list", "--purge", check=False)
+
+    assert result.returncode != 0
+    assert "--purge supports the uninstall command only" in result.stderr
+
+
+def test_documented_install_versions_track_the_release(tmp_path: Path) -> None:
+    readme = (ROOT / "README.md").read_text(encoding="utf-8")
+    version = json.loads((ROOT / "release.json").read_text(encoding="utf-8"))["version"]
+    assert f"VERSION={version}" in readme
+    # The unpinned path is the documented default; a reader must not have to
+    # discover a version number before they can install anything.
+    assert "releases/latest/download/install.sh" in readme
+
+    stale = ROOT / "docs/releases.md"
+    original = stale.read_text(encoding="utf-8")
+    try:
+        stale.write_text(original.replace(f"VERSION={version}", "VERSION=0.0.1"), encoding="utf-8")
+        result = subprocess.run(
+            ["python3", "scripts/release.py", "check"],
+            cwd=ROOT,
+            check=False,
+            capture_output=True,
+            text=True,
+        )
+        assert result.returncode != 0
+        assert "docs/releases.md=0.0.1" in result.stderr
+    finally:
+        stale.write_text(original, encoding="utf-8")
 
 
 @pytest.mark.parametrize("output", [".", "..", "~", "/"])

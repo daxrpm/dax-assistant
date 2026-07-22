@@ -79,17 +79,47 @@ Disaster recovery procedure:
 
 ## Upgrades And Rollback
 
-Install an immutable tagged release through the attested installer. It backs up
-state, installs a new versioned runtime, switches `current`, restarts the service,
-and waits for authoritative readiness. Failure restores the previous symlink and
-service. Stop and disable an installed capability-node service before changing a
-shared local runtime; the installer refuses to switch beneath an active node.
+Upgrade through the attested installer. It backs up state, installs a new
+versioned runtime, switches `current`, restarts the service, and waits for
+authoritative readiness. Failure restores the previous symlink and service. Stop
+and disable an installed capability-node service before changing a shared local
+runtime; the installer refuses to switch beneath an active node. After a
+successful upgrade the newest `--keep N` releases are retained (default 3) and
+older ones are pruned; the active release is never a deletion candidate.
 
-For manual rollback, stop the service, repoint `current` to a known compatible
-release, restore a matching pre-upgrade database/key set if the schema cannot run
-on the older release, reload user systemd, and start. Confirm health identity and
-readiness before reconnecting clients. Do not downgrade a migrated database on
-hope alone.
+```bash
+bash install.sh --both            # newest release
+bash install.sh list              # installed releases, active one, service state
+bash install.sh rollback          # previous installed release
+bash install.sh rollback 0.1.1    # a specific installed release
+```
+
+`rollback` takes a database backup, repoints `current`, restarts the service, and
+waits for authoritative readiness, restoring the previous target if the older
+release does not come up. It cannot undo a schema migration: migrations are
+forward-only, so a database already migrated by a newer release may refuse to
+open under older code. When that happens, restore the matching pre-upgrade
+database/key set. Confirm health identity and readiness before reconnecting
+clients. Do not downgrade a migrated database on hope alone.
+
+`list`, `rollback`, and `uninstall` act only on already-installed local releases.
+They reach no network and need no `gh`, so they remain usable during an incident
+when release infrastructure is unreachable.
+
+## Removal
+
+```bash
+bash install.sh uninstall           # services, units, and releases; keeps state
+bash install.sh uninstall --purge   # also deletes the database and key
+```
+
+Plain `uninstall` stops and disables both services, removes their units and every
+installed release, and deliberately keeps `~/.local/state/dax-assistant/` and the
+downloaded models — so a reinstall resumes with its conversations and
+configuration intact. `--purge` deletes that state, including `dax.db`,
+`dax.key`, node credentials, and every backup. Encrypted configuration cannot be
+recovered without that key; take a recovery set first if there is any doubt.
+Neither form touches the desktop RPM/deb, which your package manager owns.
 
 ## Diagnostics And Replacement
 

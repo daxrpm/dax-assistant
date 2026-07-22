@@ -16,8 +16,19 @@ the order below and nothing will ask you for something you do not have yet.
 ## 1. Backend
 
 Follow the verified install path in the [README](../README.md#production-install)
-— pin a release, verify its attestation, then run the installer. The operational
-runbook, backups, and upgrades live in [`deployment.md`](deployment.md).
+— install `uv` and `gh`, download the installer as data, verify its attestation,
+then run it. The short version, once the prerequisites are in place:
+
+```bash
+curl --proto '=https' --tlsv1.2 --fail --location --remote-name \
+  "https://github.com/daxrpm/dax-assistant/releases/latest/download/install.sh"
+gh attestation verify install.sh --repo daxrpm/dax-assistant
+bash install.sh --both
+```
+
+The installer resolves the newest published release; `--version` pins an
+immutable tag when you need one. The operational runbook, backups, rollback, and
+upgrades live in [`deployment.md`](deployment.md).
 
 The backend is the one piece with no configuration UI of its own, by design. It
 is configured by command on the machine it runs on:
@@ -33,8 +44,7 @@ default — see [Remote access](../README.md#remote-access) before exposing it.
 
 ## 2. Desktop
 
-Install with `bash install.sh --version "$VERSION" --desktop-only`, or `--both`
-alongside the backend.
+Install with `bash install.sh --desktop-only`, or `--both` alongside the backend.
 
 First launch runs setup in two halves, split by a login:
 
@@ -59,11 +69,13 @@ The APK is a separate signed release asset. The installer never downloads it —
 fetch it from the release page and verify it the same way:
 
 ```bash
-VERSION=0.1.0
 curl --proto '=https' --tlsv1.2 --fail --location --remote-name \
-  "https://github.com/daxrpm/dax-assistant/releases/download/v$VERSION/dax-assistant.apk"
+  "https://github.com/daxrpm/dax-assistant/releases/latest/download/dax-assistant.apk"
 gh attestation verify dax-assistant.apk --repo daxrpm/dax-assistant
 ```
+
+Swap `latest/download` for `download/v$VERSION` to pin a specific tag. Keep the
+APK on the same release as the backend it talks to.
 
 First run walks four steps:
 
@@ -98,7 +110,7 @@ Full behaviour, safety model, and revocation are in
 
 ```bash
 # Installs only the node runtime and unit; no backend authority is installed.
-bash install.sh --version "$VERSION" --node-only
+bash install.sh --node-only
 
 # Native Desktop enrols without a terminal. This is the browser/headless fallback:
 dax edge enroll --server https://dax.example --code CODE --name "$(hostname)"
@@ -131,6 +143,7 @@ on an eligible node. Direct phone-to-node audio and node STT are not implemented
 ## Verifying the whole chain
 
 ```bash
+bash install.sh list                             # installed releases and service state
 systemctl --user status dax-assistant            # backend up
 systemctl --user status dax-assistant-node       # node up, if enrolled
 dax edge status                                  # node knows its server

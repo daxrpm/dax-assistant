@@ -19,6 +19,13 @@ METADATA = ROOT / "release.json"
 VERSION_RE = r"[0-9]+\.[0-9]+\.[0-9]+"
 REPOSITORY = os.environ.get("DAX_RELEASE_REPOSITORY", "daxrpm/dax-assistant")
 
+# Documentation that shows a pinned install. Every such page carries exactly one
+# `VERSION=MAJOR.MINOR.PATCH` line, which `sync` rewrites and `check` verifies —
+# a published example that names a version older than the current release sends
+# readers to install something other than what shipped.
+DOCUMENTATION = ("README.md", "docs/installation.md", "docs/releases.md")
+DOCUMENTATION_VERSION_RE = r"^VERSION=(" + VERSION_RE + r")$"
+
 
 def fail(message: str) -> None:
     raise SystemExit(f"release: {message}")
@@ -63,6 +70,32 @@ def versions() -> dict[str, str]:
     }
 
 
+def documentation_versions() -> dict[str, str]:
+    # A page may pin no version at all — documenting the `latest` path leaves
+    # nothing to drift. It may not pin more than one, because `sync` maintains a
+    # single anchor per page and would leave the others stale.
+    found: dict[str, str] = {}
+    for relative in DOCUMENTATION:
+        text = (ROOT / relative).read_text(encoding="utf-8")
+        matches = re.findall(DOCUMENTATION_VERSION_RE, text, re.MULTILINE)
+        if len(matches) > 1:
+            fail(f"{relative} has {len(matches)} VERSION= lines; `sync` maintains at most one")
+        if matches:
+            found[relative] = matches[0]
+    return found
+
+
+def documentation_literals() -> list[str]:
+    # A literal after --version cannot be synchronized without guessing intent,
+    # so documented commands must read the pin from the VERSION shell variable.
+    stale: list[str] = []
+    for relative in DOCUMENTATION:
+        text = (ROOT / relative).read_text(encoding="utf-8")
+        for match in re.finditer(r"--version[= ]+(" + VERSION_RE + r")", text):
+            stale.append(f'{relative} uses --version {match.group(1)}; use --version "$VERSION"')
+    return stale
+
+
 def version_code(version: str) -> int:
     major, minor, patch = (int(part) for part in version.split("."))
     if major > 2100 or minor > 999 or patch > 999:
@@ -73,6 +106,7 @@ def version_code(version: str) -> int:
 def check_versions() -> str:
     found = versions()
     expected = found["release.json"]
+    found.update(documentation_versions())
     mismatches = [f"{path}={value}" for path, value in found.items() if value != expected]
     android_code = int(extract(r"versionCode = ([0-9]+)", ROOT / "android/app/build.gradle.kts"))
     if android_code != version_code(expected):
@@ -81,6 +115,9 @@ def check_versions() -> str:
         )
     if mismatches:
         fail("version mismatch: " + ", ".join(mismatches))
+    stale = documentation_literals()
+    if stale:
+        fail("unsynchronizable documented version: " + "; ".join(stale))
     print(expected)
     return expected
 
@@ -137,6 +174,10 @@ def sync_versions(version: str) -> None:
     gradle = ROOT / "android/app/build.gradle.kts"
     replace_once(gradle, r"versionCode = [0-9]+", f"versionCode = {version_code(version)}")
     replace_once(gradle, r'versionName = "' + VERSION_RE + r'"', f'versionName = "{version}"')
+    for relative in DOCUMENTATION:
+        path = ROOT / relative
+        if re.search(DOCUMENTATION_VERSION_RE, path.read_text(encoding="utf-8"), re.MULTILINE):
+            replace_once(path, DOCUMENTATION_VERSION_RE, f"VERSION={version}")
     check_versions()
 
 

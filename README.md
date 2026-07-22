@@ -62,42 +62,89 @@ does not provide authority fallback. See
 
 ## Production install
 
-Installing all four pieces — backend, desktop, Android, and an optional
-capability node — in the order that avoids circular prerequisites is walked
-through in [`docs/installation.md`](docs/installation.md).
+Only the backend is required; the desktop client, Android, and a capability node
+are optional and each needs a backend to talk to first. Installing all four in
+the order that avoids circular prerequisites is walked through in
+[`docs/installation.md`](docs/installation.md).
 
-The coordinated artifact and verification contract is documented in
-[`docs/releases.md`](docs/releases.md). The supported operational topology,
-backup, recovery, upgrade, and replacement procedures are in
-[`docs/deployment.md`](docs/deployment.md).
+### 1. Prerequisites
 
-Pin a release, download its installer without executing it, verify its GitHub artifact
-attestation, and only then run it. This establishes a provenance path independent of the
-SHA256 list delivered with the release and never executes a script from `main`.
+[`uv`](https://docs.astral.sh/uv/) provisions the managed Python 3.11 runtime,
+and [GitHub CLI](https://cli.github.com/) verifies release attestations. The
+installer fails closed without either, so install them first:
 
 ```bash
-VERSION=0.1.0
-curl --proto '=https' --tlsv1.2 --fail --location --remote-name "https://github.com/daxrpm/dax-assistant/releases/download/v$VERSION/install.sh"
+curl -LsSf https://astral.sh/uv/install.sh | sh   # uv
+sudo dnf install gh                               # Fedora/RHEL
+sudo apt-get install gh                           # Debian/Ubuntu
+gh auth login                                     # attestation lookups need an authenticated gh
+```
+
+### 2. Install
+
+Download the installer as data, verify its GitHub artifact attestation, and only
+then execute it. This establishes a provenance path independent of the SHA256
+list delivered with the release, and never pipes a script from `main` into a
+shell:
+
+```bash
+curl --proto '=https' --tlsv1.2 --fail --location --remote-name \
+  "https://github.com/daxrpm/dax-assistant/releases/latest/download/install.sh"
+gh attestation verify install.sh --repo daxrpm/dax-assistant
+bash install.sh --both
+```
+
+The installer resolves the newest published release on its own — you do not need
+to know or type a version number.
+
+### 3. Confirm
+
+```bash
+bash install.sh list                  # installed releases and service state
+systemctl --user status dax-assistant
+```
+
+Then open **http://127.0.0.1:8420**, create the login password, and configure
+providers, integrations, voice, and MCP servers from Settings.
+
+### Choosing components
+
+`--both` is the default. Use `--backend-only` for a headless server,
+`--desktop-only` on a second machine that only needs the client, and
+`--node-only` for a laptop that lends tools without hosting authority.
+`--node-only` installs a separate capability runtime and
+`dax-assistant-node.service` without installing or starting an authoritative
+backend, and deliberately leaves the node disabled. Native Desktop can enrol the
+machine without a terminal; `dax edge enroll` remains the browser/headless
+fallback. Enable the unit only after `edge.json` exists.
+
+The authoritative backend is always enabled and started when selected. The Linux
+installer selects the release's RPM or deb for the current host. It never
+downloads or installs the Android APK, which is a separate signed release asset.
+
+### Pinning a version
+
+Reproducible installs, staged rollouts, and downgrades pin an immutable tag.
+This is the exception, not the normal path:
+
+```bash
+VERSION=0.1.2
+curl --proto '=https' --tlsv1.2 --fail --location --remote-name \
+  "https://github.com/daxrpm/dax-assistant/releases/download/v$VERSION/install.sh"
 gh attestation verify install.sh --repo daxrpm/dax-assistant
 bash install.sh --version "$VERSION" --both
 ```
 
-Use `--backend-only`, `--desktop-only`, `--node-only`, or `--both` (the default).
-`--node-only` installs a separate capability runtime and `dax-assistant-node.service` without
-installing or starting an authoritative backend. It deliberately leaves the node disabled.
-Native Desktop can enrol the machine without a terminal; `dax edge enroll` remains the
-browser/headless fallback. Enable the unit only after `edge.json` exists.
-The authoritative backend is always enabled and started when selected. The Linux installer
-selects the release's RPM or deb for the current host. It never downloads or installs the
-Android APK, which is a separate signed release asset.
+### What the installer verifies
 
-The installer verifies GitHub attestations for the manifest and every selected artifact with
+It verifies GitHub attestations for the manifest and every selected artifact with
 `gh attestation verify --repo daxrpm/dax-assistant`, then independently checks SHA256 and size.
 It also confirms that manifest version/commit identify the selected tag. It fails closed if
 attestation verification is unavailable or fails. `--insecure-skip-attestation` is an explicit,
 loudly warned emergency bypass and is not a safe installation path. Backend dependencies come
 from the manifested, frozen uv export and are installed with hash enforcement rather than
-open-ended `pyproject.toml` resolution. `--dry-run` performs all downloads and verification.
+open-ended `pyproject.toml` resolution. `--dry-run` performs all downloads and verification
+without installing anything.
 
 For development only, an existing checkout can be installed with
 `bash scripts/install.sh --source "$PWD" --backend-only`. This mode runs `uv sync --frozen`,
@@ -123,17 +170,33 @@ preserved across versioned installs.
 ```bash
 systemctl --user status dax-assistant
 journalctl --user -u dax-assistant -f
-bash install.sh --version 0.1.1 --both  # verified upgrade to another immutable tag
+
+bash install.sh --both              # upgrade to the newest release
+bash install.sh list                # installed releases, active one, service state
+bash install.sh rollback            # back to the previous installed release
+bash install.sh rollback 0.1.1      # back to a specific installed release
+bash install.sh uninstall           # remove services and releases, keep the database
+bash install.sh uninstall --purge   # also delete the database and key, irreversibly
 ```
+
+`list`, `rollback`, and `uninstall` act only on already-installed local releases.
+They never reach the network and do not need `gh`.
 
 Backend upgrades create a timestamped database/key backup under
 `~/.local/state/dax-assistant/backups`, install into a versioned environment, move the
 `current` link, and restart the service. The installer waits for authoritative readiness and
 restores the previous link/service if the deadline expires. An active capability node blocks
 the update until you stop it explicitly, so it cannot silently jump to a new shared runtime.
-To restore a local-key
-installation manually, stop the service and copy a matching `.db` and `.key` backup pair
-over `dax.db` and `dax.key` before restarting it. Never restore one without the other.
+After a successful upgrade the three newest releases are kept and older ones are pruned;
+`--keep N` changes that budget, and the active release is never a deletion candidate.
+
+`rollback` re-points the `current` link at an installed release and restarts the service,
+taking a backup first and restoring the previous target if the older release does not become
+ready. Understand the one risk it cannot remove: schema migrations are forward-only, so a
+database already migrated by a newer release may not open under older code. If it does not
+start, restore the matching backup pair. To restore a local-key installation manually, stop
+the service and copy a matching `.db` and `.key` backup pair over `dax.db` and `dax.key`
+before restarting it. Never restore one without the other.
 
 For external key management, set `DAX_MASTER_KEY` in the service environment and keep it
 separate from the database. The value must be the same Fernet key on every restart and

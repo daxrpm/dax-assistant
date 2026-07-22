@@ -9,16 +9,31 @@ installer, and a release manifest.
 
 ## Verified Linux Install
 
-Pin an immutable tag, download the installer as data, and verify its GitHub
-artifact attestation before executing it:
+Download the installer as data and verify its GitHub artifact attestation before
+executing it. The installer resolves the newest published release on its own:
 
 ```bash
-VERSION=0.1.0
+curl --proto '=https' --tlsv1.2 --fail --location --remote-name \
+  "https://github.com/daxrpm/dax-assistant/releases/latest/download/install.sh"
+gh attestation verify install.sh --repo daxrpm/dax-assistant
+bash install.sh --both
+```
+
+Pin an immutable tag when an install must be reproducible or must downgrade:
+
+```bash
+VERSION=0.1.2
 curl --proto '=https' --tlsv1.2 --fail --location --remote-name \
   "https://github.com/daxrpm/dax-assistant/releases/download/v$VERSION/install.sh"
 gh attestation verify install.sh --repo daxrpm/dax-assistant
 bash install.sh --version "$VERSION" --both
 ```
+
+`release.json` is the single source of truth for the version.
+`scripts/release.py sync X.Y.Z` propagates it to every product manifest and to
+the pinned example on this page; `scripts/release.py check` fails the build when
+any of them disagree, which is what keeps documented install commands from
+naming a release that is no longer current.
 
 The installer then downloads the attested release manifest, verifies its tag,
 commit, compatibility metadata, and attestation, and verifies attestation,
