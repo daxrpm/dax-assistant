@@ -221,10 +221,10 @@ choose_components() {
                 ;;
             k) (( cursor = (cursor - 1 + count) % count )) ;;
             j) (( cursor = (cursor + 1) % count )) ;;
-            " ") picked[$cursor]=$(( 1 - picked[cursor] )) ;;
+            " ") picked[cursor]=$(( 1 - picked[cursor] )) ;;
             [1-9])
                 index=$(( key - 1 ))
-                (( index < count )) && picked[$index]=$(( 1 - picked[index] ))
+                (( index < count )) && picked[index]=$(( 1 - picked[index] ))
                 ;;
             "") break ;;
             q|$'\x03') printf '\033[?25h'; die "cancelled" ;;
@@ -294,12 +294,13 @@ ensure_uv() {
 }
 
 package_kind() {
-    local id="" like=""
+    local identity=""
     if [[ -r "$OS_RELEASE_FILE" ]]; then
-        id=$(. "$OS_RELEASE_FILE" && printf '%s' "${ID:-}")
-        like=$(. "$OS_RELEASE_FILE" && printf '%s' "${ID_LIKE:-}")
+        # Sourced in a subshell so the file's variables never leak into ours.
+        # shellcheck disable=SC1090  # the path is a test seam, not a constant
+        identity=$(. "$OS_RELEASE_FILE" && printf '%s %s' "${ID:-}" "${ID_LIKE:-}")
     fi
-    case " $id $like " in
+    case " $identity " in
         *fedora*|*rhel*|*centos*) printf 'rpm' ;;
         *debian*|*ubuntu*) printf 'deb' ;;
         *) printf '' ;;
@@ -352,8 +353,8 @@ install_audio_libraries() {
         sudo dnf install -y portaudio libsndfile espeak-ng \
             || die "could not install the audio libraries"
     elif [[ "$kind" == "deb" ]]; then
-        sudo apt-get update -qq \
-            && sudo apt-get install -y libportaudio2 libsndfile1 espeak-ng \
+        sudo apt-get update -qq || die "could not refresh the package lists"
+        sudo apt-get install -y libportaudio2 libsndfile1 espeak-ng \
             || die "could not install the audio libraries"
     else
         warn "Unrecognised distribution; install portaudio, libsndfile and espeak-ng yourself."
@@ -525,7 +526,8 @@ sys.exit(0 if (
 # A first start downloads Whisper and Piper voice models, which is why the
 # default deadline is minutes rather than seconds.
 wait_for_backend() {
-    local deadline=$((SECONDS + READINESS_TIMEOUT)) spin='|/-\' i=0 started=$SECONDS
+    local deadline=$((SECONDS + READINESS_TIMEOUT)) i=0 started=$SECONDS
+    local frames='|/-+'
     while (( SECONDS < deadline )); do
         unit_active dax-assistant.service || { [[ "$INTERACTIVE" -eq 1 ]] && printf '\r\033[2K'; return 1; }
         if backend_ready; then
@@ -534,7 +536,7 @@ wait_for_backend() {
         fi
         if [[ "$INTERACTIVE" -eq 1 ]]; then
             printf '\r\033[2K  %s%s%s starting up, this can take a few minutes on a first install (%ss)' \
-                "$CYAN" "${spin:i++%4:1}" "$RESET" "$((SECONDS - started))"
+                "$CYAN" "${frames:i++%4:1}" "$RESET" "$((SECONDS - started))"
         fi
         sleep 2
     done
@@ -733,7 +735,7 @@ install_desktop() {
     kind=$(package_kind)
     [[ -n "$kind" ]] \
         || die "unrecognised distribution; download the RPM or deb from https://github.com/$REPOSITORY/releases"
-    arch=$(uname -m)
+    arch="$MACHINE"
     [[ "$arch" == "x86_64" ]] \
         || die "the desktop package is published for x86_64 only; this machine is $arch"
 

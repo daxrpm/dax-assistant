@@ -196,6 +196,27 @@ def test_a_release_without_the_host_architecture_is_refused(tmp_path: Path) -> N
     assert result.returncode != 0
 
 
+def test_the_desktop_package_is_refused_on_an_unpublished_architecture(
+    tmp_path: Path,
+) -> None:
+    # The release carries x86_64 packages; this host is not x86_64. Exercises the
+    # architecture check itself rather than artifact lookup falling short.
+    manifest, checksums = _release_fixture(tmp_path, arch="x86_64")
+    result = _run_installer(
+        tmp_path,
+        "--desktop",
+        "--yes",
+        "--dry-run",
+        arch="aarch64",
+        manifest=manifest,
+        checksums=checksums,
+        check=False,
+    )
+    assert result.returncode != 0
+    assert "x86_64 only" in result.stderr
+    assert "aarch64" in result.stderr
+
+
 def test_a_tampered_manifest_is_rejected(tmp_path: Path) -> None:
     manifest, checksums = _release_fixture(tmp_path)
     checksums.write_text(f"{'0' * 64}  release-manifest.json\n", encoding="utf-8")
