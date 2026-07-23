@@ -649,9 +649,7 @@ fn is_private_host(host: Option<Host<&str>>) -> bool {
             // fc00::/7 unique-local and fe80::/10 link-local.
             let first = ip.octets()[0];
             let second = ip.octets()[1];
-            ip.is_loopback()
-                || first & 0xfe == 0xfc
-                || (first == 0xfe && second & 0xc0 == 0x80)
+            ip.is_loopback() || first & 0xfe == 0xfc || (first == 0xfe && second & 0xc0 == 0x80)
         }
         None => false,
     }
