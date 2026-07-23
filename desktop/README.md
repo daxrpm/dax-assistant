@@ -118,4 +118,4 @@ npm run tauri build -- --bundles deb
 RPM and deb are the supported desktop targets; AppImage and Flatpak are not
 configured. Linux packages do not contain or install the Android APK. Tagged
 release artifacts and their attestation flow are documented in
-[`../docs/releases.md`](../docs/releases.md).
+[`../README.md#install`](../README.md#install).

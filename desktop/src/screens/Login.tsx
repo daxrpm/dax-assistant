@@ -49,7 +49,9 @@ export function Login({
     try {
       const result = isSetup ? await api.setup(password) : await api.login(password);
       if (!result.ok) {
-        setError(isSetup ? t("login.setupFailed") : t("login.incorrect"));
+        // Prefer the backend's own explanation — notably that the first account
+        // must be created on the machine the backend runs on.
+        setError(result.detail ?? (isSetup ? t("login.setupFailed") : t("login.incorrect")));
         return;
       }
       if (result.token) {

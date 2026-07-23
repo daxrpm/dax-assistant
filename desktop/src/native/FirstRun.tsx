@@ -308,12 +308,24 @@ export function FirstRun({ onDone }: { onDone: () => void }) {
                 : text("Generar comando de inscripción", "Generate enrolment command")}
             </Button>
             {isTauriRuntime() && nodeEnrollment?.enrolled && (
-              <p className={s.hint}>
-                {text("Inscrito como", "Enrolled as")} <strong>{nodeEnrollment.node_name}</strong>
-                {nodeService
-                  ? ` · dax-assistant-node.service: ${nodeService.active_state}, ${nodeService.unit_file_state}`
-                  : ` · ${text("estado del servicio no disponible", "service status unavailable")}`}
-              </p>
+              <>
+                <p className={s.hint}>
+                  {text("Inscrito como", "Enrolled as")} <strong>{nodeEnrollment.node_name}</strong>
+                  {nodeService
+                    ? ` · dax-assistant-node.service: ${nodeService.active_state}, ${nodeService.unit_file_state}`
+                    : ` · ${text("estado del servicio no disponible", "service status unavailable")}`}
+                </p>
+                {/* Node policy is deliberately not editable here: it is owned by
+                    the backend and keyed by device, so it belongs with the rest
+                    of the fleet rather than in a one-off first-run screen. This
+                    at least says where it lives. */}
+                <p className={s.hint}>
+                  {text(
+                    "Qué ejecuta este nodo — herramientas, shell, inferencia y síntesis de voz para el móvil — se ajusta en Ajustes → Capacidades → Nodos.",
+                    "What this node runs — tools, shell, inference, and mobile speech synthesis — is set under Settings → Capabilities → Capability nodes.",
+                  )}
+                </p>
+              </>
             )}
             {nodeCommand && (
               <>

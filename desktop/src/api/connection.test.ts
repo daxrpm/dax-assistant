@@ -42,16 +42,42 @@ describe("validateBaseUrl", () => {
     expect(validateBaseUrl(" http://localhost:8420/// ")).toBe("http://localhost:8420");
   });
 
-  it("requires HTTPS remotely", () => {
-    expect(() => validateBaseUrl("http://example.com")).toThrow(/HTTPS/);
+  it("requires HTTPS for a public host", () => {
+    expect(() => validateBaseUrl("http://example.com")).toThrow(/private address/);
     expect(validateBaseUrl("https://example.com/")).toBe("https://example.com");
     expect(() => validateBaseUrl("https://example.com/api/")).toThrow(/path/);
+  });
+
+  it("allows cleartext to a private address, matching Android and Tauri", () => {
+    expect(validateBaseUrl("http://192.168.1.50:8420")).toBe("http://192.168.1.50:8420");
+    expect(validateBaseUrl("http://10.0.0.4:8420")).toBe("http://10.0.0.4:8420");
+    expect(validateBaseUrl("http://172.16.0.1:8420")).toBe("http://172.16.0.1:8420");
+    expect(validateBaseUrl("http://172.31.255.254:8420")).toBe("http://172.31.255.254:8420");
+    expect(validateBaseUrl("http://[fd00::1]:8420")).toBe("http://[fd00::1]:8420");
+  });
+
+  it("allows the overlay range Tailscale assigns from", () => {
+    expect(validateBaseUrl("http://100.64.0.2:8420")).toBe("http://100.64.0.2:8420");
+    expect(validateBaseUrl("http://100.127.255.254:8420")).toBe("http://100.127.255.254:8420");
+    // 100.63 and 100.128 bracket RFC 6598.
+    expect(() => validateBaseUrl("http://100.63.0.1:8420")).toThrow(/private address/);
+    expect(() => validateBaseUrl("http://100.128.0.1:8420")).toThrow(/private address/);
+  });
+
+  it("keeps cleartext off addresses that can route publicly", () => {
+    // 172.15 and 172.32 bracket the private range; a DNS name never qualifies
+    // because it can be repointed at a public address.
+    expect(() => validateBaseUrl("http://172.15.0.1:8420")).toThrow(/private address/);
+    expect(() => validateBaseUrl("http://172.32.0.1:8420")).toThrow(/private address/);
+    expect(() => validateBaseUrl("http://8.8.8.8:8420")).toThrow(/private address/);
+    expect(() => validateBaseUrl("http://home-server:8420")).toThrow(/private address/);
+    expect(() => validateBaseUrl("http://[2001:db8::1]:8420")).toThrow(/private address/);
   });
 
   it("rejects credentials, queries and non-HTTP protocols", () => {
     expect(() => validateBaseUrl("https://user:secret@example.com")).toThrow(/credentials/);
     expect(() => validateBaseUrl("https://example.com?q=1")).toThrow(/query/);
-    expect(() => validateBaseUrl("file:///tmp/dax")).toThrow(/HTTPS/);
+    expect(() => validateBaseUrl("file:///tmp/dax")).toThrow(/private address|scheme/);
   });
 
   it("classifies only explicit loopback hosts as local", () => {

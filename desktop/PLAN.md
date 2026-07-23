@@ -439,7 +439,7 @@ Only mark these complete after the stated evidence exists:
 | Native integration | `desktop/src-tauri/src/*.rs`, `desktop/src/native/` |
 | Bundle targets | `desktop/src-tauri/tauri.conf.json` |
 | Capability nodes | `docs/capability-nodes.md`, `src/dax/capabilities/`, `src/dax/edge/` |
-| Deployment and releases | `docs/deployment.md`, `docs/releases.md` |
+| Deployment and releases | `docs/deployment.md`, `README.md` |
 
 The knowledge graph at `graphify-out/graph.json` is useful for orientation.
 Source remains implementation truth, while `docs/desktop-architecture.md` is the

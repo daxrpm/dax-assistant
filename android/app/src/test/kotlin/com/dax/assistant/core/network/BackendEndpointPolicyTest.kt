@@ -18,6 +18,16 @@ class BackendEndpointPolicyTest {
     }
 
     @Test
+    fun `allows the overlay range Tailscale assigns from`() {
+        assertEquals("http://100.64.0.2:8420", BackendEndpointPolicy.normalize("http://100.64.0.2:8420"))
+        assertTrue(BackendEndpointPolicy.isPrivateHost("100.64.0.0"))
+        assertTrue(BackendEndpointPolicy.isPrivateHost("100.127.255.255"))
+        // 100.63 and 100.128 bracket RFC 6598.
+        assertFalse(BackendEndpointPolicy.isPrivateHost("100.63.255.255"))
+        assertFalse(BackendEndpointPolicy.isPrivateHost("100.128.0.0"))
+    }
+
+    @Test
     fun `rejects public cleartext and hostname confusion`() {
         assertNull(BackendEndpointPolicy.normalize("http://example.com:8420"))
         assertNull(BackendEndpointPolicy.normalize("http://localhost.attacker.example:8420"))

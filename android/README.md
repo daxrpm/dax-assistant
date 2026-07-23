@@ -58,7 +58,7 @@ Production APKs are built only by the tagged release workflow. The release build
 the APK signature and exact signer identity. Android may only be explicitly skipped for local
 pipeline validation. CI stores signing values and the expected fingerprint as environment secrets
 and publishes the signed APK as a separate Android asset, never through the Linux installer.
-See [`../docs/releases.md`](../docs/releases.md) for coordinated artifact
+See [`../README.md#install`](../README.md#install) for coordinated artifact
 attestation and the external signing/clean-install gates.
 
 `env.sh` points at:

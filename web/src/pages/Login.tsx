@@ -45,10 +45,13 @@ export function LoginPage({
       if (res.ok) {
         onLoggedIn();
       } else {
-        setError(setup ? "Could not create the account" : "Incorrect password");
+        setError(res.detail ?? (setup ? "Could not create the account" : "Incorrect password"));
       }
-    } catch {
-      setError(setup ? "Setup failed" : "Login failed");
+    } catch (err) {
+      // The backend explains refusals it expects an operator to act on — most
+      // importantly that first-run setup must happen on the backend's own host.
+      const detail = err instanceof Error ? err.message : "";
+      setError(detail || (setup ? "Setup failed" : "Login failed"));
     } finally {
       setLoading(false);
     }

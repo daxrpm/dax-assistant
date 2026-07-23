@@ -1,27 +1,28 @@
 #!/usr/bin/env bash
-# Verified tagged-release installer for Dax on Fedora/RHEL and Debian/Ubuntu.
+#
+# Dax installer for Linux.
+#
+# Run it with no arguments: it asks what to install, installs it, creates your
+# account, and prints the address to give your other devices. Pass flags and it
+# does the same without asking.
+#
+#   bash install.sh                    choose interactively
+#   bash install.sh --backend --yes    unattended
+#   bash install.sh status|list|rollback|uninstall
+#
+# Every download is authenticated by SHA-256 against the release manifest, and
+# the manifest against the release's SHA256SUMS over TLS. If the GitHub CLI is
+# installed and logged in, build provenance is checked too — but it is never
+# required. Needing `gh auth login` to install a program is a barrier, not
+# security.
 
 set -Eeuo pipefail
-IFS=$'\n\t'
 
 REPOSITORY="${DAX_RELEASE_REPOSITORY:-daxrpm/dax-assistant}"
-GH_COMMAND="${DAX_GH_COMMAND:-gh}"
-PIN_VERSION=""
-MANIFEST_SOURCE=""
-CHECKSUMS_SOURCE=""
-COMPONENTS="both"
-WITH_NODE=0
-DRY_RUN=0
-ASSUME_YES=0
-INSECURE_SKIP_ATTESTATION=0
-SOURCE_MODE=""
-COMMAND="install"
-KEEP_RELEASES="${DAX_KEEP_RELEASES:-3}"
-PURGE_STATE=0
-ROLLBACK_VERSION=""
-OS_RELEASE_FILE="${DAX_OS_RELEASE_FILE:-/etc/os-release}"
-MACHINE="${DAX_UNAME_MACHINE:-$(uname -m)}"
 SUPPORTED_API_VERSION=1
+READINESS_TIMEOUT="${DAX_READINESS_TIMEOUT_SECONDS:-300}"
+KEEP_RELEASES="${DAX_KEEP_RELEASES:-3}"
+BACKEND_PORT=8420
 
 XDG_DATA_HOME="${XDG_DATA_HOME:-$HOME/.local/share}"
 XDG_STATE_HOME="${XDG_STATE_HOME:-$HOME/.local/state}"
@@ -37,258 +38,559 @@ NODE_CURRENT_LINK="$DATA_DIR/node-current"
 UNIT_DIR="$XDG_CONFIG_HOME/systemd/user"
 BACKEND_UNIT="$UNIT_DIR/dax-assistant.service"
 NODE_UNIT="$UNIT_DIR/dax-assistant-node.service"
-NODE_CREDENTIALS="$STATE_DIR/edge.json"
 BACKUP_DIR="$STATE_DIR/backups"
+
+COMMAND="install"
+WANT_BACKEND=0
+WANT_DESKTOP=0
+WANT_NODE=0
+SELECTION_GIVEN=0
+PIN_VERSION=""
+ASSUME_YES=0
+DRY_RUN=0
+PURGE_STATE=0
+REQUIRE_ATTESTATION=0
+SKIP_ACCOUNT=0
+ROLLBACK_VERSION=""
+SOURCE_DIR=""
+MANIFEST_SOURCE=""
+CHECKSUMS_SOURCE=""
+VERSION=""
+UV=""
+OS_RELEASE_FILE="${DAX_OS_RELEASE_FILE:-/etc/os-release}"
+MACHINE="${DAX_UNAME_MACHINE:-$(uname -m)}"
 
 TEMP_DIR=""
 cleanup() { [[ -z "$TEMP_DIR" ]] || rm -rf "$TEMP_DIR"; }
 trap cleanup EXIT
 
-info() { printf '[INFO] %s\n' "$*"; }
-die() { printf '[ERROR] %s\n' "$*" >&2; exit 1; }
+# ---------------------------------------------------------------- presentation
+
+if [[ -t 1 && -z "${NO_COLOR:-}" && "${TERM:-dumb}" != "dumb" ]]; then
+    BOLD=$'\033[1m'; DIM=$'\033[2m'; RESET=$'\033[0m'
+    RED=$'\033[31m'; GREEN=$'\033[32m'; YELLOW=$'\033[33m'
+    BLUE=$'\033[34m'; CYAN=$'\033[36m'
+else
+    BOLD=""; DIM=""; RESET=""; RED=""; GREEN=""; YELLOW=""; BLUE=""; CYAN=""
+fi
+
+INTERACTIVE=0
+[[ -t 0 && -t 1 ]] && INTERACTIVE=1
+
+step() { printf '\n%s==>%s %s%s%s\n' "$BLUE" "$RESET" "$BOLD" "$*" "$RESET"; }
+ok()   { printf '  %s✓%s %s\n' "$GREEN" "$RESET" "$*"; }
+note() { printf '  %s·%s %s\n' "$DIM" "$RESET" "$*"; }
+warn() { printf '  %s!%s %s\n' "$YELLOW" "$RESET" "$*" >&2; }
+die()  { printf '\n%sError:%s %s\n\n' "$RED" "$RESET" "$*" >&2; exit 1; }
 
 usage() {
-    cat <<'EOF'
-Dax verified Linux release installer
+    cat <<EOF
+${BOLD}Dax installer${RESET}
 
-Usage:
-  bash install.sh [install] [--backend-only|--desktop-only|--node-only|--both] [options]
-  bash install.sh list
-  bash install.sh rollback [VERSION] [--yes] [--dry-run]
-  bash install.sh uninstall [--purge] [--yes] [--dry-run]
+  bash install.sh [COMMAND] [OPTIONS]
 
-Install selects the newest published release. Pin one only when you need a
-specific immutable tag, a downgrade, or a reproducible install.
+${BOLD}Commands${RESET}
+  install             Install or upgrade (default)
+  status              What is installed, and whether it is running
+  list                Installed releases
+  rollback [VERSION]  Switch the backend to an installed release and restart
+  uninstall           Remove services, units, and releases
 
-Release options:
-  --version VERSION       Pin an immutable release (for example 0.1.2)
-  --manifest PATH|URL     Use an explicit release-manifest.json
-  --checksums PATH|URL    SHA256SUMS authenticating the explicit manifest
-  --backend-only          Install and start the authoritative backend only
-  --desktop-only          Install the RPM/deb desktop client only
-  --node-only             Install only the capability-node runtime and unit
-  --both                  Install backend and desktop (default)
-  --with-node             Also install the laptop capability-node unit; never enable/start it
-  --keep N                Retain the N newest backend releases after installing (default 3)
-  --dry-run               Download and verify assets, then print installation actions
-  --yes                   Do not prompt
-  --insecure-skip-attestation
-                          UNSAFE: bypass GitHub artifact attestation verification
+${BOLD}What to install${RESET} (omit to be asked)
+  --backend           The server: SQLite, config, conversations, LLM routing
+  --desktop           The desktop client (RPM or deb)
+  --node              Capability-node runtime; installed stopped
+  --all               Backend and desktop
 
-Lifecycle commands operate on already-installed local releases. They never reach
-the network and never need `gh`:
-  list                    Show installed backend and node releases, marking the active one
-  rollback [VERSION]      Point the backend at an installed release and restart it.
-                          Defaults to the newest installed release that is not active.
-  uninstall               Stop and remove the services, units, and installed releases.
-                          Keeps the database, key, and backups unless --purge is given.
-  --purge                 With uninstall: also delete state, including the database and key
+${BOLD}Options${RESET}
+  --version VERSION   Pin a release instead of taking the newest
+  --yes, -y           Never prompt; installs backend and desktop if unspecified
+  --dry-run           Download and verify, then stop without changing anything
+  --no-account        Skip first-run account creation
+  --require-attestation
+                      Fail unless GitHub build provenance verifies
+  --keep N            Keep the N newest backend releases (default $KEEP_RELEASES)
+  --purge             With uninstall: also delete the database and secret key
+  --source PATH       Development: install the backend from a checkout
+  -h, --help          This text
 
-Development mode:
-  --source PATH           Install the backend from an existing checkout with `uv sync`.
-                          This mode never clones a branch and does not install desktop packages.
+Environment: DAX_RELEASE_REPOSITORY, DAX_KEEP_RELEASES,
+DAX_READINESS_TIMEOUT_SECONDS, NO_COLOR.
 
-This Linux installer never downloads or installs the Android APK.
+Android is distributed separately and is never installed from here.
 EOF
 }
 
+# --------------------------------------------------------------- argument pass
+
 case "${1:-}" in
-    install) COMMAND="install"; shift ;;
-    list) COMMAND="list"; shift ;;
-    rollback) COMMAND="rollback"; shift ;;
-    uninstall) COMMAND="uninstall"; shift ;;
+    install|status|list|rollback|uninstall) COMMAND="$1"; shift ;;
+    -h|--help) usage; exit 0 ;;
 esac
+
 while [[ $# -gt 0 ]]; do
     case "$1" in
+        --backend) WANT_BACKEND=1; SELECTION_GIVEN=1 ;;
+        --desktop) WANT_DESKTOP=1; SELECTION_GIVEN=1 ;;
+        --node)    WANT_NODE=1;    SELECTION_GIVEN=1 ;;
+        --all)     WANT_BACKEND=1; WANT_DESKTOP=1; SELECTION_GIVEN=1 ;;
         --version) PIN_VERSION="${2:-}"; shift ;;
         --manifest) MANIFEST_SOURCE="${2:-}"; shift ;;
         --checksums) CHECKSUMS_SOURCE="${2:-}"; shift ;;
-        --backend-only) COMPONENTS="backend" ;;
-        --desktop-only) COMPONENTS="desktop" ;;
-        --node-only) COMPONENTS="node"; WITH_NODE=1 ;;
-        --both) COMPONENTS="both" ;;
-        --with-node) WITH_NODE=1 ;;
-        --keep) KEEP_RELEASES="${2:-}"; shift ;;
-        --purge) PURGE_STATE=1 ;;
-        --source) SOURCE_MODE="${2:-}"; shift ;;
+        --keep)    KEEP_RELEASES="${2:-}"; shift ;;
+        --source)  SOURCE_DIR="${2:-}"; shift ;;
+        --yes|-y)  ASSUME_YES=1 ;;
         --dry-run) DRY_RUN=1 ;;
-        --yes|-y) ASSUME_YES=1 ;;
-        --insecure-skip-attestation) INSECURE_SKIP_ATTESTATION=1 ;;
-        --help|-h) usage; exit 0 ;;
+        --purge)   PURGE_STATE=1 ;;
+        --no-account) SKIP_ACCOUNT=1 ;;
+        --require-attestation) REQUIRE_ATTESTATION=1 ;;
+        -h|--help) usage; exit 0 ;;
+        -*) die "unknown option: $1  (try --help)" ;;
         *)
-            [[ "$COMMAND" == "rollback" && -z "$ROLLBACK_VERSION" && "$1" != -* ]] \
-                || die "unknown option: $1"
+            [[ "$COMMAND" == "rollback" && -z "$ROLLBACK_VERSION" ]] \
+                || die "unexpected argument: $1"
             ROLLBACK_VERSION="$1"
             ;;
     esac
     shift
 done
 
-[[ "$(uname -s)" == "Linux" ]] || die "Linux is required"
-[[ "$EUID" -ne 0 ]] || die "run as the desktop user, not root"
-[[ "$PIN_VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ || -z "$PIN_VERSION" ]] || die "--version must be MAJOR.MINOR.PATCH"
-[[ "$WITH_NODE" -eq 0 || "$COMPONENTS" != "desktop" ]] || die "--with-node cannot be combined with --desktop-only; use --node-only"
-[[ -z "$SOURCE_MODE" || "$COMPONENTS" == "backend" ]] || die "--source supports --backend-only only"
-[[ "$KEEP_RELEASES" =~ ^[0-9]+$ && "$KEEP_RELEASES" -ge 1 ]] || die "--keep must be a positive integer"
-[[ "$PURGE_STATE" -eq 0 || "$COMMAND" == "uninstall" ]] || die "--purge supports the uninstall command only"
-[[ -z "$ROLLBACK_VERSION" || "$ROLLBACK_VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || die "rollback version must be MAJOR.MINOR.PATCH"
-if [[ "$COMPONENTS" != "desktop" ]]; then
-    [[ "$XDG_DATA_HOME" == "$HOME/.local/share" && "$XDG_STATE_HOME" == "$HOME/.local/state" && "$XDG_CACHE_HOME" == "$HOME/.cache" && "$XDG_CONFIG_HOME" == "$HOME/.config" ]] || die "backend installation uses the canonical user-systemd assets and requires the default XDG directories"
-fi
+[[ "$(uname -s)" == "Linux" ]] || die "this installer is for Linux"
+[[ "$EUID" -ne 0 ]] || die "run as your own user, not root; Dax installs into your home directory"
+[[ "$PURGE_STATE" -eq 0 || "$COMMAND" == "uninstall" ]] \
+    || die "--purge only applies to uninstall"
+[[ -z "$PIN_VERSION" || "$PIN_VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] \
+    || die "--version expects a release like 0.2.0, got '$PIN_VERSION'"
+[[ -z "$ROLLBACK_VERSION" || "$ROLLBACK_VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] \
+    || die "rollback expects a release like 0.2.0, got '$ROLLBACK_VERSION'"
+[[ "$KEEP_RELEASES" =~ ^[1-9][0-9]*$ ]] \
+    || die "--keep expects a positive number, got '$KEEP_RELEASES'"
 
-# Architecture and distribution select release artifacts. The lifecycle commands
-# act only on already-installed local releases, so they must not fail on a host
-# this installer would refuse to install onto.
-ARCH=""
-DISTRO=""
-if [[ "$COMMAND" == "install" ]]; then
-    case "$MACHINE" in
-        x86_64|amd64) ARCH="x86_64" ;;
-        aarch64|arm64) ARCH="aarch64" ;;
-        *) die "unsupported architecture: $MACHINE" ;;
-    esac
+# ------------------------------------------------------------------- utilities
 
-    [[ -r "$OS_RELEASE_FILE" ]] || die "cannot identify Linux distribution"
-    # shellcheck disable=SC1090
-    source "$OS_RELEASE_FILE"
-    FAMILY="${ID_LIKE:-${ID:-}}"
-    if [[ "${ID:-}" == "fedora" || "${ID:-}" == "rhel" || "$FAMILY" == *fedora* || "$FAMILY" == *rhel* ]]; then
-        DISTRO="rpm"
-    elif [[ "${ID:-}" == "debian" || "${ID:-}" == "ubuntu" || "$FAMILY" == *debian* ]]; then
-        DISTRO="deb"
-    else
-        die "unsupported distribution: ${ID:-unknown}; use Fedora/RHEL or Debian/Ubuntu"
-    fi
-fi
+have() { command -v "$1" >/dev/null 2>&1; }
 
-print_layout() {
-    printf 'Components:   %s\nArchitecture: %s\nDistribution: %s\nReleases:     %s\nState:        %s\nBackend unit: %s\nNode unit:    %s\n' \
-        "$COMPONENTS" "$ARCH" "$DISTRO" "$RELEASES_DIR" "$STATE_DIR" "$BACKEND_UNIT" "$NODE_UNIT"
+confirm() {
+    local prompt="$1" reply
+    [[ "$ASSUME_YES" -eq 1 ]] && return 0
+    [[ "$INTERACTIVE" -eq 1 ]] || die "$prompt — refusing to assume without a terminal; pass --yes"
+    printf '  %s?%s %s [y/N] ' "$YELLOW" "$RESET" "$prompt"
+    read -r reply
+    [[ "$reply" =~ ^[Yy]$ ]]
 }
 
+# Interactive multi-select: arrows or j/k move, space toggles, enter confirms.
+# Number keys also toggle, so a terminal that swallows escape sequences never
+# turns this into a dead end.
+choose_components() {
+    local labels=(
+        "Backend            the server; every client connects to it"
+        "Desktop client     the app for this machine"
+        "Capability node    lend this machine's tools to a backend elsewhere"
+    )
+    local picked=(1 0 0) cursor=0 key rest index
+    local count=${#labels[@]} i
+
+    printf '\n  %sWhat should I install?%s\n' "$BOLD" "$RESET"
+    printf '  %s↑↓ move · space toggle · enter confirm · q quit%s\n\n' "$DIM" "$RESET"
+
+    printf '\033[?25l'
+    local drawn=0
+    while true; do
+        [[ "$drawn" -eq 0 ]] || printf '\033[%dA' "$count"
+        drawn=1
+        for (( i = 0; i < count; i++ )); do
+            local mark="[ ]" pointer="  " colour=""
+            [[ "${picked[$i]}" -eq 1 ]] && mark="[${GREEN}x${RESET}]"
+            if [[ "$i" -eq "$cursor" ]]; then
+                pointer="${CYAN}❯${RESET} "
+                colour="$BOLD"
+            fi
+            printf '\033[2K  %s%s %s%s%s\n' "$pointer" "$mark" "$colour" "${labels[$i]}" "$RESET"
+        done
+
+        IFS= read -rsn1 key || break
+        case "$key" in
+            $'\x1b')
+                rest=""
+                read -rsn2 -t 0.05 rest || true
+                case "$rest" in
+                    "[A") (( cursor = (cursor - 1 + count) % count )) ;;
+                    "[B") (( cursor = (cursor + 1) % count )) ;;
+                esac
+                ;;
+            k) (( cursor = (cursor - 1 + count) % count )) ;;
+            j) (( cursor = (cursor + 1) % count )) ;;
+            " ") picked[$cursor]=$(( 1 - picked[cursor] )) ;;
+            [1-9])
+                index=$(( key - 1 ))
+                (( index < count )) && picked[$index]=$(( 1 - picked[index] ))
+                ;;
+            "") break ;;
+            q|$'\x03') printf '\033[?25h'; die "cancelled" ;;
+        esac
+    done
+    printf '\033[?25h'
+
+    WANT_BACKEND="${picked[0]}"
+    WANT_DESKTOP="${picked[1]}"
+    WANT_NODE="${picked[2]}"
+}
+
+# The address other devices should use. Clients accept cleartext only to a
+# private literal, so a name like `home-server` is deliberately not offered:
+# it would be rejected on the other end.
+lan_address() {
+    local address=""
+    if have ip; then
+        address=$(ip -4 -oneline route get 1.1.1.1 2>/dev/null \
+            | sed -n 's/.*[[:space:]]src[[:space:]]\([0-9.]*\).*/\1/p' | head -1)
+    fi
+    case "$address" in
+        10.*|192.168.*|172.1[6-9].*|172.2[0-9].*|172.3[01].*) printf '%s' "$address" ;;
+        *) printf '' ;;
+    esac
+}
+
+# Remote sources are HTTPS only. Local paths are accepted so a mirrored or
+# air-gapped release can be installed from disk via --manifest.
 fetch() {
-    local source="$1" destination="$2"
-    case "$source" in
-        https://*) curl --proto '=https' --tlsv1.2 --fail --location --silent --show-error "$source" -o "$destination" ;;
-        file://*) cp "${source#file://}" "$destination" ;;
-        /*|./*|../*) cp "$source" "$destination" ;;
-        *) die "refusing non-HTTPS URL: $source" ;;
+    case "$1" in
+        https://*)
+            curl --proto '=https' --tlsv1.2 --fail --silent --show-error --location \
+                --retry 3 --retry-delay 1 --output "$2" "$1" || die "download failed: $1"
+            ;;
+        file://*) cp "${1#file://}" "$2" || die "cannot read $1" ;;
+        /*) cp "$1" "$2" || die "cannot read $1" ;;
+        *) die "refusing a source that is neither HTTPS nor a local path: $1" ;;
     esac
 }
 
-verify_file() {
-    local path="$1" expected="$2" actual
-    actual="$(sha256sum "$path" | cut -d ' ' -f 1)"
-    [[ "$actual" == "$expected" ]] || die "SHA256 mismatch for $(basename "$path"): expected $expected, got $actual"
+# ------------------------------------------------------------------ dependency
+
+ensure_base_tools() {
+    local missing=()
+    local tool
+    for tool in curl sha256sum python3 systemctl; do
+        have "$tool" || missing+=("$tool")
+    done
+    [[ ${#missing[@]} -eq 0 ]] || die "missing required commands: ${missing[*]}"
 }
 
-verify_manifest_checksum() {
-    local expected="" hash name
-    while IFS=' ' read -r hash name; do
-        [[ -n "$name" ]] || continue
-        name="${name# }"
-        name="${name#\*}"
-        [[ "$name" != "release-manifest.json" ]] || expected="$hash"
-    done < "$TEMP_DIR/SHA256SUMS"
-    [[ "$expected" =~ ^[0-9a-f]{64}$ ]] || die "SHA256SUMS has no release-manifest.json entry"
-    verify_file "$TEMP_DIR/release-manifest.json" "$expected"
+ensure_uv() {
+    if have uv; then UV=$(command -v uv); return; fi
+    if [[ -x "$HOME/.local/bin/uv" ]]; then UV="$HOME/.local/bin/uv"; return; fi
+
+    step "Installing uv"
+    note "uv provides the Python 3.11 runtime and virtualenv the backend needs."
+    confirm "Download uv from astral.sh and install it into ~/.local/bin?" \
+        || die "uv is required; install it yourself from https://docs.astral.sh/uv/ and re-run"
+    curl --proto '=https' --tlsv1.2 --fail --silent --show-error --location \
+        https://astral.sh/uv/install.sh | sh >/dev/null 2>&1 \
+        || die "could not install uv automatically; install it from https://docs.astral.sh/uv/"
+    [[ -x "$HOME/.local/bin/uv" ]] || die "uv did not install into ~/.local/bin"
+    UV="$HOME/.local/bin/uv"
+    ok "uv installed"
 }
 
-verify_attestation() {
-    local path="$1"
-    if [[ "$INSECURE_SKIP_ATTESTATION" -eq 1 ]]; then
-        printf '[WARNING] INSECURE: skipping GitHub attestation verification for %s\n' "$(basename "$path")" >&2
-        return
+package_kind() {
+    local id="" like=""
+    if [[ -r "$OS_RELEASE_FILE" ]]; then
+        id=$(. "$OS_RELEASE_FILE" && printf '%s' "${ID:-}")
+        like=$(. "$OS_RELEASE_FILE" && printf '%s' "${ID_LIKE:-}")
     fi
-    command -v "$GH_COMMAND" >/dev/null 2>&1 || die "gh is required for release attestation verification; install GitHub CLI or explicitly accept the risk with --insecure-skip-attestation"
-    "$GH_COMMAND" attestation verify "$path" --repo "$REPOSITORY" >/dev/null || die "GitHub attestation verification failed for $(basename "$path")"
+    case " $id $like " in
+        *fedora*|*rhel*|*centos*) printf 'rpm' ;;
+        *debian*|*ubuntu*) printf 'deb' ;;
+        *) printf '' ;;
+    esac
 }
 
-write_selection() {
-    python3 - "$TEMP_DIR/release-manifest.json" "$TEMP_DIR/selection.tsv" "$COMPONENTS" "$DISTRO" "$ARCH" "$PIN_VERSION" "$MANIFEST_SOURCE" "$WITH_NODE" "$REPOSITORY" <<'PY'
-import json
-import re
-import sys
-from pathlib import Path
+# Without lingering, the user's systemd manager shuts down when the last session
+# ends, taking the backend with it. On a headless server that means Dax dies the
+# moment you log out of SSH — an "always-on" backend that is only on while you
+# are watching it.
+ensure_linger() {
+    local state
+    state=$(loginctl show-user "$USER" --property=Linger --value 2>/dev/null) || return 0
+    [[ "$state" != "yes" ]] || return 0
 
-manifest_path, output, components, distro, arch, pinned, source, with_node, repository = sys.argv[1:]
-data = json.loads(Path(manifest_path).read_text(encoding="utf-8"))
-if data.get("schema_version") != 1:
-    raise SystemExit("unsupported release manifest schema")
-version = data.get("version", "")
-if not re.fullmatch(r"[0-9]+\.[0-9]+\.[0-9]+", version):
-    raise SystemExit("invalid release version")
-if pinned and version != pinned:
-    raise SystemExit(f"manifest version {version} does not match --version {pinned}")
-if not re.fullmatch(r"[0-9a-f]{40}", data.get("commit", "")):
-    raise SystemExit("invalid release commit")
-compat = data.get("api_compatibility", {})
-if components == "both" and compat.get("backend") != compat.get("desktop"):
-    raise SystemExit("backend and desktop API compatibility differ")
-if not all(isinstance(compat.get(key), str) and compat[key] for key in ("backend", "desktop", "android", "capability_node")):
-    raise SystemExit("incomplete API compatibility metadata")
-
-wanted = []
-if components in {"backend", "both", "node"}:
-    wanted.extend(("backend-wheel", "backend-dependency-lock", "backend-service"))
-    if components == "node":
-        wanted.remove("backend-service")
-if with_node == "1":
-    wanted.append("node-service")
-if components in {"desktop", "both"}:
-    wanted.append("desktop-rpm" if distro == "rpm" else "desktop-deb")
-found = {}
-local_manifest = not source.startswith("https://")
-for artifact in data.get("artifacts", []):
-    role = artifact.get("role")
-    if role not in wanted:
-        continue
-    name = artifact.get("name", "")
-    url = artifact.get("url", "")
-    artifact_arch = artifact.get("arch")
-    digest = artifact.get("sha256", "")
-    size = artifact.get("size")
-    if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._+-]*", name) or Path(name).name != name:
-        raise SystemExit(f"unsafe artifact name for {role}")
-    release_base = f"https://github.com/{repository}/releases/download/v{version}/"
-    if not url.startswith(release_base) and not (local_manifest and url.startswith("file://")):
-        raise SystemExit(f"unsafe artifact URL for {role}")
-    if artifact_arch not in {"any", arch}:
-        continue
-    if not re.fullmatch(r"[0-9a-f]{64}", digest) or not isinstance(size, int) or size < 1:
-        raise SystemExit(f"invalid integrity metadata for {role}")
-    if role in found:
-        raise SystemExit(f"ambiguous {role} artifact")
-    found[role] = (name, url, artifact_arch, digest, size)
-missing = [role for role in wanted if role not in found]
-if missing:
-    raise SystemExit(f"release does not support {arch}/{distro}: {', '.join(missing)} missing")
-with Path(output).open("w", encoding="utf-8") as stream:
-    stream.write(f"version\t{version}\n")
-    stream.write(f"commit\t{data['commit']}\n")
-    for role in wanted:
-        stream.write(role + "\t" + "\t".join(str(value) for value in found[role]) + "\n")
-PY
+    if loginctl enable-linger "$USER" >/dev/null 2>&1; then
+        ok "enabled lingering so the backend keeps running after you log out"
+        return 0
+    fi
+    if sudo -n loginctl enable-linger "$USER" >/dev/null 2>&1; then
+        ok "enabled lingering so the backend keeps running after you log out"
+        return 0
+    fi
+    warn "Could not enable lingering. The backend will stop when you log out."
+    warn "Fix it with: sudo loginctl enable-linger $USER"
 }
 
-install_system_dependencies() {
-    if [[ "$DISTRO" == "rpm" ]]; then
-        sudo dnf install -y portaudio libsndfile espeak-ng
+audio_libraries_present() {
+    have espeak-ng || return 1
+    local cache
+    cache=$(ldconfig -p 2>/dev/null) || return 1
+    [[ "$cache" == *libportaudio.so* ]] || return 1
+    [[ "$cache" == *libsndfile.so* ]] || return 1
+}
+
+# Voice capture and synthesis link against these; the wheel cannot vendor them.
+install_audio_libraries() {
+    # Checked before asking, because escalating to root for packages that are
+    # already installed is exactly the friction that makes an installer painful.
+    if audio_libraries_present; then
+        note "audio libraries already present"
+        return 0
+    fi
+
+    local kind; kind=$(package_kind)
+    step "Installing audio libraries"
+    note "PortAudio, libsndfile, and espeak-ng back the voice pipeline."
+    note "This is the one step that needs administrator rights."
+    if [[ "$kind" == "rpm" ]]; then
+        sudo dnf install -y portaudio libsndfile espeak-ng \
+            || die "could not install the audio libraries"
+    elif [[ "$kind" == "deb" ]]; then
+        sudo apt-get update -qq \
+            && sudo apt-get install -y libportaudio2 libsndfile1 espeak-ng \
+            || die "could not install the audio libraries"
     else
-        sudo apt-get update
-        sudo apt-get install -y libportaudio2 libsndfile1 espeak-ng
+        warn "Unrecognised distribution; install portaudio, libsndfile and espeak-ng yourself."
+        return 0
     fi
+    ok "audio libraries present"
+}
+
+# --------------------------------------------------------------- release fetch
+
+resolve_release() {
+    TEMP_DIR=$(mktemp -d "${TMPDIR:-/tmp}/dax-install.XXXXXXXX")
+    local base
+    if [[ -n "$MANIFEST_SOURCE" ]]; then
+        [[ -n "$CHECKSUMS_SOURCE" ]] || die "--manifest also needs --checksums"
+    elif [[ -n "$PIN_VERSION" ]]; then
+        base="https://github.com/$REPOSITORY/releases/download/v$PIN_VERSION"
+        MANIFEST_SOURCE="$base/release-manifest.json"
+        CHECKSUMS_SOURCE="$base/SHA256SUMS"
+    else
+        base="https://github.com/$REPOSITORY/releases/latest/download"
+        MANIFEST_SOURCE="$base/release-manifest.json"
+        CHECKSUMS_SOURCE="$base/SHA256SUMS"
+    fi
+
+    step "Fetching release"
+    fetch "$CHECKSUMS_SOURCE" "$TEMP_DIR/SHA256SUMS"
+    fetch "$MANIFEST_SOURCE" "$TEMP_DIR/release-manifest.json"
+
+    # The manifest carries a digest for every artifact, so authenticating the
+    # manifest authenticates the entire release.
+    ( cd "$TEMP_DIR" \
+        && grep ' release-manifest.json$' SHA256SUMS | sha256sum --check --status ) \
+        || die "release-manifest.json does not match the release SHA256SUMS"
+
+    local local_manifest=0
+    [[ "$MANIFEST_SOURCE" == https://* ]] || local_manifest=1
+
+    VERSION=$(python3 - "$TEMP_DIR/release-manifest.json" "$SUPPORTED_API_VERSION" \
+              "${PIN_VERSION:-}" "$REPOSITORY" "$local_manifest" <<'PY'
+import json, re, sys
+manifest = json.load(open(sys.argv[1]))
+supported, pinned, repository = sys.argv[2], sys.argv[3], sys.argv[4]
+local_manifest = sys.argv[5] == "1"
+
+if manifest.get("schema_version") != 1:
+    raise SystemExit("unsupported release manifest schema; upgrade this installer")
+version = manifest.get("version", "")
+if not re.fullmatch(r"[0-9]+\.[0-9]+\.[0-9]+", version):
+    raise SystemExit("release manifest has no valid version")
+if pinned and pinned != version:
+    raise SystemExit(f"asked for {pinned} but the manifest describes {version}")
+if not re.fullmatch(r"[0-9a-f]{40}", manifest.get("commit", "")):
+    raise SystemExit("release manifest has no valid commit")
+
+compatibility = manifest.get("api_compatibility", {})
+if compatibility.get("backend") != supported:
+    raise SystemExit(
+        f"release {version} speaks backend API {compatibility.get('backend')}, "
+        f"this installer supports {supported}"
+    )
+
+# An artifact URL is where a download comes from, so a manifest fetched from a
+# release may only point back into that same release. A manifest handed over
+# from local disk is already as trusted as the files beside it, so it may name
+# them directly — that is what makes a mirrored or air-gapped install possible.
+expected = f"https://github.com/{repository}/releases/download/v{version}/"
+for artifact in manifest.get("artifacts", []):
+    name, url = artifact.get("name", ""), artifact.get("url", "")
+    if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._+-]*", name):
+        raise SystemExit(f"unsafe artifact name: {name!r}")
+    permitted = url.startswith(expected) or (
+        local_manifest and url.startswith(("file://", "/"))
+    )
+    if not permitted or not url.endswith("/" + name):
+        raise SystemExit(f"artifact {name} points outside release v{version}")
+    if not re.fullmatch(r"[0-9a-f]{64}", artifact.get("sha256", "")):
+        raise SystemExit(f"artifact {name} has no valid digest")
+    if not isinstance(artifact.get("size"), int) or artifact["size"] < 1:
+        raise SystemExit(f"artifact {name} has no valid size")
+print(version)
+PY
+    ) || exit 1
+
+    ok "Dax $VERSION"
+    verify_provenance "$TEMP_DIR/release-manifest.json"
+}
+
+verify_provenance() {
+    local file="$1"
+    # Build provenance attests a published release artifact. A manifest handed
+    # over from local disk was never published, so there is nothing to attest.
+    if [[ "$MANIFEST_SOURCE" != https://* ]]; then
+        [[ "$REQUIRE_ATTESTATION" -eq 0 ]] \
+            || die "--require-attestation cannot apply to a local --manifest"
+        note "Local manifest: provenance does not apply; digests verified against it."
+        return 0
+    fi
+    if ! have gh || ! gh auth status >/dev/null 2>&1; then
+        [[ "$REQUIRE_ATTESTATION" -eq 0 ]] \
+            || die "--require-attestation needs the GitHub CLI, authenticated"
+        note "Provenance not checked (no authenticated gh); digests verified over TLS."
+        return 0
+    fi
+    if gh attestation verify "$file" --repo "$REPOSITORY" >/dev/null 2>&1; then
+        ok "GitHub build provenance verified"
+    elif [[ "$REQUIRE_ATTESTATION" -eq 1 ]]; then
+        die "build provenance did not verify for $(basename "$file")"
+    else
+        warn "Build provenance did not verify; continuing on digests alone."
+    fi
+}
+
+# Download one artifact by role, verify size and digest, echo its path.
+artifact_path() {
+    local role="$1" arch="${2:-any}" line name url sha size destination
+    line=$(python3 - "$TEMP_DIR/release-manifest.json" "$role" "$arch" <<'PY'
+import json, sys
+manifest = json.load(open(sys.argv[1]))
+role, arch = sys.argv[2], sys.argv[3]
+for artifact in manifest["artifacts"]:
+    if artifact["role"] == role and artifact["arch"] in (arch, "any"):
+        print("\t".join([artifact["name"], artifact["url"],
+                         artifact["sha256"], str(artifact["size"])]))
+        break
+PY
+    )
+    [[ -n "$line" ]] || return 1
+
+    IFS=$'\t' read -r name url sha size <<<"$line"
+    destination="$TEMP_DIR/$name"
+    [[ -f "$destination" ]] || fetch "$url" "$destination"
+
+    local actual
+    actual=$(stat -c %s "$destination")
+    [[ "$actual" == "$size" ]] || die "$name is $actual bytes, the manifest says $size"
+    actual=$(sha256sum "$destination" | cut -d' ' -f1)
+    [[ "$actual" == "$sha" ]] || die "$name failed its SHA-256 check"
+
+    printf '%s' "$destination"
+}
+
+# --------------------------------------------------------------- service state
+
+unit_active()  { systemctl --user is-active --quiet "$1"; }
+unit_enabled() { systemctl --user is-enabled --quiet "$1" 2>/dev/null; }
+
+backend_ready() {
+    curl --fail --silent --max-time 5 "http://127.0.0.1:$BACKEND_PORT/api/health" 2>/dev/null \
+        | python3 -c '
+import json, sys
+try:
+    health = json.load(sys.stdin)
+except ValueError:
+    sys.exit(1)
+sys.exit(0 if (
+    health.get("status") == "ok"
+    and health.get("role") == "authoritative"
+    and health.get("api_protocol") == "dax"
+    and health.get("api_version") == int(sys.argv[1])
+    and health.get("liveness") is True
+    and health.get("readiness") is True
+    and isinstance(health.get("instance_id"), str)
+    and health["instance_id"]
+) else 1)
+' "$SUPPORTED_API_VERSION"
+}
+
+# A first start downloads Whisper and Piper voice models, which is why the
+# default deadline is minutes rather than seconds.
+wait_for_backend() {
+    local deadline=$((SECONDS + READINESS_TIMEOUT)) spin='|/-\' i=0 started=$SECONDS
+    while (( SECONDS < deadline )); do
+        unit_active dax-assistant.service || { [[ "$INTERACTIVE" -eq 1 ]] && printf '\r\033[2K'; return 1; }
+        if backend_ready; then
+            [[ "$INTERACTIVE" -eq 1 ]] && printf '\r\033[2K'
+            return 0
+        fi
+        if [[ "$INTERACTIVE" -eq 1 ]]; then
+            printf '\r\033[2K  %s%s%s starting up, this can take a few minutes on a first install (%ss)' \
+                "$CYAN" "${spin:i++%4:1}" "$RESET" "$((SECONDS - started))"
+        fi
+        sleep 2
+    done
+    [[ "$INTERACTIVE" -eq 1 ]] && printf '\r\033[2K'
+    return 1
+}
+
+# ------------------------------------------------------------- installed state
+
+installed_versions() {
+    local directory="$1" entry version
+    [[ -d "$directory" ]] || return 0
+    for entry in "$directory"/*; do
+        [[ -d "$entry" ]] || continue
+        version=$(basename "$entry")
+        [[ "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] && printf '%s\n' "$version"
+    done | sort -t. -k1,1nr -k2,2nr -k3,3nr
+}
+
+active_version() {
+    local target
+    [[ -L "$1" ]] || return 0
+    target=$(readlink -f "$1") || return 0
+    [[ -n "$target" ]] || return 0
+    basename "$target"
+}
+
+# Keep the newest few releases. The active backend and whatever the node runs
+# are never deletion candidates, whatever their age.
+prune_releases() {
+    local active node_active kept=0 version
+    active=$(active_version "$CURRENT_LINK")
+    node_active=$(active_version "$NODE_CURRENT_LINK")
+    while read -r version; do
+        [[ -n "$version" ]] || continue
+        if [[ "$version" == "$active" ]] || (( kept < KEEP_RELEASES )); then
+            kept=$((kept + 1))
+            continue
+        fi
+        [[ "$version" == "$node_active" ]] && continue
+        rm -rf "${RELEASES_DIR:?}/$version"
+        note "removed superseded release $version"
+    done < <(installed_versions "$RELEASES_DIR")
 }
 
 backup_database() {
-    local python="$1" database="$STATE_DIR/dax.db" target timestamp
-    [[ -f "$database" ]] || return 0
+    [[ -f "$STATE_DIR/dax.db" ]] || return 0
+    local stamp destination
+    stamp=$(date -u +%Y%m%dT%H%M%SZ)
+    destination="$BACKUP_DIR/dax-$stamp.db"
     install -d -m 700 "$BACKUP_DIR"
-    timestamp="$(date -u +%Y%m%dT%H%M%SZ)"
-    target="$BACKUP_DIR/dax-$timestamp.db"
-    "$python" - "$database" "$target" <<'PY'
-import sqlite3
-import sys
+    # sqlite3's backup API is the only safe copy of a live WAL database.
+    # Failing here is fatal on purpose: this backup is the entire safety net for
+    # an upgrade or a rollback, and continuing without one silently removes it.
+    python3 - "$STATE_DIR/dax.db" "$destination" <<'PY' || {
+import sqlite3, sys
 source = sqlite3.connect(sys.argv[1])
 target = sqlite3.connect(sys.argv[2])
 with target:
@@ -296,423 +598,435 @@ with target:
 source.close()
 target.close()
 PY
-    chmod 600 "$target"
-    [[ ! -f "$STATE_DIR/dax.key" ]] || install -m 600 "$STATE_DIR/dax.key" "$BACKUP_DIR/dax-$timestamp.key"
+        rm -f "$destination"
+        die "could not back up $STATE_DIR/dax.db; refusing to continue without a backup"
+    }
+    chmod 600 "$destination"
+    # The database is useless without the key that decrypts its secrets.
+    [[ ! -f "$STATE_DIR/dax.key" ]] \
+        || install -m 600 "$STATE_DIR/dax.key" "$BACKUP_DIR/dax-$stamp.key"
+    note "database backed up to $destination"
 }
 
-fixup_venv_shebangs() {
-    local old_root="$1" new_root="$2"
-    python3 - "$old_root" "$new_root" <<'PY'
-import sys
-from pathlib import Path
-
-old_root, new_root = sys.argv[1], sys.argv[2]
-old_shebang = f"#!{old_root}/.venv/bin/python\n".encode()
-new_shebang = f"#!{new_root}/.venv/bin/python\n".encode()
-bin_dir = Path(new_root) / ".venv" / "bin"
-for script in bin_dir.iterdir():
-    if not script.is_file():
-        continue
-    data = script.read_bytes()
-    if data.startswith(old_shebang):
-        script.write_bytes(new_shebang + data[len(old_shebang):])
-PY
-}
-
-write_units() {
-    local backend_asset="$1" node_asset="${2:-}"
-    install -d -m 700 "$UNIT_DIR"
-    install -m 600 "$backend_asset" "$BACKEND_UNIT"
-    if [[ "$WITH_NODE" -eq 1 ]]; then
-        [[ -n "$node_asset" ]] || die "release has no canonical node unit"
-        install -m 600 "$node_asset" "$NODE_UNIT"
-        systemctl --user disable dax-assistant-node.service >/dev/null 2>&1 || true
+restore_backend() {
+    local target="$1" was_active="$2" was_enabled="$3"
+    if [[ -n "$target" && -e "$target" ]]; then
+        ln -sfn "$target" "$CURRENT_LINK.new"
+        mv -Tf "$CURRENT_LINK.new" "$CURRENT_LINK"
+    else
+        rm -f "$CURRENT_LINK"
     fi
     systemctl --user daemon-reload
+    [[ "$was_enabled" -eq 1 ]] \
+        || systemctl --user disable dax-assistant.service >/dev/null 2>&1 || true
+    if [[ "$was_active" -eq 1 ]]; then
+        systemctl --user restart dax-assistant.service >/dev/null 2>&1 || true
+    else
+        systemctl --user stop dax-assistant.service >/dev/null 2>&1 || true
+    fi
+}
+
+# ------------------------------------------------------------------- installs
+
+build_runtime() {
+    local target="$1" wheel="$2" requirements="$3" python
+    "$UV" python install 3.11 >/dev/null 2>&1 || die "could not provision Python 3.11"
+    python=$("$UV" python find 3.11) || die "could not locate the managed Python 3.11"
+
+    # Built directly at its final path: a venv records absolute paths in its
+    # scripts, so creating it elsewhere and moving it produces broken shebangs.
+    rm -rf "$target"
+    install -d -m 700 "$target"
+    "$UV" venv --python "$python" "$target/.venv" >/dev/null 2>&1 \
+        || die "could not create the Python environment"
+    "$UV" pip install --quiet --python "$target/.venv/bin/python" \
+        --require-hashes --requirement "$requirements" \
+        || die "dependency installation failed"
+    "$UV" pip install --quiet --python "$target/.venv/bin/python" --no-deps "$wheel" \
+        || die "installing the Dax wheel failed"
+}
+
+install_backend() {
+    local target="$RELEASES_DIR/$VERSION" wheel requirements unit
+    wheel=$(artifact_path backend-wheel) || die "could not obtain the backend wheel for $VERSION"
+    requirements=$(artifact_path backend-dependency-lock) \
+        || die "could not obtain the dependency lock for $VERSION"
+    unit=$(artifact_path backend-service) || die "could not obtain the backend service unit for $VERSION"
+
+    if [[ "$DRY_RUN" -eq 1 ]]; then
+        note "would install backend $VERSION into $target"
+        return 0
+    fi
+
+    install_audio_libraries
+    ensure_linger
+
+    step "Installing the backend"
+    local previous="" was_active=0 was_enabled=0
+    [[ ! -L "$CURRENT_LINK" ]] || previous=$(readlink "$CURRENT_LINK")
+    unit_active dax-assistant.service && was_active=1
+    unit_enabled dax-assistant.service && was_enabled=1
+
+    install -d -m 700 "$RELEASES_DIR" "$STATE_DIR" "$CACHE_DIR" \
+        "$DATA_DIR/models" "$STATE_DIR/memory"
+    backup_database
+    build_runtime "$target" "$wheel" "$requirements"
+    ok "runtime built at $target"
+
+    ln -sfn "$target" "$CURRENT_LINK.new"
+    mv -Tf "$CURRENT_LINK.new" "$CURRENT_LINK"
+
+    install -d -m 700 "$UNIT_DIR"
+    install -m 600 "$unit" "$BACKEND_UNIT"
+    systemctl --user daemon-reload
+    systemctl --user enable dax-assistant.service >/dev/null 2>&1 \
+        || die "could not enable dax-assistant.service"
+    systemctl --user restart dax-assistant.service \
+        || { restore_backend "$previous" "$was_active" "$was_enabled"
+             die "dax-assistant.service failed to start; the previous release was restored"; }
+
+    if ! wait_for_backend; then
+        warn "the backend did not become ready; restoring the previous release"
+        restore_backend "$previous" "$was_active" "$was_enabled"
+        die "backend $VERSION never became ready. See: journalctl --user -u dax-assistant -n 50"
+    fi
+    ok "backend $VERSION is running and ready"
+    prune_releases
 }
 
 install_node() {
-    local wheel="$1" dependency_lock="$2" node_asset="$3"
-    local release_dir="$NODE_RELEASES_DIR/$RESOLVED_VERSION" managed_python
-    command -v uv >/dev/null 2>&1 || die "uv is required to install the managed Python 3.11 runtime (https://docs.astral.sh/uv/)"
-    systemctl --user is-active --quiet dax-assistant-node.service && die "dax-assistant-node.service is active; stop it explicitly before upgrading the node runtime"
-    systemctl --user is-enabled --quiet dax-assistant-node.service && die "dax-assistant-node.service is enabled; disable it explicitly before upgrading the node runtime"
-    install_system_dependencies
-    uv python install 3.11
-    managed_python="$(uv python find 3.11)"
-    install -d -m 700 "$NODE_RELEASES_DIR" "$STATE_DIR" "$CACHE_DIR" "$DATA_DIR/models"
-    rm -rf "$release_dir.new"
-    install -d -m 700 "$release_dir.new"
-    uv venv --python "$managed_python" "$release_dir.new/.venv"
-    uv pip install --python "$release_dir.new/.venv/bin/python" --require-hashes -r "$dependency_lock"
-    uv pip install --python "$release_dir.new/.venv/bin/python" --no-deps "$wheel"
-    rm -rf "$release_dir"
-    mv "$release_dir.new" "$release_dir"
-    fixup_venv_shebangs "$release_dir.new" "$release_dir"
-    install -d -m 700 "$UNIT_DIR"
-    install -m 600 "$node_asset" "$NODE_UNIT"
-    systemctl --user disable dax-assistant-node.service >/dev/null 2>&1 || true
-    systemctl --user daemon-reload
-    ln -sfn "$release_dir" "$NODE_CURRENT_LINK.new"
+    local target="$NODE_RELEASES_DIR/$VERSION" wheel requirements unit
+    wheel=$(artifact_path backend-wheel) || die "could not obtain the node wheel for $VERSION"
+    requirements=$(artifact_path backend-dependency-lock) \
+        || die "could not obtain the dependency lock for $VERSION"
+    unit=$(artifact_path node-service) || die "could not obtain the node service unit for $VERSION"
+
+    if [[ "$DRY_RUN" -eq 1 ]]; then
+        note "would install capability node $VERSION into $target"
+        return 0
+    fi
+
+    # Replacing the runtime under a running node would swap the code beneath an
+    # live connection, so require an explicit stop first.
+    unit_active dax-assistant-node.service \
+        && die "dax-assistant-node.service is running; stop it before replacing its runtime"
+
+    [[ "$WANT_BACKEND" -eq 1 ]] || install_audio_libraries
+
+    step "Installing the capability node"
+    install -d -m 700 "$NODE_RELEASES_DIR"
+    build_runtime "$target" "$wheel" "$requirements"
+
+    ln -sfn "$target" "$NODE_CURRENT_LINK.new"
     mv -Tf "$NODE_CURRENT_LINK.new" "$NODE_CURRENT_LINK"
-    info "Capability-node runtime installed without a backend. Enrol it from Dax Desktop, then explicitly enable and start dax-assistant-node.service."
+    install -d -m 700 "$UNIT_DIR"
+    install -m 600 "$unit" "$NODE_UNIT"
+    systemctl --user daemon-reload
+    # Left stopped on purpose: a node has nothing to connect to until it is
+    # enrolled, and enrolling needs an already-authenticated client.
+    systemctl --user disable dax-assistant-node.service >/dev/null 2>&1 || true
+    ok "node runtime installed, stopped until you enrol it"
 }
 
-wait_for_backend_ready() {
-    # 300s default: a fresh install's first startup fetches voice models (Whisper
-    # STT, Piper TTS) from Hugging Face, which alone took ~64s over a home
-    # connection in practice — comfortably past the old 60s deadline.
-    local deadline ready=0
-    deadline=$((SECONDS + ${DAX_READINESS_TIMEOUT_SECONDS:-300}))
-    while (( SECONDS < deadline )); do
-        if ! systemctl --user is-active --quiet dax-assistant.service; then
-            break
-        fi
-        if curl --fail --silent --show-error http://127.0.0.1:8420/api/health | python3 -c 'import json,sys; value=json.load(sys.stdin); version=value.get("api_version"); instance_id=value.get("instance_id"); valid=value.get("status") == "ok" and value.get("liveness") is True and value.get("readiness") is True and value.get("role") == "authoritative" and value.get("api_protocol") == "dax" and type(version) is int and version == int(sys.argv[1]) and isinstance(instance_id, str) and bool(instance_id); raise SystemExit(0 if valid else 1)' "$SUPPORTED_API_VERSION" 2>/dev/null && systemctl --user is-active --quiet dax-assistant.service; then
-            ready=1
-            break
-        fi
-        sleep 2
-    done
-    [[ "$ready" -eq 1 ]]
+install_desktop() {
+    local kind arch package
+    kind=$(package_kind)
+    [[ -n "$kind" ]] \
+        || die "unrecognised distribution; download the RPM or deb from https://github.com/$REPOSITORY/releases"
+    arch=$(uname -m)
+    [[ "$arch" == "x86_64" ]] \
+        || die "the desktop package is published for x86_64 only; this machine is $arch"
+
+    package=$(artifact_path "desktop-$kind" "$arch") \
+        || die "could not obtain the desktop $kind package for $VERSION"
+
+    if [[ "$DRY_RUN" -eq 1 ]]; then
+        note "would install $(basename "$package")"
+        return 0
+    fi
+
+    step "Installing the desktop client"
+    note "This needs administrator rights to install a system package."
+    if [[ "$kind" == "rpm" ]]; then
+        sudo dnf install -y "$package" || die "desktop package installation failed"
+    else
+        sudo apt-get install -y "$package" || die "desktop package installation failed"
+    fi
+    ok "desktop client installed; launch Dax from your application menu"
 }
 
-installed_versions() {
-    # Installed backend releases, newest first. Only well-formed release
-    # directories count; anything else is not something rollback can select.
-    local directory="${1:-$RELEASES_DIR}" entry name
-    [[ -d "$directory" ]] || return 0
-    for entry in "$directory"/*; do
-        [[ -d "$entry" ]] || continue
-        name="$(basename "$entry")"
-        [[ "$name" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || continue
-        printf '%s\n' "$name"
-    done | sort -t. -k1,1nr -k2,2nr -k3,3nr
+install_from_source() {
+    [[ -f "$SOURCE_DIR/pyproject.toml" ]] || die "--source is not a Dax checkout: $SOURCE_DIR"
+    [[ -f "$SOURCE_DIR/src/dax/web/static/index.html" ]] \
+        || die "this checkout has no built web assets; run 'npm run build' in web/ first"
+
+    step "Installing the backend from $SOURCE_DIR"
+    warn "Source mode is for development. It is not a verified release."
+    if [[ "$DRY_RUN" -eq 1 ]]; then
+        note "would run: uv sync --frozen --all-extras in $SOURCE_DIR"
+        return 0
+    fi
+    "$UV" --directory "$SOURCE_DIR" sync --frozen --all-extras || die "uv sync failed"
+    install -d -m 700 "$DATA_DIR" "$UNIT_DIR"
+    ln -sfn "$SOURCE_DIR" "$CURRENT_LINK.new"
+    mv -Tf "$CURRENT_LINK.new" "$CURRENT_LINK"
+    install -m 600 "$SOURCE_DIR/systemd/dax-assistant.service" "$BACKEND_UNIT"
+    systemctl --user daemon-reload
+    systemctl --user enable --now dax-assistant.service
+    wait_for_backend || warn "the backend has not reported ready yet"
+    ok "source backend installed"
 }
 
-active_version() {
-    local target
-    [[ -L "$1" ]] || return 0
-    target="$(readlink -f "$1")" || return 0
-    [[ -n "$target" ]] || return 0
-    basename "$target"
+# ------------------------------------------------------------------- account
+
+create_account() {
+    local dax="$CURRENT_LINK/.venv/bin/dax" configured
+    [[ -x "$dax" ]] || return 0
+
+    configured=$(curl --fail --silent --max-time 5 \
+        "http://127.0.0.1:$BACKEND_PORT/api/auth/status" 2>/dev/null \
+        | python3 -c 'import json,sys; print(json.load(sys.stdin).get("configured"))' 2>/dev/null) \
+        || return 0
+    if [[ "$configured" == "True" ]]; then
+        note "this backend already has an account"
+        return 0
+    fi
+
+    step "Creating your account"
+    if [[ "$INTERACTIVE" -eq 0 ]]; then
+        warn "No terminal to prompt on. Run '$dax claim' on this machine to set the password."
+        return 0
+    fi
+    # The first account can only be created from the backend's own machine, so
+    # an unclaimed backend cannot be taken over by whoever reaches it first.
+    note "Only this machine can create the first account, which is why it happens here."
+    "$dax" claim \
+        || warn "account not created; run '$dax claim' here when you are ready"
 }
 
-prune_releases() {
-    # Keep the newest $KEEP_RELEASES releases. The active target always counts
-    # toward that budget and is never a deletion candidate.
-    local active kept=0 version
-    active="$(active_version "$CURRENT_LINK")"
-    while read -r version; do
-        [[ -n "$version" ]] || continue
-        if [[ "$version" == "$active" ]] || (( kept < KEEP_RELEASES )); then
-            kept=$((kept + 1))
-            continue
+# ------------------------------------------------------------------ reporting
+
+print_next_steps() {
+    local address; address=$(lan_address)
+    printf '\n  %s%sDone.%s\n\n' "$BOLD" "$GREEN" "$RESET"
+
+    if [[ "$WANT_BACKEND" -eq 1 ]]; then
+        printf '  %sOn this machine%s\n    http://127.0.0.1:%s\n' "$BOLD" "$RESET" "$BACKEND_PORT"
+        if [[ -n "$address" ]]; then
+            printf '\n  %sFrom your other devices%s\n    %shttp://%s:%s%s\n' \
+                "$BOLD" "$RESET" "$CYAN" "$address" "$BACKEND_PORT" "$RESET"
+            printf '    %sEnter that exact address in the desktop app and on your phone.%s\n' \
+                "$DIM" "$RESET"
+        else
+            printf '\n  %sNo private LAN address was found, so other devices will need\n' "$DIM"
+            printf '  HTTPS through a reverse proxy or a VPN to reach this backend.%s\n' "$RESET"
         fi
-        if [[ "$version" == "$(active_version "$NODE_CURRENT_LINK")" ]]; then
-            continue
+        printf '\n  %sLogs%s    journalctl --user -u dax-assistant -f\n' "$DIM" "$RESET"
+        printf '  %sState%s   bash install.sh status\n' "$DIM" "$RESET"
+    fi
+    if [[ "$WANT_NODE" -eq 1 ]]; then
+        printf '\n  %sThe node is installed but stopped.%s Enrol it from the desktop app\n' \
+            "$BOLD" "$RESET"
+        printf '  under Settings → Access → Devices, then start it.\n'
+    fi
+    printf '\n'
+}
+
+# ------------------------------------------------------------------- commands
+
+command_status() {
+    local version node_version address
+    version=$(active_version "$CURRENT_LINK")
+    node_version=$(active_version "$NODE_CURRENT_LINK")
+    printf '\n'
+
+    if [[ -n "$version" ]]; then
+        printf '  %sBackend%s  %s\n' "$BOLD" "$RESET" "$version"
+        if ! unit_active dax-assistant.service; then
+            printf '           %sstopped%s\n' "$RED" "$RESET"
+        elif backend_ready; then
+            printf '           %srunning, ready%s\n' "$GREEN" "$RESET"
+        else
+            printf '           %srunning, not ready yet%s\n' "$YELLOW" "$RESET"
         fi
-        info "Pruning superseded backend release $version"
-        rm -rf "${RELEASES_DIR:?}/$version"
-    done < <(installed_versions)
+        printf '           http://127.0.0.1:%s\n' "$BACKEND_PORT"
+        address=$(lan_address)
+        [[ -n "$address" ]] && printf '           http://%s:%s\n' "$address" "$BACKEND_PORT"
+    else
+        printf '  %sBackend%s  not installed\n' "$BOLD" "$RESET"
+    fi
+
+    if [[ -n "$node_version" ]]; then
+        printf '\n  %sNode%s     %s' "$BOLD" "$RESET" "$node_version"
+        if unit_active dax-assistant-node.service; then
+            printf ' (%srunning%s)\n' "$GREEN" "$RESET"
+        else
+            printf ' (stopped)\n'
+        fi
+    fi
+    printf '\n'
 }
 
 command_list() {
-    local active version found=0
-    active="$(active_version "$CURRENT_LINK")"
-    printf 'Backend releases (%s)\n' "$RELEASES_DIR"
+    local active version found=0 node_active
+    active=$(active_version "$CURRENT_LINK")
+    printf '\n  %sBackend releases%s  %s\n' "$BOLD" "$RESET" "$RELEASES_DIR"
     while read -r version; do
         [[ -n "$version" ]] || continue
         found=1
         if [[ "$version" == "$active" ]]; then
-            printf '  %s  (active)\n' "$version"
+            printf '    %s❯ %s  active%s\n' "$GREEN" "$version" "$RESET"
         else
-            printf '  %s\n' "$version"
+            printf '      %s\n' "$version"
         fi
-    done < <(installed_versions)
-    [[ "$found" -eq 1 ]] || printf '  none installed\n'
-    if [[ -L "$CURRENT_LINK" ]] && [[ -z "$active" || ! -d "$RELEASES_DIR/$active" ]]; then
-        printf '  note: %s points outside %s (%s)\n' \
-            "$CURRENT_LINK" "$RELEASES_DIR" "$(readlink "$CURRENT_LINK")"
-    fi
-    if [[ -d "$NODE_RELEASES_DIR" ]]; then
-        active="$(active_version "$NODE_CURRENT_LINK")"
-        printf 'Capability-node releases (%s)\n' "$NODE_RELEASES_DIR"
+    done < <(installed_versions "$RELEASES_DIR")
+    [[ "$found" -eq 1 ]] || printf '      %snone%s\n' "$DIM" "$RESET"
+
+    node_active=$(active_version "$NODE_CURRENT_LINK")
+    if [[ -n "$node_active" ]]; then
+        printf '\n  %sNode releases%s  %s\n' "$BOLD" "$RESET" "$NODE_RELEASES_DIR"
         while read -r version; do
             [[ -n "$version" ]] || continue
-            if [[ "$version" == "$active" ]]; then
-                printf '  %s  (active)\n' "$version"
+            if [[ "$version" == "$node_active" ]]; then
+                printf '    %s❯ %s  active%s\n' "$GREEN" "$version" "$RESET"
             else
-                printf '  %s\n' "$version"
+                printf '      %s\n' "$version"
             fi
         done < <(installed_versions "$NODE_RELEASES_DIR")
     fi
-    printf 'Services\n'
-    printf '  dax-assistant.service       %s / %s\n' \
-        "$(systemctl --user is-active dax-assistant.service 2>/dev/null || true)" \
-        "$(systemctl --user is-enabled dax-assistant.service 2>/dev/null || true)"
-    printf '  dax-assistant-node.service  %s / %s\n' \
-        "$(systemctl --user is-active dax-assistant-node.service 2>/dev/null || true)" \
-        "$(systemctl --user is-enabled dax-assistant-node.service 2>/dev/null || true)"
-}
-
-confirm() {
-    local prompt="$1" answer
-    [[ "$ASSUME_YES" -eq 0 ]] || return 0
-    [[ -t 0 ]] || die "refusing to proceed without a terminal; pass --yes to confirm explicitly"
-    read -r -p "$prompt [y/N] " answer
-    [[ "$answer" =~ ^[Yy]$ ]] || die "cancelled"
+    printf '\n'
 }
 
 command_rollback() {
-    local target_version="$ROLLBACK_VERSION" target_dir active previous_target=""
-    local was_active=0 was_enabled=0 version
-    active="$(active_version "$CURRENT_LINK")"
-    if [[ -z "$target_version" ]]; then
-        while read -r version; do
-            [[ -n "$version" && "$version" != "$active" ]] || continue
-            target_version="$version"
-            break
-        done < <(installed_versions)
-        [[ -n "$target_version" ]] || die "no other installed backend release to roll back to; run: bash install.sh list"
+    local active target was_active=0 was_enabled=0 previous=""
+    active=$(active_version "$CURRENT_LINK")
+    if [[ -n "$ROLLBACK_VERSION" ]]; then
+        target="$ROLLBACK_VERSION"
+        [[ -d "$RELEASES_DIR/$target" ]] \
+            || die "release $target is not installed; see: bash install.sh list"
+        [[ "$target" != "$active" ]] || die "release $target is already active"
+    else
+        target=$(installed_versions "$RELEASES_DIR" | grep -v -x -- "$active" | head -1)
+        [[ -n "$target" ]] || die "no other installed release to roll back to"
     fi
-    target_dir="$RELEASES_DIR/$target_version"
-    [[ -d "$target_dir" ]] || die "backend release $target_version is not installed; run: bash install.sh list"
-    [[ -x "$target_dir/.venv/bin/python" ]] || die "backend release $target_version has no usable environment"
-    [[ -f "$BACKEND_UNIT" ]] || die "no backend unit at $BACKEND_UNIT; nothing to roll back"
-    [[ "$target_version" != "$active" ]] || die "backend release $target_version is already the current target"
+    [[ -x "$RELEASES_DIR/$target/.venv/bin/python" ]] \
+        || die "release $target has no usable environment"
+    [[ -f "$BACKEND_UNIT" ]] || die "no backend unit installed; nothing to roll back"
+
+    printf '\n'
+    warn "Schema migrations run forward only. If $active migrated the database, $target"
+    warn "may be unable to open it. A backup and its key are written first."
+    confirm "Roll the backend back from ${active:-nothing} to $target?" || die "cancelled"
+
     if [[ "$DRY_RUN" -eq 1 ]]; then
-        printf 'Would point %s at %s and restart dax-assistant.service\n' "$CURRENT_LINK" "$target_dir"
-        return
+        note "would point $CURRENT_LINK at $RELEASES_DIR/$target and restart"
+        return 0
     fi
-    info "Rolling back from ${active:-none} to $target_version"
-    printf '%s\n' "A rollback runs older code against the current database. Schema migrations are forward-only, so a database already migrated by a newer release may not open. A backup is taken first; restore it with its matching key if the older release refuses to start." >&2
-    confirm "Roll the backend back to $target_version?"
-    backup_database "$target_dir/.venv/bin/python"
-    [[ ! -L "$CURRENT_LINK" ]] || previous_target="$(readlink "$CURRENT_LINK")"
-    if systemctl --user is-active --quiet dax-assistant.service; then was_active=1; fi
-    if systemctl --user is-enabled --quiet dax-assistant.service; then was_enabled=1; fi
-    ln -sfn "$target_dir" "$CURRENT_LINK.new"
+
+    unit_active dax-assistant.service && was_active=1
+    unit_enabled dax-assistant.service && was_enabled=1
+    [[ ! -L "$CURRENT_LINK" ]] || previous=$(readlink "$CURRENT_LINK")
+    backup_database
+
+    ln -sfn "$RELEASES_DIR/$target" "$CURRENT_LINK.new"
     mv -Tf "$CURRENT_LINK.new" "$CURRENT_LINK"
-    if ! systemctl --user restart dax-assistant.service; then
-        rollback_backend "$previous_target" "$was_active" "$was_enabled"
-        die "backend service activation failed; restored the previous current target and service"
+    if ! systemctl --user restart dax-assistant.service || ! wait_for_backend; then
+        warn "release $target did not become ready; returning to $active"
+        restore_backend "$previous" "$was_active" "$was_enabled"
+        die "rollback to $target failed; the previous release was restored"
     fi
-    if ! wait_for_backend_ready; then
-        rollback_backend "$previous_target" "$was_active" "$was_enabled"
-        die "backend did not become authoritatively ready before the deadline; restored the previous current target and service"
-    fi
-    info "Backend rolled back to $target_version"
+    ok "the backend is now running $target"
 }
 
 command_uninstall() {
-    local removed=0
-    if [[ "$DRY_RUN" -eq 1 ]]; then
-        printf 'Would stop, disable, and remove:\n  %s\n  %s\n  %s\n  %s\n' \
-            "$BACKEND_UNIT" "$NODE_UNIT" "$RELEASES_DIR" "$NODE_RELEASES_DIR"
-        if [[ "$PURGE_STATE" -eq 1 ]]; then
-            printf 'Would also delete all state, including the database and key:\n  %s\n' "$STATE_DIR"
-        else
-            printf 'Would keep state, including the database, key, and backups:\n  %s\n' "$STATE_DIR"
-        fi
-        return
-    fi
+    printf '\n'
     if [[ "$PURGE_STATE" -eq 1 ]]; then
-        printf '%s\n' "--purge deletes $STATE_DIR, including dax.db, dax.key, node credentials, and every backup. Encrypted configuration cannot be recovered without that key. This is irreversible." >&2
-        confirm "Permanently delete Dax and all of its state?"
+        warn "--purge deletes $STATE_DIR: the database, the secret key, node"
+        warn "credentials, and every backup. Encrypted settings and API keys"
+        warn "cannot be recovered without that key. This is irreversible."
     else
-        confirm "Remove the Dax services, units, and installed releases, keeping $STATE_DIR?"
+        note "The database, key, and backups in $STATE_DIR are kept."
     fi
-    systemctl --user disable --now dax-assistant.service >/dev/null 2>&1 || true
-    systemctl --user disable --now dax-assistant-node.service >/dev/null 2>&1 || true
-    for unit in "$BACKEND_UNIT" "$NODE_UNIT"; do
-        [[ -e "$unit" ]] || continue
-        rm -f "$unit"
-        removed=1
+    confirm "Remove Dax from this machine?" || die "cancelled"
+
+    if [[ "$DRY_RUN" -eq 1 ]]; then
+        note "would stop both services and remove the units, $RELEASES_DIR and $NODE_RELEASES_DIR"
+        [[ "$PURGE_STATE" -eq 1 ]] && note "would also delete $STATE_DIR"
+        return 0
+    fi
+
+    local unit
+    for unit in dax-assistant.service dax-assistant-node.service; do
+        systemctl --user disable --now "$unit" >/dev/null 2>&1 || true
     done
-    [[ "$removed" -eq 0 ]] || systemctl --user daemon-reload
+    rm -f "$BACKEND_UNIT" "$NODE_UNIT"
+    systemctl --user daemon-reload
     rm -f "$CURRENT_LINK" "$NODE_CURRENT_LINK"
     rm -rf "${RELEASES_DIR:?}" "${NODE_RELEASES_DIR:?}" "${CACHE_DIR:?}"
+    ok "services, units, and releases removed"
+
     if [[ "$PURGE_STATE" -eq 1 ]]; then
-        rm -rf "${STATE_DIR:?}"
-        rm -rf "${DATA_DIR:?}"
-        info "Dax and all of its state were removed"
+        rm -rf "${STATE_DIR:?}" "${DATA_DIR:?}"
+        ok "all state removed"
     else
-        info "Dax was removed. State kept at $STATE_DIR; models kept at $DATA_DIR/models"
+        note "state kept at $STATE_DIR; voice models kept at $DATA_DIR/models"
     fi
-    info "The desktop package is managed by your distribution: sudo dnf remove Dax, or sudo apt-get remove dax-desktop"
+    note "The desktop package is managed by your distribution:"
+    note "  sudo dnf remove Dax   ·   sudo apt-get remove dax"
+    printf '\n'
 }
 
-rollback_backend() {
-    local previous_target="$1" was_active="$2" was_enabled="$3"
-    if [[ -n "$previous_target" ]]; then
-        ln -sfn "$previous_target" "$CURRENT_LINK.new"
-        mv -Tf "$CURRENT_LINK.new" "$CURRENT_LINK"
-        if [[ "$was_active" -eq 1 ]]; then
-            systemctl --user restart dax-assistant.service || true
+command_install() {
+    printf '\n%s%s  Dax%s  ·  self-hosted assistant\n' "$BOLD" "$CYAN" "$RESET"
+
+    if [[ "$SELECTION_GIVEN" -eq 0 ]]; then
+        if [[ "$INTERACTIVE" -eq 1 && "$ASSUME_YES" -eq 0 ]]; then
+            choose_components
         else
-            systemctl --user stop dax-assistant.service || true
+            WANT_BACKEND=1
+            WANT_DESKTOP=1
         fi
-        [[ "$was_enabled" -eq 1 ]] || systemctl --user disable dax-assistant.service || true
-    else
-        systemctl --user disable --now dax-assistant.service || true
-        rm -f "$CURRENT_LINK"
     fi
-}
+    (( WANT_BACKEND + WANT_DESKTOP + WANT_NODE > 0 )) || die "nothing selected to install"
 
-install_backend() {
-    local wheel="$1" dependency_lock="$2" backend_asset="$3" node_asset="${4:-}"
-    local release_dir="$RELEASES_DIR/$RESOLVED_VERSION" managed_python previous_target=""
-    local backend_was_active=0 backend_was_enabled=0
-    command -v uv >/dev/null 2>&1 || die "uv is required to install the managed Python 3.11 runtime (https://docs.astral.sh/uv/)"
-    if [[ "$WITH_NODE" -eq 1 ]] && systemctl --user is-active --quiet dax-assistant-node.service; then
-        die "dax-assistant-node.service is active; stop it explicitly before replacing its selected runtime"
-    fi
-    if [[ "$WITH_NODE" -eq 1 ]] && systemctl --user is-enabled --quiet dax-assistant-node.service; then
-        die "dax-assistant-node.service is enabled; disable it explicitly before replacing its selected runtime"
-    fi
-    install_system_dependencies
-    uv python install 3.11
-    managed_python="$(uv python find 3.11)"
-    backup_database "$managed_python"
-    install -d -m 700 "$RELEASES_DIR" "$STATE_DIR" "$CACHE_DIR" "$DATA_DIR/models" "$STATE_DIR/memory"
-    [[ ! -L "$CURRENT_LINK" ]] || previous_target="$(readlink "$CURRENT_LINK")"
-    if [[ -n "$previous_target" && "$(readlink -f "$CURRENT_LINK")" == "$release_dir" ]]; then
-        die "backend release $RESOLVED_VERSION is already the current target"
-    fi
-    rm -rf "$release_dir.new"
-    install -d -m 700 "$release_dir.new"
-    uv venv --python "$managed_python" "$release_dir.new/.venv"
-    uv pip install --python "$release_dir.new/.venv/bin/python" --require-hashes -r "$dependency_lock"
-    uv pip install --python "$release_dir.new/.venv/bin/python" --no-deps "$wheel"
-    rm -rf "$release_dir"
-    mv "$release_dir.new" "$release_dir"
-    fixup_venv_shebangs "$release_dir.new" "$release_dir"
-    if systemctl --user is-active --quiet dax-assistant.service; then backend_was_active=1; fi
-    if systemctl --user is-enabled --quiet dax-assistant.service; then backend_was_enabled=1; fi
-    write_units "$backend_asset" "$node_asset"
-    ln -sfn "$release_dir" "$CURRENT_LINK.new"
-    mv -Tf "$CURRENT_LINK.new" "$CURRENT_LINK"
-    if ! systemctl --user enable dax-assistant.service || ! systemctl --user restart dax-assistant.service; then
-        rollback_backend "$previous_target" "$backend_was_active" "$backend_was_enabled"
-        die "backend service activation failed; restored the previous current target and service"
-    fi
-    if ! wait_for_backend_ready; then
-        rollback_backend "$previous_target" "$backend_was_active" "$backend_was_enabled"
-        die "backend did not become authoritatively ready before the deadline; restored the previous current target and service"
-    fi
-    prune_releases
-    if [[ "$WITH_NODE" -eq 1 ]]; then
-        ln -sfn "$release_dir" "$NODE_CURRENT_LINK.new"
-        mv -Tf "$NODE_CURRENT_LINK.new" "$NODE_CURRENT_LINK"
-        info "Node unit installed, disabled, and not started. Create a capability-node enrollment code on the authoritative backend, then run: $CURRENT_LINK/.venv/bin/dax edge enroll --server URL --code CODE --name NAME. After $NODE_CREDENTIALS exists, explicitly enable and start dax-assistant-node.service."
-    fi
-}
+    ensure_base_tools
+    # The desktop package is a distro package; only the Python components need uv.
+    (( WANT_BACKEND + WANT_NODE > 0 )) && ensure_uv
 
-install_desktop() {
-    local package="$1"
-    if [[ "$DISTRO" == "rpm" ]]; then
-        sudo dnf install -y "$package"
-    else
-        sudo apt-get install -y "$package"
+    # The units reference canonical XDG paths, so a relocated home layout would
+    # produce a service that cannot find its own runtime.
+    if (( WANT_BACKEND + WANT_NODE > 0 )); then
+        [[ "$XDG_DATA_HOME" == "$HOME/.local/share" \
+            && "$XDG_STATE_HOME" == "$HOME/.local/state" \
+            && "$XDG_CONFIG_HOME" == "$HOME/.config" ]] \
+            || die "backend and node installs require the default XDG directories"
     fi
-}
 
-install_source() {
-    command -v uv >/dev/null 2>&1 || die "development --source mode requires an existing uv installation"
-    [[ -f "$SOURCE_MODE/pyproject.toml" ]] || die "--source is not a Dax checkout"
-    [[ -f "$SOURCE_MODE/src/dax/web/static/index.html" ]] || die "source checkout has no built web static assets"
+    if [[ -n "$SOURCE_DIR" ]]; then
+        install_from_source
+        print_next_steps
+        return 0
+    fi
+
+    resolve_release
+    [[ "$WANT_BACKEND" -eq 1 ]] && install_backend
+    [[ "$WANT_NODE" -eq 1 ]] && install_node
+    [[ "$WANT_DESKTOP" -eq 1 ]] && install_desktop
+
     if [[ "$DRY_RUN" -eq 1 ]]; then
-        info "Development source mode; no release manifest or desktop package will be used"
-        print_layout
-        printf 'Would run: uv --directory %q sync --frozen --all-extras\n' "$SOURCE_MODE"
-        return
+        printf '\n'
+        ok "dry run complete: everything verified, nothing installed"
+        return 0
     fi
-    uv --directory "$SOURCE_MODE" sync --frozen --all-extras
-    RESOLVED_VERSION="source"
-    install -d -m 700 "$DATA_DIR"
-    ln -sfn "$SOURCE_MODE" "$CURRENT_LINK.new"
-    mv -Tf "$CURRENT_LINK.new" "$CURRENT_LINK"
-    write_units "$SOURCE_MODE/systemd/dax-assistant.service"
-    systemctl --user enable --now dax-assistant.service
+
+    [[ "$WANT_BACKEND" -eq 1 && "$SKIP_ACCOUNT" -eq 0 ]] && create_account
+    print_next_steps
 }
 
 case "$COMMAND" in
-    list) command_list; exit 0 ;;
-    rollback) command_rollback; exit 0 ;;
-    uninstall) command_uninstall; exit 0 ;;
+    install)   command_install ;;
+    status)    command_status ;;
+    list)      command_list ;;
+    rollback)  command_rollback ;;
+    uninstall) command_uninstall ;;
 esac
-
-if [[ -n "$SOURCE_MODE" ]]; then
-    install_source
-    exit 0
-fi
-
-for command in curl sha256sum python3; do command -v "$command" >/dev/null 2>&1 || die "required command not found: $command"; done
-TEMP_DIR="$(mktemp -d "${TMPDIR:-/tmp}/dax-install.XXXXXXXX")"
-if [[ -z "$MANIFEST_SOURCE" ]]; then
-    if [[ -n "$PIN_VERSION" ]]; then RELEASE_BASE="https://github.com/$REPOSITORY/releases/download/v$PIN_VERSION"; else RELEASE_BASE="https://github.com/$REPOSITORY/releases/latest/download"; fi
-    MANIFEST_SOURCE="$RELEASE_BASE/release-manifest.json"
-    CHECKSUMS_SOURCE="$RELEASE_BASE/SHA256SUMS"
-elif [[ -z "$CHECKSUMS_SOURCE" ]]; then
-    die "--checksums is required with --manifest"
-fi
-
-fetch "$CHECKSUMS_SOURCE" "$TEMP_DIR/SHA256SUMS"
-fetch "$MANIFEST_SOURCE" "$TEMP_DIR/release-manifest.json"
-verify_attestation "$TEMP_DIR/release-manifest.json"
-verify_manifest_checksum
-write_selection
-
-declare -A ARTIFACT_PATHS
-while IFS=$'\t' read -r role name url _artifact_arch digest size; do
-    if [[ "$role" == "version" ]]; then RESOLVED_VERSION="$name"; continue; fi
-    if [[ "$role" == "commit" ]]; then RESOLVED_COMMIT="$name"; continue; fi
-    target="$TEMP_DIR/$name"
-    fetch "$url" "$target"
-    verify_file "$target" "$digest"
-    [[ "$(stat -c %s "$target")" == "$size" ]] || die "size mismatch for $name"
-    verify_attestation "$target"
-    ARTIFACT_PATHS[$role]="$target"
-done < "$TEMP_DIR/selection.tsv"
-
-if command -v "$GH_COMMAND" >/dev/null 2>&1; then
-    TAG_COMMIT="$("$GH_COMMAND" api "repos/$REPOSITORY/commits/v$RESOLVED_VERSION" --jq .sha)" || die "could not resolve release tag v$RESOLVED_VERSION"
-else
-    TAG_COMMIT="$(curl --proto '=https' --tlsv1.2 --fail --silent --show-error "https://api.github.com/repos/$REPOSITORY/commits/v$RESOLVED_VERSION" | python3 -c 'import json,sys; print(json.load(sys.stdin)["sha"])')" || die "could not resolve release tag v$RESOLVED_VERSION"
-fi
-[[ "$TAG_COMMIT" == "$RESOLVED_COMMIT" ]] || die "manifest commit $RESOLVED_COMMIT does not match tag v$RESOLVED_VERSION ($TAG_COMMIT)"
-
-info "Verified release $RESOLVED_VERSION before installation"
-print_layout
-if [[ "$DRY_RUN" -eq 1 ]]; then
-    if [[ "$COMPONENTS" == "node" ]]; then
-        printf 'Would install capability-node runtime wheel: %s\n' "${ARTIFACT_PATHS[backend-wheel]}"
-    elif [[ "$COMPONENTS" != "desktop" ]]; then
-        printf 'Would install backend wheel: %s\n' "${ARTIFACT_PATHS[backend-wheel]}"
-    fi
-    if [[ "$COMPONENTS" != "backend" && "$COMPONENTS" != "node" ]]; then
-        printf 'Would run: sudo %s install desktop %s\n' "$([[ "$DISTRO" == "rpm" ]] && printf dnf || printf apt-get)" "${ARTIFACT_PATHS[desktop-$DISTRO]}"
-    fi
-    [[ "$WITH_NODE" -eq 0 ]] || printf 'Would install node unit without enabling or starting it; credentials: %s\n' "$NODE_CREDENTIALS"
-    exit 0
-fi
-
-if [[ "$ASSUME_YES" -eq 0 && -t 0 ]]; then
-    read -r -p "Install verified Dax $RESOLVED_VERSION ($COMPONENTS)? [Y/n] " answer
-    [[ -z "$answer" || "$answer" =~ ^[Yy]$ ]] || die "installation cancelled"
-fi
-if [[ "$COMPONENTS" == "node" ]]; then
-    install_node \
-        "${ARTIFACT_PATHS[backend-wheel]}" \
-        "${ARTIFACT_PATHS[backend-dependency-lock]}" \
-        "${ARTIFACT_PATHS[node-service]}"
-elif [[ "$COMPONENTS" != "desktop" ]]; then
-    install_backend \
-        "${ARTIFACT_PATHS[backend-wheel]}" \
-        "${ARTIFACT_PATHS[backend-dependency-lock]}" \
-        "${ARTIFACT_PATHS[backend-service]}" \
-        "${ARTIFACT_PATHS[node-service]:-}"
-fi
-[[ "$COMPONENTS" == "backend" || "$COMPONENTS" == "node" ]] || install_desktop "${ARTIFACT_PATHS[desktop-$DISTRO]}"
-info "Dax $RESOLVED_VERSION installation complete. Android is distributed separately and was not installed."

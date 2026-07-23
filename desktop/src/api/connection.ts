@@ -32,6 +32,44 @@ export function isTauri(): boolean {
   return isTauriRuntime();
 }
 
+/**
+ * Cleartext is confined to addresses that cannot route off the local network.
+ *
+ * Only literals qualify. A hostname resolves through DNS, which can be pointed
+ * at a public address, so it would not prove the session token stays on the
+ * LAN. This mirrors `BackendEndpointPolicy` on Android and `is_private_host` in
+ * the Tauri backend so every client accepts exactly the same set of URLs.
+ */
+export function isPrivateHost(hostname: string): boolean {
+  const host = hostname.toLowerCase().replace(/^\[|\]$/gu, "");
+  if (host === "localhost") return true;
+
+  if (host.includes(":")) {
+    if (/^(?:0*:)*0*1$/u.test(host)) return true;
+    const [first = ""] = host.split(":");
+    if (!/^[0-9a-f]{1,4}$/u.test(first)) return false;
+    const group = parseInt(first, 16);
+    const leading = group >> 8;
+    const second = group & 0xff;
+    // fc00::/7 unique-local and fe80::/10 link-local.
+    return (leading & 0xfe) === 0xfc || (leading === 0xfe && (second & 0xc0) === 0x80);
+  }
+
+  const octets = host.split(".");
+  if (octets.length !== 4) return false;
+  const [a, b] = octets.map((part) => (/^\d{1,3}$/u.test(part) ? Number(part) : -1));
+  if (a === undefined || b === undefined) return false;
+  if (octets.some((part) => !/^\d{1,3}$/u.test(part) || Number(part) > 255)) return false;
+  return a === 10
+    || a === 127
+    || (a === 172 && b >= 16 && b <= 31)
+    || (a === 192 && b === 168)
+    // 100.64.0.0/10, RFC 6598 shared address space. Tailscale and similar
+    // overlays assign from it; those addresses are unroutable on the public
+    // internet and the tunnel is already encrypted end to end.
+    || (a === 100 && b >= 64 && b <= 127);
+}
+
 export function validateBaseUrl(value: string, requireLoopback = false): string {
   const trimmed = value.trim();
   let parsed: URL;
@@ -52,8 +90,11 @@ export function validateBaseUrl(value: string, requireLoopback = false): string 
   if (requireLoopback && !loopback) {
     throw new Error("Local backend URL must use a loopback host");
   }
-  if (parsed.protocol !== "https:" && !(parsed.protocol === "http:" && loopback)) {
-    throw new Error("Remote backend URLs must use HTTPS");
+  if (parsed.protocol !== "https:" && !(parsed.protocol === "http:" && isPrivateHost(parsed.hostname))) {
+    throw new Error(
+      "Cleartext HTTP is only allowed to a private address. Use HTTPS, or the "
+        + "server's private IP such as http://192.168.1.50:8420",
+    );
   }
   if (parsed.protocol !== "http:" && parsed.protocol !== "https:") {
     throw new Error("Backend URL scheme must be HTTP or HTTPS");

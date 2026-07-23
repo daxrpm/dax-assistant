@@ -20,6 +20,8 @@ export interface AuthStatus {
 export interface LoginResponse {
   ok: boolean;
   token?: string | null;
+  /** Why a refusal happened, when it is something the operator can act on. */
+  detail?: string | null;
 }
 
 export interface HealthResponse {

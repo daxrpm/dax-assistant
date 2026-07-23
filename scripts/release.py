@@ -25,8 +25,6 @@ REPOSITORY = os.environ.get("DAX_RELEASE_REPOSITORY", "daxrpm/dax-assistant")
 # readers to install something other than what shipped.
 DOCUMENTATION = (
     "README.md",
-    "docs/installation.md",
-    "docs/releases.md",
     "docs/deployment.md",
     "docs/capability-nodes.md",
 )

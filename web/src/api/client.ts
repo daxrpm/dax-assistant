@@ -192,13 +192,13 @@ export const api = {
   authStatus: () => request<AuthStatus>("/auth/status"),
 
   login: (password: string) =>
-    request<{ ok: boolean }>("/auth/login", {
+    request<{ ok: boolean; detail?: string }>("/auth/login", {
       method: "POST",
       body: JSON.stringify({ password }),
     }),
 
   setup: (password: string) =>
-    request<{ ok: boolean }>("/auth/setup", {
+    request<{ ok: boolean; detail?: string }>("/auth/setup", {
       method: "POST",
       body: JSON.stringify({ password }),
     }),

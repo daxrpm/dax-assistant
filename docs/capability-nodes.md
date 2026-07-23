@@ -91,7 +91,7 @@ able to name a routable one.
    authoritative backend and leaves the node disabled:
 
    ```bash
-   bash install.sh --node-only
+   bash install.sh --node
    ```
 
 2. In native Dax Desktop, run post-login setup. Desktop asks the authenticated
@@ -111,7 +111,7 @@ able to name a routable one.
    journalctl --user -u dax-assistant-node.service -f
    ```
 
-`scripts/install.sh --node-only` installs a separate `node-current` runtime and
+`scripts/install.sh --node` installs a separate `node-current` runtime and
 the node unit but intentionally does not enable or start it. It cannot move or
 start `dax-assistant.service`. Enrollment must happen first. The managed service
 uses `~/.local/state/dax-assistant/edge.json`; its directory is mode `0700` and

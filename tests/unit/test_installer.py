@@ -1,32 +1,72 @@
-"""Release and installer contract tests."""
+"""Installer and release contract tests.
+
+The installer runs as a real subprocess against a fixture release, with
+`systemctl`, `uv`, `curl`, `loginctl` and friends replaced by mocks on PATH. That
+keeps the tests honest about the script's actual control flow — including paths
+that only run when something fails — without touching the host.
+"""
 
 from __future__ import annotations
 
 import hashlib
 import json
 import os
+import sqlite3
 import subprocess
 from pathlib import Path
 
 import pytest
 
 ROOT = Path(__file__).resolve().parents[2]
+VERSION = "0.1.0"
+
+_HEALTHY: dict[str, object] = {
+    "status": "ok",
+    "instance_id": "authority-1",
+    "role": "authoritative",
+    "api_protocol": "dax",
+    "api_version": 1,
+    "liveness": True,
+    "readiness": True,
+}
 
 
 def _sha256(path: Path) -> str:
     return hashlib.sha256(path.read_bytes()).hexdigest()
 
 
+def _write_manifest(
+    tmp_path: Path, artifacts: list[dict[str, object]], **overrides: object
+) -> tuple[Path, Path]:
+    document: dict[str, object] = {
+        "schema_version": 1,
+        "version": VERSION,
+        "commit": "a" * 40,
+        "api_compatibility": {
+            "backend": "1",
+            "desktop": "1",
+            "android": "1",
+            "capability_node": "1",
+        },
+        "artifacts": artifacts,
+    }
+    document.update(overrides)
+    manifest = tmp_path / "release-manifest.json"
+    manifest.write_text(json.dumps(document), encoding="utf-8")
+    checksums = tmp_path / "SHA256SUMS"
+    checksums.write_text(f"{_sha256(manifest)}  release-manifest.json\n", encoding="utf-8")
+    return manifest, checksums
+
+
 def _release_fixture(tmp_path: Path, *, arch: str = "x86_64") -> tuple[Path, Path]:
-    artifacts = []
+    artifacts: list[dict[str, object]] = []
     for role, name, artifact_arch in (
-        ("backend-wheel", "dax_assistant-0.1.0-py3-none-any.whl", "any"),
+        ("backend-wheel", f"dax_assistant-{VERSION}-py3-none-any.whl", "any"),
         ("backend-dependency-lock", "backend-requirements.txt", "any"),
         ("backend-service", "dax-assistant.service", "any"),
         ("node-service", "dax-assistant-node.service", "any"),
-        ("desktop-rpm", "Dax-0.1.0-1.x86_64.rpm", arch),
-        ("desktop-deb", "Dax_0.1.0_amd64.deb", arch),
-        ("android-apk", "Dax-0.1.0.apk", "universal"),
+        ("desktop-rpm", f"Dax-{VERSION}-1.x86_64.rpm", arch),
+        ("desktop-deb", f"Dax_{VERSION}_amd64.deb", arch),
     ):
         path = tmp_path / name
         path.write_bytes(f"fixture:{role}\n".encode())
@@ -40,41 +80,37 @@ def _release_fixture(tmp_path: Path, *, arch: str = "x86_64") -> tuple[Path, Pat
                 "size": path.stat().st_size,
             }
         )
-    manifest = tmp_path / "release-manifest.json"
-    manifest.write_text(
-        json.dumps(
-            {
-                "schema_version": 1,
-                "version": "0.1.0",
-                "commit": "a" * 40,
-                "api_compatibility": {
-                    "backend": "1",
-                    "desktop": "1",
-                    "android": "1",
-                    "capability_node": "1",
-                },
-                "artifacts": artifacts,
-            }
-        ),
-        encoding="utf-8",
-    )
-    checksums = tmp_path / "SHA256SUMS"
-    checksums.write_text(f"{_sha256(manifest)}  release-manifest.json\n", encoding="utf-8")
-    return manifest, checksums
+    return _write_manifest(tmp_path, artifacts)
+
+
+def _mock_bin(tmp_path: Path, scripts: dict[str, str]) -> Path:
+    mock_bin = tmp_path / "bin"
+    mock_bin.mkdir(exist_ok=True)
+    # Present the audio libraries as installed and lingering as already on, so
+    # no test reaches for sudo unless it means to.
+    base = {
+        "espeak-ng": "exit 0\n",
+        "ldconfig": "printf 'libportaudio.so\\nlibsndfile.so\\n'\nexit 0\n",
+        "loginctl": 'if [[ "$1" == show-user ]]; then printf "yes\\n"; fi\nexit 0\n',
+        "sudo": 'printf \'%s\\n\' "$*" >> "${DAX_MOCK_SUDO_LOG:-/dev/null}"\nexit 0\n',
+    }
+    for name, content in {**base, **scripts}.items():
+        path = mock_bin / name
+        path.write_text(f"#!/usr/bin/env bash\n{content}", encoding="utf-8")
+        path.chmod(0o755)
+    return mock_bin
 
 
 def _run_installer(
     tmp_path: Path,
-    manifest: Path,
-    checksums: Path,
-    distro: str,
     *arguments: str,
+    manifest: Path | str | None = None,
+    checksums: Path | None = None,
+    distro: str = "fedora",
     arch: str = "x86_64",
     check: bool = True,
-    fail_attestation: bool = False,
-    tag_commit: str = "a" * 40,
-    provide_gh: bool = True,
-    dry_run: bool = True,
+    provide_gh: bool = False,
+    scripts: dict[str, str] | None = None,
     extra_env: dict[str, str] | None = None,
 ) -> subprocess.CompletedProcess[str]:
     os_release = tmp_path / f"os-release-{distro}"
@@ -82,506 +118,18 @@ def _run_installer(
         os_release.write_text('ID="fedora"\nID_LIKE="fedora"\n', encoding="utf-8")
     else:
         os_release.write_text('ID="debian"\nID_LIKE="debian"\n', encoding="utf-8")
-    mock_bin = tmp_path / "bin"
-    mock_bin.mkdir(exist_ok=True)
+
+    scripts = dict(scripts or {})
     if provide_gh:
-        gh = mock_bin / "gh"
-        gh.write_text(
-            "#!/usr/bin/env bash\n"
-            'printf \'%s\\n\' "$*" >> "$DAX_MOCK_GH_LOG"\n'
-            'if [[ "${DAX_MOCK_GH_FAIL:-0}" == 1 && "${1:-}" == attestation ]]; then exit 1; fi\n'
-            'if [[ "${1:-}" == api ]]; then\n'
-            "  printf '%s\\n' \"${DAX_MOCK_TAG_COMMIT:-"
-            'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa}"\n'
-            "fi\n",
-            encoding="utf-8",
+        scripts.setdefault(
+            "gh",
+            'printf \'%s\\n\' "$*" >> "${DAX_MOCK_GH_LOG:-/dev/null}"\n'
+            'if [[ "${DAX_MOCK_GH_FAIL:-0}" == 1 && "$1" == attestation ]]; then exit 1; fi\n'
+            "exit 0\n",
         )
-        gh.chmod(0o755)
-    env = {
-        **os.environ,
-        "HOME": str(tmp_path / "home"),
-        "XDG_DATA_HOME": str(tmp_path / "home/.local/share"),
-        "XDG_STATE_HOME": str(tmp_path / "home/.local/state"),
-        "XDG_CACHE_HOME": str(tmp_path / "home/.cache"),
-        "XDG_CONFIG_HOME": str(tmp_path / "home/.config"),
-        "DAX_OS_RELEASE_FILE": str(os_release),
-        "DAX_UNAME_MACHINE": arch,
-        "DAX_RELEASE_REPOSITORY": "daxrpm/dax-assistant",
-        "DAX_MOCK_GH_LOG": str(tmp_path / "gh.log"),
-        "DAX_MOCK_GH_FAIL": "1" if fail_attestation else "0",
-        "DAX_MOCK_TAG_COMMIT": tag_commit,
-        "DAX_GH_COMMAND": "gh" if provide_gh else "dax-missing-gh",
-        "PATH": f"{mock_bin}{os.pathsep}{os.environ['PATH']}",
-        **(extra_env or {}),
-    }
-    command = [
-        "bash",
-        "scripts/install.sh",
-        "--manifest",
-        str(manifest),
-        "--checksums",
-        str(checksums),
-        "--yes",
-        "--version",
-        "0.1.0",
-    ]
-    if dry_run:
-        command.append("--dry-run")
-    command.extend(arguments)
-    return subprocess.run(
-        command,
-        cwd=ROOT,
-        check=check,
-        capture_output=True,
-        text=True,
-        env=env,
-    )
-
-
-def test_installer_dry_run_selects_fedora_rpm_and_both_components(tmp_path: Path) -> None:
-    manifest, checksums = _release_fixture(tmp_path)
-    result = _run_installer(tmp_path, manifest, checksums, "fedora", "--both")
-    assert "Distribution: rpm" in result.stdout
-    assert "backend wheel" in result.stdout
-    assert "desktop-rpm" not in result.stdout
-    assert ".rpm" in result.stdout
-    assert "Android" not in result.stdout
-
-
-def test_installer_dry_run_selects_debian_deb(tmp_path: Path) -> None:
-    manifest, checksums = _release_fixture(tmp_path)
-    result = _run_installer(tmp_path, manifest, checksums, "debian", "--desktop-only")
-    assert "Distribution: deb" in result.stdout
-    assert "apt-get install desktop" in result.stdout
-    assert ".deb" in result.stdout
-    assert "backend wheel" not in result.stdout
-
-
-def test_installer_rejects_manifest_hash_mismatch(tmp_path: Path) -> None:
-    manifest, checksums = _release_fixture(tmp_path)
-    checksums.write_text(f"{'0' * 64}  release-manifest.json\n", encoding="utf-8")
-    result = _run_installer(tmp_path, manifest, checksums, "fedora", check=False)
-    assert result.returncode != 0
-    assert "SHA256 mismatch for release-manifest.json" in result.stderr
-
-
-def test_installer_fails_closed_when_attestation_verification_fails(tmp_path: Path) -> None:
-    manifest, checksums = _release_fixture(tmp_path)
-    result = _run_installer(
-        tmp_path, manifest, checksums, "fedora", check=False, fail_attestation=True
-    )
-    assert result.returncode != 0
-    assert "attestation verification failed for release-manifest.json" in result.stderr
-
-
-def test_installer_fails_closed_when_gh_is_unavailable(tmp_path: Path) -> None:
-    manifest, checksums = _release_fixture(tmp_path)
-    result = _run_installer(tmp_path, manifest, checksums, "fedora", check=False, provide_gh=False)
-    assert result.returncode != 0
-    assert "gh is required for release attestation verification" in result.stderr
-
-
-def test_installer_attestation_bypass_is_explicit_and_loud(tmp_path: Path) -> None:
-    manifest, checksums = _release_fixture(tmp_path)
-    result = _run_installer(
-        tmp_path,
-        manifest,
-        checksums,
-        "fedora",
-        "--insecure-skip-attestation",
-        fail_attestation=True,
-    )
-    assert "[WARNING] INSECURE" in result.stderr
-    assert "release-manifest.json" in result.stderr
-
-
-def test_installer_attests_manifest_lock_units_and_installed_artifacts(tmp_path: Path) -> None:
-    manifest, checksums = _release_fixture(tmp_path)
-    _run_installer(tmp_path, manifest, checksums, "fedora", "--backend-only", "--with-node")
-    calls = (tmp_path / "gh.log").read_text(encoding="utf-8")
-    for name in (
-        "release-manifest.json",
-        "backend-requirements.txt",
-        "dax-assistant.service",
-        "dax-assistant-node.service",
-        ".whl",
-    ):
-        assert name in calls
-    assert calls.count("attestation verify") == 5
-
-
-def test_installer_rejects_release_without_host_architecture(tmp_path: Path) -> None:
-    manifest, checksums = _release_fixture(tmp_path, arch="aarch64")
-    result = _run_installer(tmp_path, manifest, checksums, "fedora", arch="x86_64", check=False)
-    assert result.returncode != 0
-    assert "release does not support x86_64/rpm" in result.stderr
-
-
-def test_node_unit_is_never_auto_started(tmp_path: Path) -> None:
-    manifest, checksums = _release_fixture(tmp_path)
-    result = _run_installer(
-        tmp_path, manifest, checksums, "fedora", "--backend-only", "--with-node"
-    )
-    assert "without enabling or starting it" in result.stdout
-    installer = (ROOT / "scripts/install.sh").read_text(encoding="utf-8")
-    assert "enable --now dax-assistant-node" not in installer
-    node_unit = (ROOT / "systemd/dax-assistant-node.service").read_text(encoding="utf-8")
-    assert "ConditionPathExists=" in node_unit
-
-
-def test_node_only_selects_runtime_without_backend_service(tmp_path: Path) -> None:
-    manifest, checksums = _release_fixture(tmp_path)
-    result = _run_installer(tmp_path, manifest, checksums, "fedora", "--node-only")
-    calls = (tmp_path / "gh.log").read_text(encoding="utf-8")
-    assert "capability-node runtime wheel" in result.stdout
-    assert "without enabling or starting it" in result.stdout
-    assert "dax-assistant-node.service" in calls
-    assert "dax-assistant.service" not in calls
-    assert ".rpm" not in result.stdout
-
-
-def test_node_unit_uses_separate_runtime_from_authority() -> None:
-    node_unit = (ROOT / "systemd/dax-assistant-node.service").read_text(encoding="utf-8")
-    assert "/node-current/.venv/bin/dax edge run" in node_unit
-    assert "/current/.venv/bin/dax edge run" not in node_unit
-
-
-def test_node_only_install_never_installs_or_starts_an_authority(tmp_path: Path) -> None:
-    manifest, checksums = _release_fixture(tmp_path)
-    mock_bin = tmp_path / "bin"
-    mock_bin.mkdir()
-    for name, content in {
-        "sudo": "exit 0\n",
-        "systemctl": (
-            'printf \'%s\\n\' "$*" >> "$DAX_MOCK_SYSTEMCTL_LOG"\n'
-            'if [[ "$*" == *"is-active"* || "$*" == *"is-enabled"* ]]; then exit 1; fi\n'
-            "exit 0\n"
-        ),
-        "uv": (
-            'if [[ "$1 $2" == "python find" ]]; then printf \'%s\\n\' /usr/bin/python3; fi\n'
-            'if [[ "$1" == venv ]]; then mkdir -p "${@: -1}/bin"; fi\n'
-            "exit 0\n"
-        ),
-    }.items():
-        path = mock_bin / name
-        path.write_text(f"#!/usr/bin/env bash\n{content}", encoding="utf-8")
-        path.chmod(0o755)
-
-    systemctl_log = tmp_path / "systemctl.log"
-    result = _run_installer(
-        tmp_path,
-        manifest,
-        checksums,
-        "fedora",
-        "--node-only",
-        dry_run=False,
-        check=False,
-        extra_env={"DAX_MOCK_SYSTEMCTL_LOG": str(systemctl_log)},
-    )
+    mock_bin = _mock_bin(tmp_path, scripts)
 
     home = tmp_path / "home"
-    assert result.returncode == 0, result.stderr
-    assert not (home / ".config/systemd/user/dax-assistant.service").exists()
-    assert (home / ".config/systemd/user/dax-assistant-node.service").exists()
-    assert (home / ".local/share/dax-assistant/node-current").is_symlink()
-    calls = systemctl_log.read_text(encoding="utf-8")
-    assert "dax-assistant.service" not in calls
-    assert "enable --now dax-assistant-node.service" not in calls
-
-
-def test_manifest_version_is_bound_to_selected_tag(tmp_path: Path) -> None:
-    manifest, checksums = _release_fixture(tmp_path)
-    result = _run_installer(
-        tmp_path, manifest, checksums, "fedora", "--version", "0.2.0", check=False
-    )
-    assert result.returncode != 0
-    assert "does not match --version 0.2.0" in result.stderr
-
-
-def test_manifest_commit_is_bound_to_selected_tag(tmp_path: Path) -> None:
-    manifest, checksums = _release_fixture(tmp_path)
-    result = _run_installer(
-        tmp_path, manifest, checksums, "fedora", check=False, tag_commit="b" * 40
-    )
-    assert result.returncode != 0
-    assert "does not match tag v0.1.0" in result.stderr
-
-
-def test_readiness_failure_restores_previous_backend_and_service(tmp_path: Path) -> None:
-    manifest, checksums = _release_fixture(tmp_path)
-    mock_bin = tmp_path / "bin"
-    mock_bin.mkdir()
-    for name, content in {
-        "sudo": "exit 0\n",
-        "systemctl": (
-            'printf \'%s\\n\' "$*" >> "$DAX_MOCK_SYSTEMCTL_LOG"\n'
-            'if [[ "$*" == *"is-active --quiet dax-assistant.service"* ]]; then exit 0; fi\n'
-            'if [[ "$*" == *"is-enabled --quiet dax-assistant.service"* ]]; then exit 0; fi\n'
-            'if [[ "$*" == *"is-active"* || "$*" == *"is-enabled"* ]]; then exit 1; fi\n'
-            "exit 0\n"
-        ),
-        "uv": (
-            'printf \'%s\\n\' "$*" >> "$DAX_MOCK_UV_LOG"\n'
-            'if [[ "$1 $2" == "python find" ]]; then printf \'%s\\n\' /usr/bin/python3; fi\n'
-            'if [[ "$1" == venv ]]; then mkdir -p "${@: -1}/bin"; fi\n'
-            "exit 0\n"
-        ),
-    }.items():
-        path = mock_bin / name
-        path.write_text(f"#!/usr/bin/env bash\n{content}", encoding="utf-8")
-        path.chmod(0o755)
-
-    home = tmp_path / "home"
-    previous = home / ".local/share/dax-assistant/releases/0.0.9"
-    previous.mkdir(parents=True)
-    current = previous.parent.parent / "current"
-    current.symlink_to(previous)
-    result = _run_installer(
-        tmp_path,
-        manifest,
-        checksums,
-        "fedora",
-        "--backend-only",
-        dry_run=False,
-        check=False,
-        extra_env={
-            "DAX_READINESS_TIMEOUT_SECONDS": "0",
-            "DAX_MOCK_SYSTEMCTL_LOG": str(tmp_path / "systemctl.log"),
-            "DAX_MOCK_UV_LOG": str(tmp_path / "uv.log"),
-        },
-    )
-    assert result.returncode != 0
-    assert current.resolve() == previous
-    assert "restored the previous current target and service" in result.stderr
-    assert "restart dax-assistant.service" in (tmp_path / "systemctl.log").read_text()
-    assert "--require-hashes" in (tmp_path / "uv.log").read_text()
-
-
-def _run_mocked_backend_upgrade(
-    tmp_path: Path,
-    health: dict[str, object],
-    *,
-    service_active_after_restart: bool = True,
-    deactivate_after_health: bool = False,
-    arguments: tuple[str, ...] = (),
-) -> tuple[subprocess.CompletedProcess[str], Path, Path]:
-    manifest, checksums = _release_fixture(tmp_path)
-    mock_bin = tmp_path / "bin"
-    mock_bin.mkdir()
-    health_path = tmp_path / "health.json"
-    health_path.write_text(json.dumps(health), encoding="utf-8")
-    for name, content in {
-        "sudo": "exit 0\n",
-        "sleep": "exit 0\n",
-        "curl": (
-            'touch "$DAX_MOCK_HEALTH_CALLED"\n'
-            'command cat "$DAX_MOCK_HEALTH_JSON"\n'
-        ),
-        "systemctl": (
-            'printf \'%s\\n\' "$*" >> "$DAX_MOCK_SYSTEMCTL_LOG"\n'
-            'if [[ "$*" == *"is-active --quiet dax-assistant-node.service"* || '
-            '"$*" == *"is-enabled --quiet dax-assistant-node.service"* ]]; then exit 1; fi\n'
-            'if [[ "$*" == *"is-active --quiet dax-assistant.service"* ]]; then\n'
-            '  count=0\n'
-            '  [[ ! -f "$DAX_MOCK_ACTIVE_COUNT" ]] || '
-            'count="$(<"$DAX_MOCK_ACTIVE_COUNT")"\n'
-            '  count=$((count + 1)); printf \'%s\' "$count" > "$DAX_MOCK_ACTIVE_COUNT"\n'
-            '  [[ "$count" -eq 1 ]] && exit 0\n'
-            '  [[ "$DAX_MOCK_SERVICE_ACTIVE" == 1 ]] || exit 1\n'
-            '  [[ "$DAX_MOCK_DEACTIVATE_AFTER_HEALTH" != 1 || ! -f "$DAX_MOCK_HEALTH_CALLED" ]]\n'
-            '  exit\n'
-            'fi\n'
-            'if [[ "$*" == *"is-enabled --quiet dax-assistant.service"* ]]; then exit 0; fi\n'
-            "exit 0\n"
-        ),
-        "uv": (
-            'if [[ "$1 $2" == "python find" ]]; then printf \'%s\\n\' /usr/bin/python3; fi\n'
-            'if [[ "$1" == venv ]]; then mkdir -p "${@: -1}/bin"; fi\n'
-            "exit 0\n"
-        ),
-    }.items():
-        path = mock_bin / name
-        path.write_text(f"#!/usr/bin/env bash\n{content}", encoding="utf-8")
-        path.chmod(0o755)
-
-    home = tmp_path / "home"
-    previous = home / ".local/share/dax-assistant/releases/0.0.9"
-    previous.mkdir(parents=True)
-    current = previous.parent.parent / "current"
-    current.symlink_to(previous)
-    result = _run_installer(
-        tmp_path,
-        manifest,
-        checksums,
-        "fedora",
-        "--backend-only",
-        *arguments,
-        dry_run=False,
-        check=False,
-        extra_env={
-            "DAX_READINESS_TIMEOUT_SECONDS": "1",
-            "DAX_MOCK_SYSTEMCTL_LOG": str(tmp_path / "systemctl.log"),
-            "DAX_MOCK_ACTIVE_COUNT": str(tmp_path / "active-count"),
-            "DAX_MOCK_HEALTH_JSON": str(health_path),
-            "DAX_MOCK_HEALTH_CALLED": str(tmp_path / "health-called"),
-            "DAX_MOCK_SERVICE_ACTIVE": "1" if service_active_after_restart else "0",
-            "DAX_MOCK_DEACTIVATE_AFTER_HEALTH": "1" if deactivate_after_health else "0",
-        },
-    )
-    return result, current, previous
-
-
-def test_upgrade_accepts_complete_health_contract_from_active_service(tmp_path: Path) -> None:
-    result, current, previous = _run_mocked_backend_upgrade(
-        tmp_path,
-        {
-            "status": "ok",
-            "liveness": True,
-            "readiness": True,
-            "role": "authoritative",
-            "api_protocol": "dax",
-            "api_version": 1,
-            "instance_id": "instance-1",
-        },
-    )
-
-    assert result.returncode == 0, result.stderr
-    assert current.resolve() != previous
-
-
-@pytest.mark.parametrize(
-    ("field", "invalid"),
-    [
-        ("status", "starting"),
-        ("liveness", False),
-        ("readiness", False),
-        ("role", "edge"),
-        ("api_protocol", "foreign"),
-        ("api_version", 2),
-        ("instance_id", ""),
-    ],
-)
-def test_upgrade_rejects_incomplete_health_contract(
-    tmp_path: Path, field: str, invalid: object
-) -> None:
-    health: dict[str, object] = {
-        "status": "ok",
-        "liveness": True,
-        "readiness": True,
-        "role": "authoritative",
-        "api_protocol": "dax",
-        "api_version": 1,
-        "instance_id": "instance-1",
-    }
-    health[field] = invalid
-
-    result, current, previous = _run_mocked_backend_upgrade(
-        tmp_path, health, deactivate_after_health=True
-    )
-
-    assert result.returncode != 0
-    assert current.resolve() == previous
-    assert "restored the previous current target and service" in result.stderr
-
-
-def test_stale_health_listener_cannot_mask_failed_service_restart(tmp_path: Path) -> None:
-    result, current, previous = _run_mocked_backend_upgrade(
-        tmp_path,
-        {
-            "status": "ok",
-            "liveness": True,
-            "readiness": True,
-            "role": "authoritative",
-            "api_protocol": "dax",
-            "api_version": 1,
-            "instance_id": "stale-instance",
-        },
-        service_active_after_restart=False,
-    )
-
-    assert result.returncode != 0
-    assert current.resolve() == previous
-    assert not (tmp_path / "health-called").exists()
-    assert "restart dax-assistant.service" in (tmp_path / "systemctl.log").read_text()
-
-
-_HEALTHY = {
-    "status": "ok",
-    "liveness": True,
-    "readiness": True,
-    "role": "authoritative",
-    "api_protocol": "dax",
-    "api_version": 1,
-    "instance_id": "instance-1",
-}
-
-
-def test_successful_upgrade_prunes_superseded_releases(tmp_path: Path) -> None:
-    result, current, previous = _run_mocked_backend_upgrade(
-        tmp_path, dict(_HEALTHY), arguments=("--keep", "1")
-    )
-
-    assert result.returncode == 0, result.stderr
-    assert current.resolve() != previous
-    assert not previous.exists()
-
-
-def test_retention_never_removes_the_active_release(tmp_path: Path) -> None:
-    result, current, previous = _run_mocked_backend_upgrade(tmp_path, dict(_HEALTHY))
-
-    assert result.returncode == 0, result.stderr
-    assert current.resolve().exists()
-    assert previous.exists()
-
-
-def _lifecycle_home(tmp_path: Path, versions: tuple[str, ...], active: str) -> Path:
-    home = tmp_path / "home"
-    releases = home / ".local/share/dax-assistant/releases"
-    for version in versions:
-        binaries = releases / version / ".venv/bin"
-        binaries.mkdir(parents=True)
-        python = binaries / "python"
-        # Stands in for the release interpreter that runs the sqlite3 backup
-        # script, so a rollback produces a real backup file to chmod.
-        python.write_text(
-            '#!/usr/bin/env bash\n[[ $# -lt 3 ]] || cp "$2" "$3"\nexit 0\n', encoding="utf-8"
-        )
-        python.chmod(0o755)
-    (releases.parent / "current").symlink_to(releases / active)
-    units = home / ".config/systemd/user"
-    units.mkdir(parents=True)
-    (units / "dax-assistant.service").write_text("[Unit]\n", encoding="utf-8")
-    state = home / ".local/state/dax-assistant"
-    state.mkdir(parents=True)
-    (state / "dax.db").write_text("database", encoding="utf-8")
-    (state / "dax.key").write_text("key", encoding="utf-8")
-    return home
-
-
-def _run_lifecycle(
-    tmp_path: Path,
-    home: Path,
-    *arguments: str,
-    check: bool = True,
-    healthy: bool = True,
-) -> subprocess.CompletedProcess[str]:
-    mock_bin = tmp_path / "bin"
-    mock_bin.mkdir(exist_ok=True)
-    health_path = tmp_path / "health.json"
-    health_path.write_text(json.dumps(_HEALTHY), encoding="utf-8")
-    for name, content in {
-        "systemctl": (
-            'printf \'%s\\n\' "$*" >> "$DAX_MOCK_SYSTEMCTL_LOG"\n'
-            'if [[ "$*" == *is-active* && "$DAX_MOCK_HEALTHY" != 1 ]]; then exit 1; fi\n'
-            "exit 0\n"
-        ),
-        "curl": 'touch "$DAX_MOCK_CURL_CALLED"\ncommand cat "$DAX_MOCK_HEALTH_JSON"\n',
-        "gh": 'touch "$DAX_MOCK_GH_CALLED"\nexit 0\n',
-        "sleep": "exit 0\n",
-    }.items():
-        path = mock_bin / name
-        path.write_text(f"#!/usr/bin/env bash\n{content}", encoding="utf-8")
-        path.chmod(0o755)
     env = {
         **os.environ,
         "HOME": str(home),
@@ -589,142 +137,538 @@ def _run_lifecycle(
         "XDG_STATE_HOME": str(home / ".local/state"),
         "XDG_CACHE_HOME": str(home / ".cache"),
         "XDG_CONFIG_HOME": str(home / ".config"),
-        "DAX_READINESS_TIMEOUT_SECONDS": "5",
-        "DAX_MOCK_SYSTEMCTL_LOG": str(tmp_path / "systemctl.log"),
-        "DAX_MOCK_HEALTH_JSON": str(health_path),
-        "DAX_MOCK_HEALTHY": "1" if healthy else "0",
-        "DAX_MOCK_CURL_CALLED": str(tmp_path / "curl-called"),
-        "DAX_MOCK_GH_CALLED": str(tmp_path / "gh-called"),
+        "DAX_OS_RELEASE_FILE": str(os_release),
+        "DAX_UNAME_MACHINE": arch,
+        "DAX_RELEASE_REPOSITORY": "daxrpm/dax-assistant",
         "PATH": f"{mock_bin}{os.pathsep}{os.environ['PATH']}",
+        **(extra_env or {}),
     }
+    command = ["bash", "scripts/install.sh", *arguments]
+    if manifest is not None:
+        command += ["--manifest", str(manifest), "--checksums", str(checksums)]
     return subprocess.run(
-        ["bash", "scripts/install.sh", *arguments],
-        cwd=ROOT,
-        check=check,
-        capture_output=True,
-        text=True,
-        env=env,
+        command, cwd=ROOT, check=check, capture_output=True, text=True, env=env
     )
 
 
-def test_list_marks_the_active_release(tmp_path: Path) -> None:
-    home = _lifecycle_home(tmp_path, ("0.0.9", "0.1.0", "0.1.2"), "0.1.0")
-    result = _run_lifecycle(tmp_path, home, "list")
-
-    assert "0.1.0  (active)" in result.stdout
-    assert "0.1.2\n" in result.stdout
-    # Newest first, so a reader sees what an unpinned install would move to.
-    assert result.stdout.index("0.1.2") < result.stdout.index("0.0.9")
+# --------------------------------------------------------------- verification
 
 
-def test_lifecycle_commands_never_invoke_gh(tmp_path: Path) -> None:
-    home = _lifecycle_home(tmp_path, ("0.1.0",), "0.1.0")
-    _run_lifecycle(tmp_path, home, "list")
-    _run_lifecycle(tmp_path, home, "uninstall", "--dry-run")
+def test_dry_run_verifies_a_release_without_installing(tmp_path: Path) -> None:
+    manifest, checksums = _release_fixture(tmp_path)
+    result = _run_installer(
+        tmp_path, "--all", "--yes", "--dry-run", manifest=manifest, checksums=checksums
+    )
+    assert f"Dax {VERSION}" in result.stdout
+    assert "nothing installed" in result.stdout
+    assert not (tmp_path / "home/.local/share/dax-assistant/releases").exists()
 
-    assert not (tmp_path / "gh-called").exists()
-    assert not (tmp_path / "curl-called").exists()
+
+@pytest.mark.parametrize(("distro", "expected"), [("fedora", ".rpm"), ("debian", ".deb")])
+def test_dry_run_selects_the_package_for_the_distribution(
+    tmp_path: Path, distro: str, expected: str
+) -> None:
+    manifest, checksums = _release_fixture(tmp_path)
+    result = _run_installer(
+        tmp_path,
+        "--desktop",
+        "--yes",
+        "--dry-run",
+        distro=distro,
+        manifest=manifest,
+        checksums=checksums,
+    )
+    assert expected in result.stdout
+
+
+def test_a_release_without_the_host_architecture_is_refused(tmp_path: Path) -> None:
+    manifest, checksums = _release_fixture(tmp_path, arch="aarch64")
+    result = _run_installer(
+        tmp_path,
+        "--desktop",
+        "--yes",
+        "--dry-run",
+        arch="x86_64",
+        manifest=manifest,
+        checksums=checksums,
+        check=False,
+    )
+    assert result.returncode != 0
+
+
+def test_a_tampered_manifest_is_rejected(tmp_path: Path) -> None:
+    manifest, checksums = _release_fixture(tmp_path)
+    checksums.write_text(f"{'0' * 64}  release-manifest.json\n", encoding="utf-8")
+    result = _run_installer(
+        tmp_path,
+        "--backend",
+        "--yes",
+        "--dry-run",
+        manifest=manifest,
+        checksums=checksums,
+        check=False,
+    )
+    assert result.returncode != 0
+    assert "does not match the release SHA256SUMS" in result.stderr
+
+
+def test_a_tampered_artifact_is_rejected(tmp_path: Path) -> None:
+    manifest, _ = _release_fixture(tmp_path)
+    document = json.loads(manifest.read_text(encoding="utf-8"))
+    for artifact in document["artifacts"]:
+        if artifact["role"] == "backend-wheel":
+            artifact["sha256"] = "1" * 64
+    manifest, checksums = _write_manifest(tmp_path, document["artifacts"])
+    result = _run_installer(
+        tmp_path,
+        "--backend",
+        "--yes",
+        "--dry-run",
+        manifest=manifest,
+        checksums=checksums,
+        check=False,
+    )
+    assert result.returncode != 0
+    assert "failed its SHA-256 check" in result.stderr
+
+
+def test_an_artifact_size_that_disagrees_with_the_manifest_is_rejected(
+    tmp_path: Path,
+) -> None:
+    manifest, _ = _release_fixture(tmp_path)
+    document = json.loads(manifest.read_text(encoding="utf-8"))
+    for artifact in document["artifacts"]:
+        if artifact["role"] == "backend-wheel":
+            artifact["size"] = 999_999
+    manifest, checksums = _write_manifest(tmp_path, document["artifacts"])
+    result = _run_installer(
+        tmp_path,
+        "--backend",
+        "--yes",
+        "--dry-run",
+        manifest=manifest,
+        checksums=checksums,
+        check=False,
+    )
+    assert result.returncode != 0
+    assert "the manifest says" in result.stderr
+
+
+def test_an_incompatible_api_version_is_refused(tmp_path: Path) -> None:
+    manifest, _ = _release_fixture(tmp_path)
+    document = json.loads(manifest.read_text(encoding="utf-8"))
+    compatibility = dict(document["api_compatibility"], backend="99")
+    manifest, checksums = _write_manifest(
+        tmp_path, document["artifacts"], api_compatibility=compatibility
+    )
+    result = _run_installer(
+        tmp_path,
+        "--backend",
+        "--yes",
+        "--dry-run",
+        manifest=manifest,
+        checksums=checksums,
+        check=False,
+    )
+    assert result.returncode != 0
+    assert "backend API 99" in result.stderr
+
+
+def test_a_pinned_version_must_match_the_manifest(tmp_path: Path) -> None:
+    manifest, checksums = _release_fixture(tmp_path)
+    result = _run_installer(
+        tmp_path,
+        "--backend",
+        "--yes",
+        "--dry-run",
+        "--version",
+        "9.9.9",
+        manifest=manifest,
+        checksums=checksums,
+        check=False,
+    )
+    assert result.returncode != 0
+    assert "asked for 9.9.9" in result.stderr
+
+
+def test_a_local_manifest_installs_without_provenance(tmp_path: Path) -> None:
+    # Build provenance attests a published artifact. A manifest handed over on
+    # disk was never published, so the digest chain is the whole guarantee and
+    # the installer should say so rather than warn about a missing signature.
+    manifest, checksums = _release_fixture(tmp_path)
+    result = _run_installer(
+        tmp_path, "--backend", "--yes", "--dry-run", manifest=manifest, checksums=checksums
+    )
+    assert "provenance does not apply" in result.stdout
+    assert "did not verify" not in result.stdout
+
+
+def test_require_attestation_refuses_a_local_manifest(tmp_path: Path) -> None:
+    manifest, checksums = _release_fixture(tmp_path)
+    result = _run_installer(
+        tmp_path,
+        "--backend",
+        "--yes",
+        "--dry-run",
+        "--require-attestation",
+        manifest=manifest,
+        checksums=checksums,
+        check=False,
+    )
+    assert result.returncode != 0
+    assert "cannot apply to a local --manifest" in result.stderr
+
+
+def test_provenance_is_optional_for_a_published_release_but_can_be_demanded() -> None:
+    # The remote path needs a real release to exercise end to end; assert the
+    # contract the script encodes: gh is consulted only when present, a failure
+    # is a warning by default, and --require-attestation upgrades it to fatal.
+    installer = (ROOT / "scripts/install.sh").read_text(encoding="utf-8")
+    assert "if ! have gh || ! gh auth status" in installer
+    assert "Provenance not checked" in installer
+    assert 'die "--require-attestation needs the GitHub CLI, authenticated"' in installer
+    assert 'die "build provenance did not verify' in installer
+
+
+# ------------------------------------------------------------------ installs
+
+
+def _backend_install(
+    tmp_path: Path,
+    health: dict[str, object],
+    *,
+    arguments: tuple[str, ...] = (),
+    service_active: bool = True,
+) -> tuple[subprocess.CompletedProcess[str], Path, Path]:
+    manifest, checksums = _release_fixture(tmp_path)
+    health_path = tmp_path / "health.json"
+    health_path.write_text(json.dumps(health), encoding="utf-8")
+
+    scripts = {
+        "sleep": "exit 0\n",
+        "curl": 'command cat "$DAX_MOCK_HEALTH_JSON"\n',
+        "systemctl": (
+            'printf \'%s\\n\' "$*" >> "$DAX_MOCK_SYSTEMCTL_LOG"\n'
+            'if [[ "$*" == *"is-active --quiet dax-assistant-node.service"* ]]; then exit 1; fi\n'
+            'if [[ "$*" == *"is-active --quiet dax-assistant.service"* ]]; then\n'
+            '  [[ "$DAX_MOCK_SERVICE_ACTIVE" == 1 ]] || exit 1\n'
+            "fi\n"
+            "exit 0\n"
+        ),
+        "uv": (
+            'printf \'%s\\n\' "$*" >> "${DAX_MOCK_UV_LOG:-/dev/null}"\n'
+            'if [[ "$1 $2" == "python find" ]]; then printf \'%s\\n\' /usr/bin/python3; fi\n'
+            'if [[ "$1" == venv ]]; then mkdir -p "${@: -1}/bin"; fi\n'
+            "exit 0\n"
+        ),
+    }
+
+    home = tmp_path / "home"
+    previous = home / ".local/share/dax-assistant/releases/0.0.9"
+    (previous / ".venv/bin").mkdir(parents=True)
+    current = previous.parent.parent / "current"
+    current.symlink_to(previous)
+
+    result = _run_installer(
+        tmp_path,
+        "--backend",
+        "--yes",
+        "--no-account",
+        *arguments,
+        manifest=manifest,
+        checksums=checksums,
+        scripts=scripts,
+        check=False,
+        extra_env={
+            "DAX_READINESS_TIMEOUT_SECONDS": "1",
+            "DAX_MOCK_SYSTEMCTL_LOG": str(tmp_path / "systemctl.log"),
+            "DAX_MOCK_HEALTH_JSON": str(health_path),
+            "DAX_MOCK_SERVICE_ACTIVE": "1" if service_active else "0",
+            "DAX_MOCK_SUDO_LOG": str(tmp_path / "sudo.log"),
+            "DAX_MOCK_UV_LOG": str(tmp_path / "uv.log"),
+        },
+    )
+    return result, current, previous
+
+
+def test_a_ready_backend_becomes_the_current_release(tmp_path: Path) -> None:
+    result, current, _ = _backend_install(tmp_path, _HEALTHY)
+    assert result.returncode == 0, result.stderr
+    assert current.resolve().name == VERSION
+    # Dependencies come from the release's hash-locked file, never re-resolved.
+    assert "--require-hashes" in (tmp_path / "uv.log").read_text(encoding="utf-8")
+
+
+@pytest.mark.parametrize(
+    "missing",
+    ["status", "role", "api_protocol", "api_version", "liveness", "readiness", "instance_id"],
+)
+def test_an_incomplete_health_contract_is_not_readiness(tmp_path: Path, missing: str) -> None:
+    health = dict(_HEALTHY)
+    health.pop(missing)
+    result, current, previous = _backend_install(tmp_path, health)
+    assert result.returncode != 0
+    # An unready release must never be left as the current target.
+    assert current.resolve() == previous.resolve()
+
+
+def test_a_backend_that_never_becomes_ready_restores_its_predecessor(tmp_path: Path) -> None:
+    result, current, previous = _backend_install(tmp_path, dict(_HEALTHY, readiness=False))
+    assert result.returncode != 0
+    assert "never became ready" in result.stderr
+    assert current.resolve() == previous.resolve()
+    assert "restart dax-assistant.service" in (tmp_path / "systemctl.log").read_text(
+        encoding="utf-8"
+    )
+
+
+def test_a_stopped_service_cannot_be_masked_by_a_stale_health_listener(
+    tmp_path: Path,
+) -> None:
+    # Something else answering on the port must not count as our backend being up.
+    result, current, previous = _backend_install(tmp_path, _HEALTHY, service_active=False)
+    assert result.returncode != 0
+    assert current.resolve() == previous.resolve()
+
+
+def test_installing_never_escalates_when_audio_libraries_are_present(tmp_path: Path) -> None:
+    result, _, _ = _backend_install(tmp_path, _HEALTHY)
+    assert result.returncode == 0
+    sudo_log = tmp_path / "sudo.log"
+    assert not sudo_log.exists() or not sudo_log.read_text(encoding="utf-8").strip()
+    assert "already present" in result.stdout
+
+
+def test_retention_prunes_old_releases_but_never_the_active_one(tmp_path: Path) -> None:
+    releases = tmp_path / "home/.local/share/dax-assistant/releases"
+    for version in ("0.0.1", "0.0.2", "0.0.3", "0.0.4"):
+        (releases / version).mkdir(parents=True)
+    result, current, _ = _backend_install(tmp_path, _HEALTHY, arguments=("--keep", "2"))
+    assert result.returncode == 0
+    remaining = sorted(path.name for path in releases.iterdir())
+    assert VERSION in remaining
+    assert "0.0.1" not in remaining
+    assert current.resolve().name == VERSION
+
+
+def test_the_node_installs_stopped_and_never_starts_an_authority(tmp_path: Path) -> None:
+    manifest, checksums = _release_fixture(tmp_path)
+    scripts = {
+        "systemctl": (
+            'printf \'%s\\n\' "$*" >> "$DAX_MOCK_SYSTEMCTL_LOG"\n'
+            'if [[ "$*" == *"is-active"* || "$*" == *"is-enabled"* ]]; then exit 1; fi\n'
+            "exit 0\n"
+        ),
+        "uv": (
+            'if [[ "$1 $2" == "python find" ]]; then printf \'%s\\n\' /usr/bin/python3; fi\n'
+            'if [[ "$1" == venv ]]; then mkdir -p "${@: -1}/bin"; fi\n'
+            "exit 0\n"
+        ),
+    }
+    log = tmp_path / "systemctl.log"
+    result = _run_installer(
+        tmp_path,
+        "--node",
+        "--yes",
+        manifest=manifest,
+        checksums=checksums,
+        scripts=scripts,
+        check=False,
+        extra_env={"DAX_MOCK_SYSTEMCTL_LOG": str(log)},
+    )
+    assert result.returncode == 0, result.stderr
+    home = tmp_path / "home"
+    assert (home / ".config/systemd/user/dax-assistant-node.service").exists()
+    assert not (home / ".config/systemd/user/dax-assistant.service").exists()
+    assert (home / ".local/share/dax-assistant/node-current").is_symlink()
+    commands = log.read_text(encoding="utf-8")
+    assert "enable --now dax-assistant-node.service" not in commands
+    assert "start dax-assistant-node.service" not in commands
+    assert "dax-assistant.service" not in commands
+
+
+def test_the_node_unit_uses_a_runtime_separate_from_the_authority() -> None:
+    node_unit = (ROOT / "systemd/dax-assistant-node.service").read_text(encoding="utf-8")
+    assert "/node-current/.venv/bin/dax edge run" in node_unit
+    assert "/current/.venv/bin/dax edge run" not in node_unit
+    assert "ConditionPathExists=" in node_unit
+
+
+# ----------------------------------------------------------------- lifecycle
+
+
+def _installed_home(tmp_path: Path, versions: tuple[str, ...], active: str) -> Path:
+    home = tmp_path / "home"
+    releases = home / ".local/share/dax-assistant/releases"
+    for version in versions:
+        binaries = releases / version / ".venv/bin"
+        binaries.mkdir(parents=True, exist_ok=True)
+        (binaries / "python").write_text("", encoding="utf-8")
+        (binaries / "python").chmod(0o755)
+    current = releases.parent / "current"
+    if current.is_symlink():
+        current.unlink()
+    current.symlink_to(releases / active)
+    units = home / ".config/systemd/user"
+    units.mkdir(parents=True, exist_ok=True)
+    (units / "dax-assistant.service").write_text("[Unit]\n", encoding="utf-8")
+    state = home / ".local/state/dax-assistant"
+    state.mkdir(parents=True, exist_ok=True)
+    # A real database, because the installer backs it up with sqlite3's backup
+    # API and refuses to continue if that fails.
+    connection = sqlite3.connect(state / "dax.db")
+    connection.execute("CREATE TABLE IF NOT EXISTS marker (id INTEGER)")
+    connection.commit()
+    connection.close()
+    (state / "dax.key").write_text("key", encoding="utf-8")
+    return home
+
+
+def _run_lifecycle(
+    tmp_path: Path,
+    *arguments: str,
+    health: dict[str, object] | None = None,
+    service_active: bool = True,
+    check: bool = False,
+) -> subprocess.CompletedProcess[str]:
+    health_path = tmp_path / "health.json"
+    health_path.write_text(json.dumps(health or _HEALTHY), encoding="utf-8")
+    scripts = {
+        "sleep": "exit 0\n",
+        "curl": 'command cat "$DAX_MOCK_HEALTH_JSON"\n',
+        "systemctl": (
+            'printf \'%s\\n\' "$*" >> "$DAX_MOCK_SYSTEMCTL_LOG"\n'
+            'if [[ "$*" == *"is-active --quiet dax-assistant.service"* ]]; then\n'
+            '  [[ "$DAX_MOCK_SERVICE_ACTIVE" == 1 ]] || exit 1\n'
+            "fi\n"
+            "exit 0\n"
+        ),
+    }
+    return _run_installer(
+        tmp_path,
+        *arguments,
+        scripts=scripts,
+        check=check,
+        extra_env={
+            "DAX_READINESS_TIMEOUT_SECONDS": "1",
+            "DAX_MOCK_SYSTEMCTL_LOG": str(tmp_path / "systemctl.log"),
+            "DAX_MOCK_HEALTH_JSON": str(health_path),
+            "DAX_MOCK_SERVICE_ACTIVE": "1" if service_active else "0",
+            "DAX_MOCK_GH_LOG": str(tmp_path / "gh.log"),
+        },
+    )
+
+
+def test_list_marks_the_active_release_and_orders_newest_first(tmp_path: Path) -> None:
+    _installed_home(tmp_path, ("0.1.0", "0.2.0", "0.10.0"), active="0.2.0")
+    result = _run_lifecycle(tmp_path, "list", check=True)
+    # The pointer install.sh puts beside the active release.
+    marker = "\u276f"
+    versions = [
+        line.strip()
+        for line in result.stdout.splitlines()
+        if line.strip() and line.strip()[0] in marker + "0123456789"
+    ]
+    # 0.10.0 sorts above 0.2.0 numerically, not lexically.
+    assert versions[0].startswith("0.10.0")
+    assert any("0.2.0" in line and "active" in line for line in versions)
+
+
+def test_status_reports_the_active_release_and_readiness(tmp_path: Path) -> None:
+    _installed_home(tmp_path, ("0.2.0",), active="0.2.0")
+    result = _run_lifecycle(tmp_path, "status", check=True)
+    assert "0.2.0" in result.stdout
+    assert "ready" in result.stdout
+
+
+def test_lifecycle_commands_never_reach_the_network(tmp_path: Path) -> None:
+    _installed_home(tmp_path, ("0.1.0", "0.2.0"), active="0.2.0")
+    for command in ("list", "status"):
+        result = _run_lifecycle(tmp_path, command, check=True)
+        assert "github.com" not in result.stdout
+    assert not (tmp_path / "gh.log").exists()
 
 
 def test_rollback_defaults_to_the_newest_inactive_release(tmp_path: Path) -> None:
-    home = _lifecycle_home(tmp_path, ("0.0.9", "0.1.0", "0.1.2"), "0.1.2")
-    result = _run_lifecycle(tmp_path, home, "rollback", "--yes")
-
-    current = home / ".local/share/dax-assistant/current"
-    assert result.returncode == 0, result.stderr
-    assert current.resolve().name == "0.1.0"
-    assert "restart dax-assistant.service" in (tmp_path / "systemctl.log").read_text()
+    home = _installed_home(tmp_path, ("0.1.0", "0.2.0", "0.3.0"), active="0.3.0")
+    result = _run_lifecycle(tmp_path, "rollback", "--yes", check=True)
+    assert (home / ".local/share/dax-assistant/current").resolve().name == "0.2.0"
+    assert "now running 0.2.0" in result.stdout
 
 
-def test_rollback_restores_the_previous_target_when_the_release_is_not_ready(
+def test_rollback_backs_up_the_database_and_its_key(tmp_path: Path) -> None:
+    home = _installed_home(tmp_path, ("0.1.0", "0.2.0"), active="0.2.0")
+    _run_lifecycle(tmp_path, "rollback", "--yes", check=True)
+    backups = list((home / ".local/state/dax-assistant/backups").iterdir())
+    # The database is unreadable without the key that decrypts its secrets.
+    assert any(path.suffix == ".db" for path in backups)
+    assert any(path.suffix == ".key" for path in backups)
+
+
+def test_rollback_restores_the_previous_release_when_the_older_one_fails(
     tmp_path: Path,
 ) -> None:
-    home = _lifecycle_home(tmp_path, ("0.1.0", "0.1.2"), "0.1.2")
+    home = _installed_home(tmp_path, ("0.1.0", "0.2.0"), active="0.2.0")
     result = _run_lifecycle(
-        tmp_path, home, "rollback", "0.1.0", "--yes", check=False, healthy=False
+        tmp_path, "rollback", "--yes", health=dict(_HEALTHY, readiness=False)
     )
-
-    current = home / ".local/share/dax-assistant/current"
     assert result.returncode != 0
-    assert current.resolve().name == "0.1.2"
-    assert "restored the previous current target and service" in result.stderr
+    assert (home / ".local/share/dax-assistant/current").resolve().name == "0.2.0"
 
 
-def test_rollback_backs_up_the_database_before_switching(tmp_path: Path) -> None:
-    home = _lifecycle_home(tmp_path, ("0.1.0", "0.1.2"), "0.1.2")
-    _run_lifecycle(tmp_path, home, "rollback", "--yes")
+def test_rollback_rejects_an_uninstalled_or_already_active_release(tmp_path: Path) -> None:
+    _installed_home(tmp_path, ("0.1.0", "0.2.0"), active="0.2.0")
+    missing = _run_lifecycle(tmp_path, "rollback", "9.9.9", "--yes")
+    assert missing.returncode != 0
+    assert "not installed" in missing.stderr
 
-    backups = home / ".local/state/dax-assistant/backups"
-    assert list(backups.glob("dax-*.db"))
-    assert list(backups.glob("dax-*.key"))
-
-
-def test_rollback_rejects_a_release_that_is_not_installed(tmp_path: Path) -> None:
-    home = _lifecycle_home(tmp_path, ("0.1.2",), "0.1.2")
-    result = _run_lifecycle(tmp_path, home, "rollback", "0.9.9", "--yes", check=False)
-
-    assert result.returncode != 0
-    assert "is not installed" in result.stderr
+    active = _run_lifecycle(tmp_path, "rollback", "0.2.0", "--yes")
+    assert active.returncode != 0
+    assert "already active" in active.stderr
 
 
-def test_rollback_refuses_the_already_active_release(tmp_path: Path) -> None:
-    home = _lifecycle_home(tmp_path, ("0.1.0", "0.1.2"), "0.1.2")
-    result = _run_lifecycle(tmp_path, home, "rollback", "0.1.2", "--yes", check=False)
-
-    assert result.returncode != 0
-    assert "already the current target" in result.stderr
-
-
-def test_uninstall_keeps_the_database_and_key_by_default(tmp_path: Path) -> None:
-    home = _lifecycle_home(tmp_path, ("0.1.2",), "0.1.2")
-    _run_lifecycle(tmp_path, home, "uninstall", "--yes")
-
+def test_uninstall_keeps_the_database_unless_purge_is_asked_for(tmp_path: Path) -> None:
+    home = _installed_home(tmp_path, ("0.2.0",), active="0.2.0")
     state = home / ".local/state/dax-assistant"
+    _run_lifecycle(tmp_path, "uninstall", "--yes", check=True)
     assert (state / "dax.db").exists()
-    assert (state / "dax.key").exists()
     assert not (home / ".local/share/dax-assistant/releases").exists()
-    assert not (home / ".config/systemd/user/dax-assistant.service").exists()
-    assert "disable --now dax-assistant.service" in (tmp_path / "systemctl.log").read_text()
+
+    _installed_home(tmp_path, ("0.2.0",), active="0.2.0")
+    _run_lifecycle(tmp_path, "uninstall", "--purge", "--yes", check=True)
+    assert not state.exists()
 
 
-def test_uninstall_purge_removes_state_only_when_asked(tmp_path: Path) -> None:
-    home = _lifecycle_home(tmp_path, ("0.1.2",), "0.1.2")
-    _run_lifecycle(tmp_path, home, "uninstall", "--purge", "--yes")
-
-    assert not (home / ".local/state/dax-assistant").exists()
-    assert not (home / ".local/share/dax-assistant").exists()
-
-
-def test_destructive_lifecycle_commands_require_explicit_confirmation(tmp_path: Path) -> None:
-    home = _lifecycle_home(tmp_path, ("0.1.0", "0.1.2"), "0.1.2")
-    for arguments in (("uninstall",), ("uninstall", "--purge"), ("rollback",)):
-        result = _run_lifecycle(tmp_path, home, *arguments, check=False)
+def test_destructive_commands_refuse_to_assume_consent(tmp_path: Path) -> None:
+    _installed_home(tmp_path, ("0.1.0", "0.2.0"), active="0.2.0")
+    # No TTY and no --yes: the only safe answer is to stop.
+    for command in ("uninstall", "rollback"):
+        result = _run_lifecycle(tmp_path, command)
         assert result.returncode != 0
-        assert "pass --yes to confirm explicitly" in result.stderr
-    assert (home / ".local/state/dax-assistant/dax.db").exists()
-    assert (home / ".config/systemd/user/dax-assistant.service").exists()
+        assert "refusing to assume" in result.stderr
 
 
 def test_purge_is_rejected_outside_uninstall(tmp_path: Path) -> None:
-    home = _lifecycle_home(tmp_path, ("0.1.2",), "0.1.2")
-    result = _run_lifecycle(tmp_path, home, "list", "--purge", check=False)
-
+    result = _run_lifecycle(tmp_path, "rollback", "--purge", "--yes")
     assert result.returncode != 0
-    assert "--purge supports the uninstall command only" in result.stderr
+    assert "--purge only applies to uninstall" in result.stderr
 
 
-def test_documented_install_versions_track_the_release(tmp_path: Path) -> None:
+# ------------------------------------------------------------- release checks
+
+
+def test_readme_documents_the_unpinned_install_path() -> None:
     readme = (ROOT / "README.md").read_text(encoding="utf-8")
-    version = json.loads((ROOT / "release.json").read_text(encoding="utf-8"))["version"]
-    assert f"VERSION={version}" in readme
-    # The unpinned path is the documented default; a reader must not have to
-    # discover a version number before they can install anything.
+    # A reader must not have to discover a version number before installing.
     assert "releases/latest/download/install.sh" in readme
+    assert "bash install.sh" in readme
 
-    stale = ROOT / "docs/releases.md"
-    original = stale.read_text(encoding="utf-8")
+
+def test_documented_versions_cannot_drift_from_the_release() -> None:
+    guarded = ROOT / "docs/deployment.md"
+    original = guarded.read_text(encoding="utf-8")
     try:
-        stale.write_text(original.replace(f"VERSION={version}", "VERSION=0.0.1"), encoding="utf-8")
+        guarded.write_text(original + "\nVERSION=0.0.1\n", encoding="utf-8")
         result = subprocess.run(
             ["python3", "scripts/release.py", "check"],
             cwd=ROOT,
@@ -733,13 +677,13 @@ def test_documented_install_versions_track_the_release(tmp_path: Path) -> None:
             text=True,
         )
         assert result.returncode != 0
-        assert "docs/releases.md=0.0.1" in result.stderr
+        assert "docs/deployment.md=0.0.1" in result.stderr
     finally:
-        stale.write_text(original, encoding="utf-8")
+        guarded.write_text(original, encoding="utf-8")
 
 
 @pytest.mark.parametrize("output", [".", "..", "~", "/"])
-def test_release_output_rejects_unsafe_deletion_targets(tmp_path: Path, output: str) -> None:
+def test_release_output_rejects_unsafe_deletion_targets(output: str) -> None:
     target = str(Path.home()) if output == "~" else output
     result = subprocess.run(
         [
@@ -772,19 +716,21 @@ def test_release_output_rejects_dist_root() -> None:
     assert "--output may not be the dist directory itself" in result.stderr
 
 
-def test_release_installer_uses_hash_lock_canonical_units_and_rollback() -> None:
+def test_installer_keeps_its_supply_chain_and_recovery_guarantees() -> None:
     installer = (ROOT / "scripts/install.sh").read_text(encoding="utf-8")
     release = (ROOT / "scripts/release.py").read_text(encoding="utf-8")
+    # Dependencies come from the release's hash-locked file, never re-resolved.
     assert "uv export" not in installer
     assert "--require-hashes" in installer
     assert "--no-deps" in installer
-    assert 'install -m 600 "$backend_asset" "$BACKEND_UNIT"' in installer
+    # Units are shipped artifacts, not text the installer writes itself.
+    assert 'install -m 600 "$unit" "$BACKEND_UNIT"' in installer
     assert 'cat > "$BACKEND_UNIT"' not in installer
-    assert "previous_target" in installer
+    # A failed upgrade must be able to put the previous release back.
+    assert "restore_backend" in installer
     assert "authoritative" in installer
-    assert "restored the previous current target" in installer
-    assert "is-active --quiet dax-assistant-node.service" in installer
-    assert "is-enabled --quiet dax-assistant-node.service" in installer
+    # Without lingering the backend dies at logout on a headless server.
+    assert "enable-linger" in installer
     assert '"uv",\n        "export"' in release
 
 

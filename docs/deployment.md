@@ -88,7 +88,8 @@ successful upgrade the newest `--keep N` releases are retained (default 3) and
 older ones are pruned; the active release is never a deletion candidate.
 
 ```bash
-bash install.sh --both            # newest release
+bash install.sh --backend        # newest release
+bash install.sh status            # version, readiness, addresses
 bash install.sh list              # installed releases, active one, service state
 bash install.sh rollback          # previous installed release
 bash install.sh rollback 0.1.1    # a specific installed release
@@ -103,7 +104,7 @@ database/key set. Confirm health identity and readiness before reconnecting
 clients. Do not downgrade a migrated database on hope alone.
 
 `list`, `rollback`, and `uninstall` act only on already-installed local releases.
-They reach no network and need no `gh`, so they remain usable during an incident
+They reach no network, so they remain usable during an incident
 when release infrastructure is unreachable.
 
 ## Removal

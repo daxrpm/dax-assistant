@@ -10,7 +10,7 @@ Dax Desktop has three layers:
 2. The Tauri Rust core owns OS capabilities: windows, tray, global shortcuts, autostart, notifications, systemd control, host metrics, keyring access, and validated local preferences.
 3. The React webview owns presentation and backend protocols. It calls FastAPI directly; Rust is not an HTTP proxy.
 
-HTTP uses bearer authentication. WebSockets use the same token as an authenticated query parameter because the browser WebSocket API cannot set an Authorization header. Remote origins require HTTPS/WSS. Plain HTTP/WS is accepted only for loopback.
+HTTP uses bearer authentication. WebSockets use the same token as an authenticated query parameter because the browser WebSocket API cannot set an Authorization header. Remote origins require HTTPS/WSS unless the host is a literal private address (RFC 1918, loopback, IPv6 ULA/link-local, or the RFC 6598 range overlays such as Tailscale assign from), the one case where cleartext provably cannot leave the local network.
 
 An optional `dax edge` process on the laptop is a separate outbound capability
 node, not a backend sidecar. It contributes laptop tools only while online. See

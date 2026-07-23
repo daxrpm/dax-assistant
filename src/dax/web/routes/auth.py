@@ -43,6 +43,10 @@ class LoginResponse(BaseModel):
 
     ok: bool
     token: str | None = None
+    # Why a rejection happened, when the reason is something the operator can
+    # act on. A bare 403 on first-run setup left no way to tell "you are on the
+    # wrong machine" apart from "the server is broken".
+    detail: str | None = None
 
 
 class AuthStatus(BaseModel):
@@ -138,18 +142,34 @@ async def setup(
     """
     if not _is_loopback_request(request):
         response.status_code = 403
-        return LoginResponse(ok=False)
+        return LoginResponse(
+            ok=False,
+            detail=(
+                "The first account can only be created from the machine running the "
+                "backend, so an unclaimed backend cannot be taken over from the "
+                "network. Run `dax claim` over SSH on the server, or re-run the "
+                "installer, then sign in from here."
+            ),
+        )
 
     _limit_attempts(request, auth, "setup", client_limit=5, global_limit=20)
 
     if len(body.password) < 8:
         response.status_code = 400
-        return LoginResponse(ok=False)
+        return LoginResponse(
+            ok=False, detail="The password must be at least 8 characters."
+        )
 
     async with auth.setup_lock:
         if auth.configured:
             response.status_code = 409
-            return LoginResponse(ok=False)
+            return LoginResponse(
+                ok=False,
+                detail=(
+                    "This backend already has an account. Sign in with its password "
+                    "instead."
+                ),
+            )
 
         new_hash = await asyncio.to_thread(hash_password, body.password)
 

@@ -50,179 +50,187 @@ does not provide authority fallback. See
 
 ---
 
-## Requirements
+## Install
 
-- Python **3.11** (the project pins `>=3.11,<3.12`); tagged installs provision it through `uv`.
-- [`uv`](https://docs.astral.sh/uv/) and [GitHub CLI](https://cli.github.com/) for tagged Linux installs.
-- Linux with `systemd --user`. Tagged installation supports Fedora/RHEL RPM systems and
-  Debian/Ubuntu deb systems on an architecture published in that release.
-- [Ollama](https://ollama.com/) running locally if you want the default local provider
-  (otherwise set a cloud provider as default).
-- Node.js (only to rebuild the web UI from source).
+Dax is four pieces and only the first is required. Everything else is a client
+that needs a backend to talk to, so install the backend first.
 
-## Production install
+| Piece | What it is |
+| --- | --- |
+| **Backend** | The authority: SQLite, encrypted config, conversations, LLM routing, policy, approvals |
+| **Desktop** | A client for Linux, and the machine that can also act as a capability node |
+| **Android** | A client |
+| **Capability node** | An optional laptop daemon that lends its tools to the backend |
 
-Only the backend is required; the desktop client, Android, and a capability node
-are optional and each needs a backend to talk to first. Installing all four in
-the order that avoids circular prerequisites is walked through in
-[`docs/installation.md`](docs/installation.md).
+**Requirements.** Linux with `systemd --user`, on Fedora/RHEL or Debian/Ubuntu.
+Everything else — Python 3.11, `uv`, the audio libraries — the installer sets up
+or asks about. You do **not** need the GitHub CLI.
 
-### 1. Prerequisites
+### Install the backend
 
-[`uv`](https://docs.astral.sh/uv/) provisions the managed Python 3.11 runtime,
-and [GitHub CLI](https://cli.github.com/) verifies release attestations. The
-installer fails closed without either, so install them first:
+Run this on the machine that will host Dax — a home server, or your laptop if
+that is all you have:
 
 ```bash
-curl -LsSf https://astral.sh/uv/install.sh | sh   # uv
-sudo dnf install gh                               # Fedora/RHEL
-sudo apt-get install gh                           # Debian/Ubuntu
-gh auth login                                     # attestation lookups need an authenticated gh
+curl -fsSLO https://github.com/daxrpm/dax-assistant/releases/latest/download/install.sh
+bash install.sh
 ```
 
-### 2. Install
+It asks what to install, verifies and installs it, prompts for the password of
+your one account, and finishes by printing the two addresses you can reach it
+on. That is the whole process.
 
-Download the installer as data, verify its GitHub artifact attestation, and only
-then execute it. This establishes a provenance path independent of the SHA256
-list delivered with the release, and never pipes a script from `main` into a
-shell:
+Prefer to read the script before running it, which is a reasonable habit for
+anything installing a service: it downloads as a file above rather than piping
+into a shell, so `less install.sh` works before you run it.
+
+To skip the questions:
 
 ```bash
-curl --proto '=https' --tlsv1.2 --fail --location --remote-name \
-  "https://github.com/daxrpm/dax-assistant/releases/latest/download/install.sh"
-gh attestation verify install.sh --repo daxrpm/dax-assistant
-bash install.sh --both
+bash install.sh --backend --yes      # backend only, no prompts
+bash install.sh --all                # backend and desktop client
+bash install.sh --dry-run --all      # verify everything, install nothing
 ```
 
-The installer resolves the newest published release on its own — you do not need
-to know or type a version number.
+### Connect your other devices
 
-### 3. Confirm
+The installer prints something like:
 
-```bash
-bash install.sh list                  # installed releases and service state
-systemctl --user status dax-assistant
+```text
+From your other devices
+  http://192.168.100.100:8420
 ```
 
-Then open **http://127.0.0.1:8420**, create the login password, and configure
-providers, integrations, voice, and MCP servers from Settings.
+Type **that exact address** into the desktop app and the Android app.
 
-### Choosing components
+Clients accept a plain `http://` backend only when the host is a literal private
+address: `10.x`, `172.16–31.x`, `192.168.x`, loopback, an IPv6 ULA/link-local
+address, or `100.64–127.x` — the range Tailscale and similar overlays assign
+from. Anything else must be `https://`.
 
-`--both` is the default. Use `--backend-only` for a headless server,
-`--desktop-only` on a second machine that only needs the client, and
-`--node-only` for a laptop that lends tools without hosting authority.
-`--node-only` installs a separate capability runtime and
-`dax-assistant-node.service` without installing or starting an authoritative
-backend, and deliberately leaves the node disabled. Native Desktop can enrol the
-machine without a terminal; `dax edge enroll` remains the browser/headless
-fallback. Enable the unit only after `edge.json` exists.
+A session token is being sent, and a private literal is the only form that
+proves the traffic cannot leave your network. This is why a name like
+`http://home-server:8420` is refused even though it works in a browser: DNS can
+be repointed at a public address, so the name proves nothing. Use the address,
+not the name.
 
-The authoritative backend is always enabled and started when selected. The Linux
-installer selects the release's RPM or deb for the current host. It never
-downloads or installs the Android APK, which is a separate signed release asset.
+To reach Dax from outside your network, use a private overlay (Tailscale,
+WireGuard) or an authenticated HTTPS reverse proxy — never forward port 8420 to
+the internet. Over Tailscale, use the machine's `100.x` address and cleartext is
+fine: the tunnel is already encrypted end to end.
 
-### Pinning a version
+### The account
 
-Reproducible installs, staged rollouts, and downgrades pin an immutable tag.
-This is the exception, not the normal path:
+The first account can only be created from the machine the backend runs on. An
+unclaimed backend on a network would otherwise be claimable by whoever reached
+it first, and that account owns everything.
+
+The installer normally does this for you. On a headless server installed without
+a terminal, create it over SSH afterwards:
 
 ```bash
-VERSION=0.2.0
-curl --proto '=https' --tlsv1.2 --fail --location --remote-name \
-  "https://github.com/daxrpm/dax-assistant/releases/download/v$VERSION/install.sh"
-gh attestation verify install.sh --repo daxrpm/dax-assistant
-bash install.sh --version "$VERSION" --both
+~/.local/share/dax-assistant/current/.venv/bin/dax claim
+```
+
+Then sign in from any client with that password. Every other setting — model,
+API keys, voice, tools, integrations — is configured from a client once you are
+signed in; the backend has no configuration UI of its own by design.
+
+### Desktop client
+
+```bash
+bash install.sh --desktop
+```
+
+First launch asks for the backend address, verifies it responds, and then asks
+you to sign in. After login it offers to pick a model, enrol this laptop as a
+capability node, and pair your phone — each step skippable, and re-openable from
+**Settings → Desktop → Run setup again**.
+
+No API key is ever stored on the desktop; keys go to the backend's encrypted
+store. Session credentials are kept per origin in the system keyring.
+
+### Android
+
+The APK is not published yet — the release pipeline needs a signing keystore
+that is not configured, so releases currently ship without it. Build it from
+`android/` in the meantime. Once installed, first run asks for the backend
+address, then a pairing code generated on an already-signed-in client under
+**Settings → Access → Devices**.
+
+### Capability node
+
+A node lets the backend use tools on a laptop without moving the backend there.
+
+```bash
+bash install.sh --node
+```
+
+It installs stopped, because a node has nothing to connect to until it is
+enrolled. Enrol it from the desktop app under **Settings → Access → Devices**,
+then start it. Behaviour, safety model, and revocation are in
+[`docs/capability-nodes.md`](docs/capability-nodes.md).
+
+Voice is the setting worth changing on a node: `voice = auto` runs mobile speech
+synthesis on the laptop next to the microphone instead of crossing the network
+twice. Leave `inference` on `auto` — it only pins the model to the node when the
+model is itself local, and routing a cloud API call through a laptop adds a hop
+without removing one.
+
+### Managing an installation
+
+```bash
+bash install.sh status        # version, whether it is running and ready, its addresses
+bash install.sh list          # installed releases, with the active one marked
+bash install.sh               # re-run to upgrade to the newest release
+bash install.sh rollback      # switch to the previous installed release
+bash install.sh uninstall     # remove services and releases, keep the database
+bash install.sh uninstall --purge   # also delete the database and secret key
+```
+
+The three newest releases are kept (`--keep N` to change), so a rollback needs
+no network. Every upgrade and rollback backs up the database and its key to
+`~/.local/state/dax-assistant/backups/` first.
+
+Rollback carries a real caveat: schema migrations only run forward. If the newer
+release migrated the database, the older one may refuse to open it. The command
+warns and takes a backup before switching, and returns to the previous release
+automatically if the older one fails to become ready.
+
+```bash
+journalctl --user -u dax-assistant -f     # logs
+systemctl --user status dax-assistant     # service state
 ```
 
 ### What the installer verifies
 
-It verifies GitHub attestations for the manifest and every selected artifact with
-`gh attestation verify --repo daxrpm/dax-assistant`, then independently checks SHA256 and size.
-It also confirms that manifest version/commit identify the selected tag. It fails closed if
-attestation verification is unavailable or fails. `--insecure-skip-attestation` is an explicit,
-loudly warned emergency bypass and is not a safe installation path. Backend dependencies come
-from the manifested, frozen uv export and are installed with hash enforcement rather than
-open-ended `pyproject.toml` resolution. `--dry-run` performs all downloads and verification
-without installing anything.
+Every artifact is checked for exact size and SHA-256 against the release
+manifest, and the manifest against the release's `SHA256SUMS` over TLS. A
+manifest may only name artifacts inside the release it claims to describe, so it
+cannot redirect a download elsewhere.
 
-For development only, an existing checkout can be installed with
-`bash scripts/install.sh --source "$PWD" --backend-only`. This mode runs `uv sync --frozen`,
-never clones `main`, and never claims to install a desktop package.
+If the GitHub CLI happens to be installed and authenticated, build provenance is
+verified too, and `--require-attestation` makes that mandatory. It is not
+required by default: needing `gh auth login` before you can install a program is
+a barrier, not security.
 
-Default paths follow the XDG base-directory specification:
-
-| Content | Default path |
-| --- | --- |
-| Versioned backend | `~/.local/share/dax-assistant/releases/VERSION/` |
-| Active backend link | `~/.local/share/dax-assistant/current` |
-| Models | `~/.local/share/dax-assistant/models` |
-| Database and key | `~/.local/state/dax-assistant/` |
-| Service unit | `~/.config/systemd/user/dax-assistant.service` |
-| Caches | `~/.cache/dax-assistant/` |
-
-Tagged backend installs intentionally require these default XDG locations because the verified,
-canonical user-systemd units name them directly. Existing state, models, and backups are
-preserved across versioned installs.
-
-### Operations
-
-```bash
-systemctl --user status dax-assistant
-journalctl --user -u dax-assistant -f
-
-bash install.sh --both              # upgrade to the newest release
-bash install.sh list                # installed releases, active one, service state
-bash install.sh rollback            # back to the previous installed release
-bash install.sh rollback 0.1.1      # back to a specific installed release
-bash install.sh uninstall           # remove services and releases, keep the database
-bash install.sh uninstall --purge   # also delete the database and key, irreversibly
-```
-
-`list`, `rollback`, and `uninstall` act only on already-installed local releases.
-They never reach the network and do not need `gh`.
-
-Backend upgrades create a timestamped database/key backup under
-`~/.local/state/dax-assistant/backups`, install into a versioned environment, move the
-`current` link, and restart the service. The installer waits for authoritative readiness and
-restores the previous link/service if the deadline expires. An active capability node blocks
-the update until you stop it explicitly, so it cannot silently jump to a new shared runtime.
-After a successful upgrade the three newest releases are kept and older ones are pruned;
-`--keep N` changes that budget, and the active release is never a deletion candidate.
-
-`rollback` re-points the `current` link at an installed release and restarts the service,
-taking a backup first and restoring the previous target if the older release does not become
-ready. Understand the one risk it cannot remove: schema migrations are forward-only, so a
-database already migrated by a newer release may not open under older code. If it does not
-start, restore the matching backup pair. To restore a local-key installation manually, stop
-the service and copy a matching `.db` and `.key` backup pair over `dax.db` and `dax.key`
-before restarting it. Never restore one without the other.
-
-For external key management, set `DAX_MASTER_KEY` in the service environment and keep it
-separate from the database. The value must be the same Fernet key on every restart and
-must be backed up independently; losing it makes the encrypted configuration
-unrecoverable. A mode-`0600` systemd `EnvironmentFile` in `~/.config/dax-assistant/` is a
-simple option. Run `systemctl --user edit dax-assistant`, add the directive below, then
-reload and restart the service:
-
-```ini
-[Service]
-EnvironmentFile=%h/.config/dax-assistant/environment
-```
+`--manifest` and `--checksums` install from a manifest on local disk, for
+mirrored or air-gapped installs.
 
 ### Audio troubleshooting
 
-The service joins your graphical user session so it can use PipeWire/PulseAudio. If voice
-does not start, run `systemctl --user status dax-assistant pipewire pipewire-pulse` and
-`journalctl --user -u dax-assistant`, then inspect the reported service and audio errors.
-Verify input devices independently with `wpctl status` or `arecord -l`. Remote SSH-only
-sessions may not have access to the desktop audio session; install and run Dax as the
-logged-in desktop user.
+The service joins your graphical user session so it can use PipeWire/PulseAudio.
+If voice does not start, check `systemctl --user status dax-assistant pipewire
+pipewire-pulse` and `journalctl --user -u dax-assistant`, then verify input
+devices with `wpctl status` or `arecord -l`. An SSH-only session may have no
+access to the desktop audio session; install and run Dax as the logged-in
+desktop user if you want voice on that machine.
 
-`systemd --user` is the supported deployment model. A container is not the default
-because microphone capture, PipeWire playback, desktop notifications, clipboard access,
-and user-approved PC-control tools all depend on the host graphical session. Passing
-those sockets and devices into Docker reduces isolation while adding substantial setup.
+`systemd --user` is the supported deployment model. A container is not the
+default because microphone capture, PipeWire playback, notifications, clipboard
+access, and user-approved PC-control tools all depend on the host graphical
+session. Passing those sockets and devices into Docker reduces isolation while
+adding substantial setup.
 
 ---
 
@@ -242,7 +250,7 @@ providers, integrations, voice, and MCP servers from Settings.
 If you only want the default local provider, make sure Ollama is running and has the model
 selected in Settings, e.g. `ollama pull llama3.1:8b`.
 
-### Desktop client
+### Desktop client architecture
 
 The desktop client is a separate first-class UI under `desktop/`. It connects
 directly to the same authenticated HTTP and WebSocket API. The supported local
@@ -258,10 +266,12 @@ Dax Desktop (Tauri/Rust + React)
 dax-assistant.service (FastAPI + agent + MCP + voice)
 ```
 
-There is no bundled Python sidecar. For a remote backend, the desktop client
-requires HTTPS/WSS; HTTP/WS is accepted only for loopback. The backend
-automatically trusts the packaged Tauri webview origins, so a fresh installation
-does not require a manual CORS entry.
+There is no bundled Python sidecar. A remote backend must be HTTPS/WSS unless its
+host is a literal private address (RFC 1918, loopback, IPv6 ULA/link-local, or the
+RFC 6598 range overlays such as Tailscale assign from), which is the one case where
+cleartext provably cannot leave the local network. The backend automatically trusts
+the packaged Tauri webview origins, so a fresh installation does not require a manual
+CORS entry.
 
 Native first-run onboarding completes before authentication and configures a
 schema-v3 `local` or `remote` strategy. Local deliberately uses this laptop's
@@ -471,13 +481,14 @@ src/dax/
 
 ## Remote access
 
-`uv run dax` binds to `0.0.0.0` by default so first-party mobile clients can pair over
-the LAN. Authentication is still enforced, but the first-run setup endpoint is reachable:
-pair and configure the owner account only on a trusted network. Restrict TCP port 8420 to
-the trusted subnet in the host firewall and never forward it directly to the internet.
-Set `[web] expose_lan = false` to return to loopback-only operation. For access beyond the
-LAN, prefer a private overlay (Tailscale, WireGuard) or an authenticated HTTPS reverse
-proxy. Preserve WebSocket upgrades and proxy to `http://127.0.0.1:8420`.
+Dax binds to `0.0.0.0` by default so first-party clients can reach it over the LAN.
+Authentication is enforced on every route, and first-run account creation is refused
+from anything but loopback, so an unclaimed backend cannot be claimed over the network.
+Still restrict TCP port 8420 to the trusted subnet in the host firewall and never forward
+it directly to the internet. Set `[web] expose_lan = false` to return to loopback-only
+operation. For access beyond the LAN, prefer a private overlay (Tailscale, WireGuard) or
+an authenticated HTTPS reverse proxy. Preserve WebSocket upgrades and proxy to
+`http://127.0.0.1:8420`.
 
 For remote voice, microphone PCM travels from the client to `/ws/voice` as
 bounded PTT-only mono 16 kHz PCM. Default `server` output synthesizes and plays

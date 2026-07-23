@@ -586,11 +586,16 @@ pub fn validate_remote_url(value: &str) -> Result<String, String> {
     if !parsed.path().trim_matches('/').is_empty() {
         return Err("backend URL must not contain a path".into());
     }
-    let loopback = is_loopback_host(parsed.host());
     match parsed.scheme() {
         "https" => {}
-        "http" if loopback => {}
-        "http" => return Err("remote backend URLs must use HTTPS".into()),
+        "http" if is_private_host(parsed.host()) => {}
+        "http" => {
+            return Err(
+                "cleartext HTTP is only allowed to a private address; use HTTPS, or the \
+                 server's private IP such as http://192.168.1.50:8420"
+                    .into(),
+            )
+        }
         _ => return Err("backend URL scheme must be HTTP or HTTPS".into()),
     }
     let normalized_path = parsed.path().trim_end_matches('/').to_string();
@@ -619,6 +624,35 @@ fn is_loopback_host(host: Option<Host<&str>>) -> bool {
         Some(Host::Domain(host)) => host.eq_ignore_ascii_case("localhost"),
         Some(Host::Ipv4(ip)) => ip.is_loopback(),
         Some(Host::Ipv6(ip)) => ip.is_loopback(),
+        None => false,
+    }
+}
+
+/// Cleartext is confined to addresses that cannot route off the local network.
+///
+/// Only literals qualify. A hostname resolves through DNS, which can be pointed
+/// at a public address, so it would not prove the session token stays on the
+/// LAN. This mirrors `BackendEndpointPolicy` on Android so every client accepts
+/// exactly the same set of backends.
+fn is_private_host(host: Option<Host<&str>>) -> bool {
+    match host {
+        Some(Host::Domain(host)) => host.eq_ignore_ascii_case("localhost"),
+        Some(Host::Ipv4(ip)) => {
+            // 100.64.0.0/10 is RFC 6598 shared address space. Tailscale and
+            // similar overlays assign from it; those addresses are unroutable
+            // on the public internet and the tunnel is already encrypted.
+            let octets = ip.octets();
+            let carrier_grade = octets[0] == 100 && (64..=127).contains(&octets[1]);
+            ip.is_loopback() || ip.is_private() || carrier_grade
+        }
+        Some(Host::Ipv6(ip)) => {
+            // fc00::/7 unique-local and fe80::/10 link-local.
+            let first = ip.octets()[0];
+            let second = ip.octets()[1];
+            ip.is_loopback()
+                || first & 0xfe == 0xfc
+                || (first == 0xfe && second & 0xc0 == 0x80)
+        }
         None => false,
     }
 }
@@ -744,6 +778,35 @@ mod tests {
             validate_remote_url("https://example.com/").unwrap(),
             "https://example.com"
         );
+    }
+
+    #[test]
+    fn allows_cleartext_only_to_private_literals() {
+        for value in [
+            "http://192.168.1.50:8420",
+            "http://10.0.0.4:8420",
+            "http://172.16.0.1:8420",
+            "http://172.31.255.254:8420",
+            "http://[fd00::1]:8420",
+            // RFC 6598, the range Tailscale assigns from.
+            "http://100.64.0.2:8420",
+            "http://100.127.255.254:8420",
+        ] {
+            assert!(validate_remote_url(value).is_ok(), "rejected {value}");
+        }
+        // 172.15 and 172.32 bracket the private range; a DNS name never
+        // qualifies because it can be repointed at a public address.
+        for value in [
+            "http://172.15.0.1:8420",
+            "http://172.32.0.1:8420",
+            "http://100.63.0.1:8420",
+            "http://100.128.0.1:8420",
+            "http://8.8.8.8:8420",
+            "http://home-server:8420",
+            "http://[2001:db8::1]:8420",
+        ] {
+            assert!(validate_remote_url(value).is_err(), "accepted {value}");
+        }
     }
 
     #[test]

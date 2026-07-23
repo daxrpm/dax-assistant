@@ -35,6 +35,10 @@ object BackendEndpointPolicy {
         return octets[0] == 10 ||
             octets[0] == 127 ||
             (octets[0] == 172 && octets[1] in 16..31) ||
-            (octets[0] == 192 && octets[1] == 168)
+            (octets[0] == 192 && octets[1] == 168) ||
+            // 100.64.0.0/10, RFC 6598 shared address space. Tailscale and
+            // similar overlays assign from it; those addresses are unroutable
+            // on the public internet and the tunnel is already encrypted.
+            (octets[0] == 100 && octets[1] in 64..127)
     }
 }
