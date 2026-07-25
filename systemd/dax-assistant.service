@@ -18,6 +18,10 @@ Environment="DAX_STORAGE__DATABASE_PATH=%h/.local/state/dax-assistant/dax.db"
 Environment="DAX_STORAGE__MODELS_PATH=%h/.local/share/dax-assistant/models"
 Environment="DAX_MEMORY_PATH=%h/.local/state/dax-assistant/memory"
 Environment="HF_HOME=%h/.cache/dax-assistant/huggingface"
+# MCP stdio servers are commonly launched via user-local runners (uvx, npx).
+# The default systemd --user PATH omits ~/.local/bin, so surface it here or the
+# backend fails to spawn them with "No such file or directory: 'uvx'".
+Environment="PATH=%h/.local/bin:/usr/local/bin:/usr/bin:/bin"
 
 # Safe for a desktop assistant. ProtectHome/PrivateDevices are intentionally not
 # enabled because Dax provides user-approved file, application, and audio tools.

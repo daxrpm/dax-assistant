@@ -15,6 +15,9 @@ TimeoutStopSec=30s
 KillMode=mixed
 UMask=0077
 Environment=PYTHONUNBUFFERED=1
+# Edge tools may launch user-local runners (uvx, npx) whose directory the
+# default systemd --user PATH omits; surface ~/.local/bin so they resolve.
+Environment="PATH=%h/.local/bin:/usr/local/bin:/usr/bin:/bin"
 
 # This is an outbound client only. Home and desktop-session access are required
 # for the explicitly approved dax-system file and desktop tools.
