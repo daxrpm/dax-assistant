@@ -127,3 +127,27 @@ class TestFilterToolsByRelevance:
         tools = self._make_tools([(f"tool_{i}", f"description {i}") for i in range(20)])
         result = filter_tools_by_relevance(tools, "query", max_tools=5)
         assert len(result) == 5
+
+    def test_capability_node_tools_always_included(self):
+        # A laptop is enrolled to lend its shell/system tools; they must never be
+        # crowded out of the budget by a large MCP server, even when the query
+        # keyword-matches that server and not the node.
+        tools = [
+            {
+                "name": f"nc_tool_{i}",
+                "description": "Nextcloud calendar file contact note",
+                "server_name": "Nextcloud",
+            }
+            for i in range(50)
+        ]
+        tools.append({
+            "name": "capability-node:abc.system_info",
+            "description": "Report the operating system and hardware",
+            "server_name": "capability-node:abc",
+        })
+
+        result = filter_tools_by_relevance(tools, "calendar file contact", max_tools=5)
+        names = [t["name"] for t in result]
+        # The node tool survives despite 50 keyword-matching Nextcloud tools.
+        assert "capability-node:abc.system_info" in names
+        assert len(result) == 5  # max_tools is the hard cap, node tool included

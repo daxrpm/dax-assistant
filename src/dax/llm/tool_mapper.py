@@ -208,11 +208,17 @@ def filter_tools_by_relevance(
     fills the remaining budget with the best-scoring tools from other
     servers. Supports bilingual (ES/EN) queries via keyword expansion.
     """
-    # Always include tools from privileged servers regardless of score.
+    # Always include tools from privileged servers regardless of score: the
+    # backend's own dax-system, and any capability-node inventory
+    # ("capability-node:<id>"). Both are small, high-utility sets. A laptop is
+    # enrolled precisely to lend its shell/system tools, so they must not be
+    # crowded out of the budget by a large MCP server (e.g. Nextcloud's 100+
+    # tools) whose names happen to share the relevance pool.
     always: list[dict[str, Any]] = []
     candidates: list[dict[str, Any]] = []
     for tool in tools:
-        if tool.get("server_name") in _ALWAYS_INCLUDE_SERVERS:
+        server = tool.get("server_name", "")
+        if server in _ALWAYS_INCLUDE_SERVERS or server.startswith("capability-node:"):
             always.append(tool)
         else:
             candidates.append(tool)
