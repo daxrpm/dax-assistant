@@ -830,8 +830,21 @@ export function ChatPage() {
                 <Button variant="ghost" onPress={() => respondConfirmation(confirmation.approval_id, "deny")}>
                   Deny
                 </Button>
-                <Button variant="primary" onPress={() => respondConfirmation(confirmation.approval_id, "approve")}>
-                  Allow
+                <Button
+                  variant="primary"
+                  onPress={() =>
+                    respondConfirmation(
+                      confirmation.approval_id,
+                      // A shell gate offers "once" (node shells are never savable,
+                      // so they arrive without "save"); a plain gate offers
+                      // "approve". Send whichever the backend actually accepts —
+                      // hardcoding "approve" made the backend reject the decision
+                      // as invalid and the confirmation timed out into a deny.
+                      confirmation.options?.includes("once") ? "once" : "approve",
+                    )
+                  }
+                >
+                  {confirmation.options?.includes("once") ? "Approve once" : "Allow"}
                 </Button>
               </>
             )

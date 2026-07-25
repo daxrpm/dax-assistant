@@ -444,9 +444,18 @@ function ConfirmationModal({
             </Button>
             <Button
               variant="primary"
-              onClick={() => onDecide(request.approval_id, "approve")}
+              onClick={() =>
+                onDecide(
+                  request.approval_id,
+                  // A shell gate offers "once" (node shells are never savable, so
+                  // they arrive without "save"); a plain gate offers "approve".
+                  // Send whichever the backend accepts — hardcoding "approve" made
+                  // it reject the decision and the confirmation timed out to deny.
+                  request.options?.includes("once") ? "once" : "approve",
+                )
+              }
             >
-               {t("chat.allow")}
+               {request.options?.includes("once") ? t("chat.approveOnce") : t("chat.allow")}
             </Button>
           </>
         )
