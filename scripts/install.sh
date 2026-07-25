@@ -40,6 +40,19 @@ BACKEND_UNIT="$UNIT_DIR/dax-assistant.service"
 NODE_UNIT="$UNIT_DIR/dax-assistant-node.service"
 BACKUP_DIR="$STATE_DIR/backups"
 
+# `systemctl --user` talks to the per-user systemd manager over its D-Bus
+# socket. A graphical login exports XDG_RUNTIME_DIR and DBUS_SESSION_BUS_ADDRESS;
+# an SSH session or a bare TTY often does not, and systemctl then fails with
+# "Failed to connect to user scope bus ... Operation not permitted". Point both
+# at the well-known runtime path so unit operations work from any session.
+if [[ -z "${XDG_RUNTIME_DIR:-}" ]]; then
+    XDG_RUNTIME_DIR="/run/user/$(id -u)"
+    export XDG_RUNTIME_DIR
+fi
+if [[ -z "${DBUS_SESSION_BUS_ADDRESS:-}" && -S "$XDG_RUNTIME_DIR/bus" ]]; then
+    export DBUS_SESSION_BUS_ADDRESS="unix:path=$XDG_RUNTIME_DIR/bus"
+fi
+
 COMMAND="install"
 WANT_BACKEND=0
 WANT_DESKTOP=0
@@ -502,6 +515,11 @@ PY
 unit_active()  { systemctl --user is-active --quiet "$1"; }
 unit_enabled() { systemctl --user is-enabled --quiet "$1" 2>/dev/null; }
 
+# True when the per-user systemd manager is reachable. When it is not — an SSH
+# or `su` session with no running user manager — every `systemctl --user` call
+# fails to connect, and unit operations must be skipped rather than aborted on.
+user_bus_up() { systemctl --user show-environment >/dev/null 2>&1; }
+
 backend_ready() {
     curl --fail --silent --max-time 5 "http://127.0.0.1:$BACKEND_PORT/api/health" 2>/dev/null \
         | python3 -c '
@@ -958,11 +976,19 @@ command_uninstall() {
     fi
 
     local unit
-    for unit in dax-assistant.service dax-assistant-node.service; do
-        systemctl --user disable --now "$unit" >/dev/null 2>&1 || true
-    done
-    rm -f "$BACKEND_UNIT" "$NODE_UNIT"
-    systemctl --user daemon-reload
+    if user_bus_up; then
+        for unit in dax-assistant.service dax-assistant-node.service; do
+            systemctl --user disable --now "$unit" >/dev/null 2>&1 || true
+        done
+        rm -f "$BACKEND_UNIT" "$NODE_UNIT"
+        systemctl --user daemon-reload >/dev/null 2>&1 || true
+    else
+        warn "the per-user systemd manager is not reachable from this shell,"
+        warn "so services cannot be stopped here. Removing the unit files anyway."
+        warn "If a service is still running, from a login/graphical session run:"
+        warn "  systemctl --user disable --now dax-assistant.service dax-assistant-node.service"
+        rm -f "$BACKEND_UNIT" "$NODE_UNIT"
+    fi
     rm -f "$CURRENT_LINK" "$NODE_CURRENT_LINK"
     rm -rf "${RELEASES_DIR:?}" "${NODE_RELEASES_DIR:?}" "${CACHE_DIR:?}"
     ok "services, units, and releases removed"
