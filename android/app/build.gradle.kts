@@ -19,8 +19,8 @@ android {
         // run on — the target handset is on Android 15.
         minSdk = 31
         targetSdk = 36
-        versionCode = 3000
-        versionName = "0.3.0"
+        versionCode = 3001
+        versionName = "0.3.1"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
