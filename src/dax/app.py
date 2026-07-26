@@ -202,6 +202,7 @@ class DaxApp:
             # Deferred: the key is generated the first time something needs it,
             # which may be this call or may be a phone asking for a ticket.
             public_key=lambda: public_key_for(signing_key(self._secrets)),
+            voice=self.config.voice,
         )
         if hasattr(self._web_app, "state"):
             auth_manager = getattr(self._web_app.state, "auth", None)
@@ -343,6 +344,10 @@ class DaxApp:
                 if hasattr(self._web_app, "state"):
                     self._web_app.state.voice_pipeline = self._voice_pipeline
                     self._web_app.state.voice_listening = True
+                # Lets laptops with a microphone claim the wake word against
+                # this host's own, so whichever is nearest the user answers.
+                if self._capability_hub is not None:
+                    self._capability_hub.set_pipeline(self._voice_pipeline)
                 log.info("Voice pipeline ready")
             except Exception:
                 log.exception("Voice pipeline failed to start — continuing without voice")
@@ -350,6 +355,8 @@ class DaxApp:
                 if hasattr(self._web_app, "state"):
                     self._web_app.state.voice_pipeline = None
                     self._web_app.state.voice_listening = False
+                if self._capability_hub is not None:
+                    self._capability_hub.set_pipeline(None)
 
         self._web_app.state.ready = True
         log.info("Dax Assistant is ready")

@@ -40,6 +40,7 @@ from dax.core.exceptions import STTError, TTSError, VoiceError
 from dax.core.models import ChannelType, Language, Message, MessageRole
 from dax.core.voice_events import LevelSource, VoiceEventHub
 from dax.llm.client import sanitize_assistant_text
+from dax.voice.arbiter import HOST_SOURCE_ID, WakeArbiter
 from dax.voice.audio_io import CHUNK_SIZE, SAMPLE_RATE, AudioCapture, AudioPlayer, AudioSource
 from dax.voice.events import emit_level
 from dax.voice.speaker import SpeakerVerifier
@@ -49,6 +50,8 @@ from dax.voice.vad import VAD_CHUNK_SIZE, VoiceActivityDetector
 from dax.voice.wakeword import WakeWordDetector
 
 if TYPE_CHECKING:
+    from collections.abc import Callable
+
     from dax.channels.voice_channel import VoiceChannel
     from dax.core.config import VoiceConfig
     from dax.orchestrator.approval import ApprovalManager
@@ -295,6 +298,19 @@ class VoicePipeline:
         # toward the vocabulary already in play.
         self._recent_turns: deque[str] = deque(maxlen=_STT_CONTEXT_TURNS)
 
+        # Wake arbitration. The host microphone is one claimant among several;
+        # capability nodes claim through the hub against this same arbiter, so
+        # a single "hey jarvis" heard in two places produces one answer.
+        self._arbiter = WakeArbiter(
+            window_s=max(0, config.wake_arbitration_window_ms) / 1000.0,
+            suppress_s=max(0, config.wake_suppress_ms) / 1000.0,
+        )
+        # Set by the hub when a node wins; consumed by the state machine thread.
+        self._remote_wake_owner: str | None = None
+        self._wake_holder: str | None = None
+        self._remote_wake_end: Callable[[str], None] | None = None
+        self._wake_lock = threading.Lock()
+
     # -- Properties --
 
     @property
@@ -312,6 +328,12 @@ class VoicePipeline:
         if value == self.__state:
             return
         self.__state = value
+        # Returning to IDLE ends the turn the wake word started, so whoever won
+        # that arbitration stops holding the wake path. Doing it here rather
+        # than at each of the ~20 transition sites is what makes it impossible
+        # to leave the arbiter wedged down an error path.
+        if value == PipelineState.IDLE:
+            self._release_wake_hold()
         expires_at: float | None = None
         if self._conversation_id is not None and self._session_ttl_s > 0:
             remaining = max(
@@ -480,6 +502,64 @@ class VoicePipeline:
         with self._source_lock:
             self._audio_source = selected
 
+    # -- Wake arbitration --
+
+    @property
+    def arbiter(self) -> WakeArbiter:
+        """The referee node claims are judged against, shared with the hub."""
+        return self._arbiter
+
+    def set_remote_wake_end_callback(
+        self, callback: Callable[[str], None] | None
+    ) -> None:
+        """Register who to tell when a node-owned wake turn is over.
+
+        Only the pipeline knows where the sentence ended, and only the hub can
+        reach the node, so the two are joined by this one callback rather than
+        by either holding the other.
+        """
+        self._remote_wake_end = callback
+
+    def request_remote_wake(self, owner: str) -> None:
+        """Open a turn for a node that won the wake and is now streaming.
+
+        Called from the event loop, consumed by the pipeline thread. The caller
+        is responsible for having taken the remote lease and selected the audio
+        source first, so that by the time the turn opens there is already audio
+        arriving to transcribe.
+        """
+        with self._wake_lock:
+            self._remote_wake_owner = owner
+            self._wake_holder = owner
+
+    def _take_remote_wake_request(self) -> str | None:
+        with self._wake_lock:
+            owner, self._remote_wake_owner = self._remote_wake_owner, None
+            return owner
+
+    def _claim_wake(self, source_id: str, score: float) -> bool:
+        """Bid for the right to answer, and record the hold when it is won."""
+        won = self._arbiter.wait_for(self._arbiter.claim(source_id, score))
+        if won:
+            with self._wake_lock:
+                self._wake_holder = source_id
+        return won
+
+    def _release_wake_hold(self) -> None:
+        with self._wake_lock:
+            holder, self._wake_holder = self._wake_holder, None
+            callback = self._remote_wake_end
+        if holder is None:
+            return
+        self._arbiter.release(holder)
+        if holder != HOST_SOURCE_ID and callback is not None:
+            # Never let a listener's failure strand the pipeline in a state it
+            # has already left.
+            try:
+                callback(holder)
+            except Exception:
+                logger.exception("Remote wake-end callback failed for %s", holder)
+
     def _request_ptt(
         self, action: Literal["press", "release", "cancel"], timeout: float
     ) -> PipelineState:
@@ -520,6 +600,7 @@ class VoicePipeline:
                 logger.exception("Voice pipeline error — resetting to IDLE")
                 self._events.emit_error(str(exc))
                 self._ptt_active = False
+                self._arbiter.reset()
                 self._state = PipelineState.IDLE
                 self._vad.reset()
                 self._wakeword.reset()
@@ -597,6 +678,16 @@ class VoicePipeline:
         :meth:`_resume_or_start_session` decides on the next wake word whether
         enough time has passed to warrant forgetting.
         """
+        # A node that won the arbitration is already streaming its microphone
+        # into the selected audio source; all that is left is to open the turn.
+        remote_owner = self._take_remote_wake_request()
+        if remote_owner is not None:
+            logger.info("Wake word granted to node %s", remote_owner)
+            self._resume_or_start_session()
+            self._followup_armed = True
+            self._enter_listening()
+            return
+
         # A remote output lease means the user is at that client, not beside
         # this machine. Never sample the host microphone while it is held.
         if self._output_owner is not None:
@@ -605,17 +696,29 @@ class VoicePipeline:
         chunk = self._read_metered_chunk(timeout=0.5)
         if chunk is None:
             return
-        detected = self._wakeword.detect(chunk)
-        if detected is not None:
-            logger.info("Wake word detected: %s", detected)
-            self._resume_or_start_session()
-            self._followup_armed = True
-            # Immediate audible acknowledgement (like Alexa's tone) so the user
-            # knows Dax is listening before they start speaking. Mic is muted
-            # during the chime so the tone is never captured as speech.
-            if self._earcon_enabled:
-                self._play_earcon("wake")
-            self._enter_listening()
+        detection = self._wakeword.detect_with_score(chunk)
+        if detection is None:
+            return
+        detected, score = detection
+        logger.info("Wake word detected: %s (score=%.3f)", detected, score)
+
+        # Another microphone may have heard the same words more clearly. Wait
+        # for the verdict before making any sound, so a losing host never emits
+        # an earcon the winning node is about to emit too.
+        if not self._claim_wake(HOST_SOURCE_ID, score):
+            logger.info("Another microphone answered — standing down")
+            self._wakeword.reset()
+            self._drain_mic_buffer()
+            return
+
+        self._resume_or_start_session()
+        self._followup_armed = True
+        # Immediate audible acknowledgement (like Alexa's tone) so the user
+        # knows Dax is listening before they start speaking. Mic is muted
+        # during the chime so the tone is never captured as speech.
+        if self._earcon_enabled:
+            self._play_earcon("wake")
+        self._enter_listening()
 
     def _handle_listening(self) -> None:
         """LISTENING — buffer audio and detect end-of-speech.

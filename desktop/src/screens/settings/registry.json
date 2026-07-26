@@ -84,6 +84,34 @@
               "apply": "reload"
             },
             {
+              "key": "voice.wake_arbitration_window_ms",
+              "api": "voice",
+              "path": "wake_arbitration_window_ms",
+              "label": "Ventana de arbitraje entre micrófonos",
+              "description": "Cuánto espera Dax a que otro micrófono también te oiga, antes de decidir cuál responde. Subir si una laptop lejana contesta a destiempo.",
+              "control": "number",
+              "unit": "ms",
+              "min": 0,
+              "max": 2000,
+              "step": 50,
+              "advanced": true,
+              "apply": "restart"
+            },
+            {
+              "key": "voice.wake_suppress_ms",
+              "api": "voice",
+              "path": "wake_suppress_ms",
+              "label": "Silencio tras perder el arbitraje",
+              "description": "Cuánto ignora su micrófono el equipo que no respondió, para que el resto de la frase no lo vuelva a despertar.",
+              "control": "number",
+              "unit": "ms",
+              "min": 0,
+              "max": 10000,
+              "step": 100,
+              "advanced": true,
+              "apply": "restart"
+            },
+            {
               "key": "voice.vad_threshold",
               "api": "voice",
               "path": "vad_threshold",

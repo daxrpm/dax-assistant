@@ -15,6 +15,8 @@ MAX_TTS_CONFIG_BYTES = 4096
 MAX_TTS_CHUNK_BYTES = 48 * 1024
 MAX_TTS_CHUNKS = 128
 MAX_TTS_AUDIO_BYTES = 6 * 1024 * 1024
+MAX_AUDIO_FRAME_BYTES = 3_200
+MAX_AUDIO_FRAMES_PER_LEASE = 300
 
 
 @dataclass(frozen=True, slots=True)
@@ -86,6 +88,77 @@ def local_tts_features_frame(
         "type": "features",
         "generation": generation,
         "local_tts": {"engines": list(engines)},
+    }
+
+
+@dataclass(frozen=True, slots=True)
+class WakePolicy:
+    """What the backend last told this node about listening.
+
+    Model and threshold come from the backend so that every microphone in the
+    house is judged on the same scale — an arbitration between detectors tuned
+    differently would compare numbers that do not mean the same thing.
+    """
+
+    enabled: bool
+    model: str
+    threshold: float
+
+
+def parse_wake_policy(frame: dict[str, object]) -> WakePolicy | None:
+    """Read the wake settings out of a policy frame, if it carries them.
+
+    An older backend sends no wake fields at all; the node must then not
+    listen, because nothing on the other side would arbitrate its claims and
+    it would answer over whatever else is in the room.
+    """
+    if frame.get("type") != "policy":
+        return None
+    enabled = frame.get("wake_word")
+    model = frame.get("wake_word_model")
+    threshold = frame.get("wake_word_threshold")
+    if not isinstance(enabled, bool):
+        return None
+    if not isinstance(model, str) or not model or len(model) > 256:
+        return None
+    if (
+        not isinstance(threshold, (int, float))
+        or isinstance(threshold, bool)
+        or not 0.0 <= float(threshold) <= 1.0
+    ):
+        return None
+    return WakePolicy(enabled=enabled, model=model, threshold=float(threshold))
+
+
+def wake_claim_frame(generation: int, claim_id: str, score: float) -> dict[str, object]:
+    return {
+        "type": "wake_claim",
+        "generation": generation,
+        "claim_id": claim_id,
+        "score": max(0.0, min(1.0, float(score))),
+    }
+
+
+def audio_chunk_frame(
+    generation: int, lease_id: str, seq: int, data: str
+) -> dict[str, object]:
+    return {
+        "type": "audio_chunk",
+        "generation": generation,
+        "lease_id": lease_id,
+        "seq": seq,
+        "data": data,
+    }
+
+
+def audio_end_frame(
+    generation: int, lease_id: str, reason: str = "complete"
+) -> dict[str, object]:
+    return {
+        "type": "audio_end",
+        "generation": generation,
+        "lease_id": lease_id,
+        "reason": reason,
     }
 
 

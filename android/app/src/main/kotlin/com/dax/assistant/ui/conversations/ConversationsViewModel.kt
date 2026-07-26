@@ -8,7 +8,9 @@ import com.dax.assistant.data.conversations.ConversationApi
 import com.dax.assistant.data.conversations.ConversationApiResult
 import com.dax.assistant.data.conversations.ConversationChatState
 import com.dax.assistant.data.conversations.ConversationSummary
+import com.dax.assistant.audio.Speaker
 import com.dax.assistant.data.transport.ConnectionState
+import com.dax.assistant.preferences.AppPreferences
 import dagger.hilt.android.lifecycle.HiltViewModel
 import java.time.Instant
 import java.util.UUID
@@ -36,12 +38,18 @@ data class ConversationsUiState(
 class ConversationsViewModel @Inject constructor(
     private val api: ConversationApi,
     private val repository: ChatRepository,
+    private val speaker: Speaker,
+    private val preferences: AppPreferences,
 ) : ViewModel() {
     private val _state = MutableStateFlow(ConversationsUiState())
     val state: StateFlow<ConversationsUiState> = _state.asStateFlow()
     private var sessionId: String? = null
     private var chatJob: Job? = null
     private var requestGeneration = 0
+    // Ids already accounted for, so opening a conversation reads none of its
+    // history aloud — only what arrives while you are looking at it.
+    private val spokenIds = mutableSetOf<String>()
+    private var speakJob: Job? = null
 
     init {
         refresh()
@@ -142,14 +150,57 @@ class ConversationsViewModel @Inject constructor(
             return
         }
         sessionId = nextSessionId
+        // Everything already in the thread counts as heard.
+        spokenIds.clear()
+        messages.forEach { spokenIds.add(it.id) }
         chatJob = viewModelScope.launch {
-            flow.collect { chat -> _state.update { it.copy(chat = chat) } }
+            flow.collect { chat ->
+                _state.update { it.copy(chat = chat) }
+                speakLatestReply(chat.messages)
+            }
         }
+    }
+
+    /** Read the newest finished assistant turn aloud, at most once. */
+    private fun speakLatestReply(messages: List<ChatMessage>) {
+        val latest = messages.lastOrNull { it.role == "assistant" && !it.pending && !it.failed }
+        val isNew = latest != null && latest.id !in spokenIds
+        // Mark finished messages seen even when speaking is off, so switching it
+        // on mid-conversation does not suddenly recite the backlog. Pending ones
+        // are deliberately excluded: a streamed reply arrives pending first and
+        // is finalised under the same id, so marking it here would mean the
+        // finished answer is never spoken at all.
+        messages.forEach { if (!it.pending) spokenIds.add(it.id) }
+        if (latest == null || !isNew) return
+        if (!preferences.state.value.speakChatReplies) return
+        if (latest.content.isBlank()) return
+
+        // A new reply replaces whatever is still being spoken; two overlapping
+        // answers are worse than a truncated one.
+        speakJob?.cancel()
+        speaker.stop()
+        speakJob = viewModelScope.launch {
+            runCatching { speaker.speak(latest.content) }
+        }
+    }
+
+    /** Silence the current reply — used by the UI's stop control. */
+    fun stopSpeaking() {
+        speakJob?.cancel()
+        speakJob = null
+        speaker.stop()
+    }
+
+    fun setSpeakReplies(enabled: Boolean) {
+        preferences.setSpeakChatReplies(enabled)
+        if (!enabled) stopSpeaking()
     }
 
     private fun unbind() {
         chatJob?.cancel()
         chatJob = null
+        stopSpeaking()
+        spokenIds.clear()
         sessionId?.let(repository::release)
         sessionId = null
     }

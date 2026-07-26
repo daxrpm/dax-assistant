@@ -43,16 +43,19 @@ from .protocol import (
     parse_frame,
     parse_ready,
     parse_synthesize,
+    parse_wake_policy,
     result_frame,
     synthesize_chunk_frame,
     synthesize_final_frame,
 )
+from .wake import WakeListener
 
 logger = logging.getLogger(__name__)
 
 HEARTBEAT_SECONDS = 20.0
 MAX_IN_FLIGHT = 8
 MAX_ADVERTISED_ENDPOINTS = 4
+_WAKE_RESPONSES = frozenset({"wake_grant", "wake_yield", "listen_stop"})
 
 
 def available_local_tts_engines() -> list[str]:
@@ -293,6 +296,10 @@ class EdgeDaemon:
         # that IP.
         self._session_port = session_port
         self._backend_public_key: str | None = None
+        self._generation = 0
+        # Built on the first policy that turns listening on, so a node that is
+        # never asked to listen never opens its microphone at all.
+        self._wake: WakeListener | None = None
 
     @property
     def backend_public_key(self) -> str | None:
@@ -355,6 +362,10 @@ class EdgeDaemon:
                         and asyncio.get_running_loop().time() - connected_at >= 30.0
                     ):
                         attempt = 0
+                    # The listener sends through the connection it was built
+                    # with, so it cannot outlive it. The next policy push on
+                    # the new socket starts it again.
+                    await self._stop_wake()
                     await self._cancel_requests()
                     if connection is not None:
                         with suppress(Exception):
@@ -365,9 +376,61 @@ class EdgeDaemon:
                     logger.info("Reconnecting capability node in %.1fs", delay)
                     await self._sleep(delay)
         finally:
+            await self._stop_wake()
             await self._cancel_requests()
             await self._tts_executor.stop()
             await self._executor.stop()
+
+    async def _stop_wake(self) -> None:
+        """Shut the microphone down off the event loop — the join can block."""
+        listener, self._wake = self._wake, None
+        if listener is not None:
+            with suppress(Exception):
+                await asyncio.to_thread(listener.stop)
+
+    def _apply_wake_policy(
+        self, connection: WebSocketConnection, frame: dict[str, object]
+    ) -> None:
+        """Start or stop this node's own wake-word detector to match policy."""
+        policy = parse_wake_policy(frame)
+        if policy is None:
+            # An older backend, or a policy without wake fields. Nothing over
+            # there would arbitrate our claims, so stay deaf rather than answer
+            # over whatever else is in the room.
+            if self._wake is not None:
+                self._wake.stop()
+            return
+        if self._wake is None:
+            if not policy.enabled:
+                return
+            try:
+                self._wake = WakeListener(
+                    lambda payload: connection.send(json.dumps(payload)),
+                    asyncio.get_running_loop(),
+                )
+            except Exception:
+                logger.exception("Could not start wake word listening on this node")
+                return
+        self._wake.apply_policy(policy, self._generation)
+
+    def _handle_wake_response(self, frame: dict[str, object]) -> None:
+        listener = self._wake
+        if listener is None:
+            return
+        kind = frame["type"]
+        claim_id = frame.get("claim_id")
+        lease_id = frame.get("lease_id")
+        if kind == "wake_grant":
+            if isinstance(claim_id, str) and isinstance(lease_id, str):
+                listener.on_grant(claim_id, lease_id)
+        elif kind == "wake_yield":
+            suppress = frame.get("suppress_ms")
+            if not isinstance(suppress, int) or isinstance(suppress, bool):
+                suppress = 0
+            if isinstance(claim_id, str):
+                listener.on_yield(claim_id, suppress)
+        elif kind == "listen_stop" and isinstance(lease_id, str):
+            listener.on_listen_stop(lease_id)
 
     async def _serve_until_stop(
         self, connection: WebSocketConnection, expires: int
@@ -416,6 +479,15 @@ class EdgeDaemon:
                     )
                     if tts_features is not None:
                         await connection.send(json.dumps(tts_features))
+                    generation = frame.get("generation")
+                    if isinstance(generation, int) and not isinstance(generation, bool):
+                        self._generation = generation
+                    continue
+                if frame["type"] == "policy":
+                    self._apply_wake_policy(connection, frame)
+                    continue
+                if frame["type"] in _WAKE_RESPONSES:
+                    self._handle_wake_response(frame)
                     continue
                 if frame["type"] not in {"execute", "synthesize"}:
                     continue

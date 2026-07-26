@@ -177,6 +177,7 @@ private fun MainGraph(
                 onRecognitionLanguageChange = viewModel::setRecognitionLanguage,
                 onSpeechOutputModeChange = viewModel::setSpeechOutputMode,
                 onFollowUpChange = viewModel::setFollowUpEnabled,
+                onSpeakChatChange = viewModel::setSpeakChatReplies,
                 onThemeChange = viewModel::setTheme,
                 onOpenDiagnostics = { navController.navigate(DIAGNOSTICS_ROUTE) },
             )
