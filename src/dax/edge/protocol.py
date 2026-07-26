@@ -26,6 +26,10 @@ class ExecuteRequest:
     tool_name: str
     arguments: dict[str, object]
     timeout_seconds: float
+    # Whether a human confirmed this exact call on a client. Absent on an older
+    # backend, which is why it defaults to False: a node must never widen what
+    # it will run because a field it does not understand went missing.
+    approved: bool = False
 
 
 @dataclass(frozen=True, slots=True)
@@ -193,7 +197,12 @@ def parse_execute(frame: dict[str, object]) -> ExecuteRequest:
     bounded_timeout = min(float(timeout), MAX_TIMEOUT_SECONDS)
     if bounded_timeout <= 0:
         raise ValueError("Invalid timeout_seconds")
-    return ExecuteRequest(request_id, generation, tool_name, arguments, bounded_timeout)
+    approved = frame.get("approved")
+    if not isinstance(approved, bool):
+        approved = False
+    return ExecuteRequest(
+        request_id, generation, tool_name, arguments, bounded_timeout, approved
+    )
 
 
 def parse_synthesize(frame: dict[str, object]) -> SynthesizeRequest:

@@ -46,6 +46,12 @@ class ToolCall:
     server_name: str
     tool_name: str
     arguments: dict[str, object]
+    # True only once a human has explicitly approved this exact call. A
+    # capability node enforces its own shell allowlist and cannot otherwise
+    # tell an agent's idea from a user's decision, so without this flag the
+    # only commands it will ever run are the static read-only defaults —
+    # approving anything else on screen would still be refused on the node.
+    human_approved: bool = False
 
 
 @dataclass(frozen=True, slots=True)

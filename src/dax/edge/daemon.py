@@ -28,7 +28,11 @@ from dax.core.config import VoiceConfig
 from dax.core.models import ToolCall
 from dax.mcp.client import MCPClient
 from dax.mcp.manager import _session_passthrough_env
-from dax.mcp_servers.system.server import shell_allowlist, validate_command
+from dax.mcp_servers.system.server import (
+    configured_shell_allowlist,
+    shell_allowlist,
+    validate_command,
+)
 
 from .credentials import NodeCredentials, websocket_url
 from .protocol import (
@@ -136,9 +140,20 @@ class SystemExecutor:
             if value := os.environ.get(key):
                 env[key] = value
         self._shell_allow = shell_allowlist()
-        # Always mark an edge subprocess as node-confined. An explicitly empty
-        # setting is preserved and disables shell execution on this node.
-        env["DAX_SYSTEM_SHELL_ALLOW"] = ",".join(sorted(self._shell_allow))
+        # An explicitly empty allowlist is a local kill switch — "this laptop
+        # runs no shell at all" — and outranks any approval. That is a different
+        # statement from "these commands need no confirmation", so approval
+        # cannot reopen it.
+        self._shell_disabled = configured_shell_allowlist() == set()
+        # The binary allowlist is enforced in `execute` below rather than as a
+        # subprocess cap, because only this process knows whether the user
+        # approved the call. A fixed environment variable cannot vary per call,
+        # so capping here would refuse every command confirmed on screen — the
+        # user clicks Allow and nothing runs. The subprocess keeps every
+        # injection-safety guarantee regardless: argv-only, no shell, no
+        # metacharacters. This mirrors the backend, which is likewise permissive
+        # behind its own approval gate.
+        env.pop("DAX_SYSTEM_SHELL_ALLOW", None)
         self._client = MCPClient(
             "dax-system",
             command=sys.executable,
@@ -163,7 +178,15 @@ class SystemExecutor:
             command = request.arguments.get("command")
             if not isinstance(command, str):
                 raise ValueError("shell_run requires a string command")
-            validate_command(command, self._shell_allow)
+            # An approved command skips the binary allowlist but keeps every
+            # injection-safety check. The allowlist decides what may run
+            # *without* asking; the user's confirmation is what authorises the
+            # rest, and re-refusing it here would make Allow do nothing.
+            if self._shell_disabled:
+                raise ValueError("Shell execution is disabled on this node")
+            validate_command(command, None if request.approved else self._shell_allow)
+            if request.approved:
+                logger.info("Running user-approved command outside the allowlist")
         result = await asyncio.wait_for(
             self._client.execute(
                 ToolCall(

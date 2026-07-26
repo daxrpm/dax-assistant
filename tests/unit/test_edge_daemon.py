@@ -143,11 +143,12 @@ async def test_edge_shell_rejects_approved_binary_outside_node_allowlist() -> No
     executor = SystemExecutor.__new__(SystemExecutor)
     executor._tools = {"shell_run": {"name": "shell_run"}}
     executor._shell_allow = {"ls"}
+    executor._shell_disabled = False
     client = Client()
     executor._client = client  # type: ignore[assignment]
 
     request = ExecuteRequest(
-        "approved", 1, "shell_run", {"command": "approved-tool --version"}, 5
+        "unapproved", 1, "shell_run", {"command": "approved-tool --version"}, 5
     )
     with pytest.raises(ValueError, match="allowlist"):
         await executor.execute(request)
@@ -158,6 +159,75 @@ async def test_edge_shell_rejects_approved_binary_outside_node_allowlist() -> No
     )
     with pytest.raises(ValueError, match="metacharacters"):
         await executor.execute(rejected)
+    assert client.commands == []
+
+
+@pytest.mark.asyncio
+async def test_a_user_approved_command_runs_even_outside_the_allowlist() -> None:
+    """Clicking Allow has to actually run the thing.
+
+    The node keeps its own allowlist and cannot see the confirmation modal, so
+    it used to refuse whatever the user had just approved: the modal appeared,
+    Allow did nothing, and the turn failed with no explanation.
+    """
+
+    class Client:
+        def __init__(self) -> None:
+            self.commands: list[str] = []
+
+        async def execute(self, call: ToolCall) -> ToolResult:
+            self.commands.append(call.arguments["command"])
+            return ToolResult(call.id, "ok", False)
+
+    executor = SystemExecutor.__new__(SystemExecutor)
+    executor._tools = {"shell_run": {"name": "shell_run"}}
+    executor._shell_allow = {"ls"}
+    executor._shell_disabled = False
+    client = Client()
+    executor._client = client  # type: ignore[assignment]
+
+    approved = ExecuteRequest(
+        "approved",
+        1,
+        "shell_run",
+        {"command": "flatpak run com.spotify.Client"},
+        5,
+        approved=True,
+    )
+    assert await executor.execute(approved) == "ok"
+    assert client.commands == ["flatpak run com.spotify.Client"]
+
+    # Injection safety is never waived by approval.
+    with pytest.raises(ValueError, match="metacharacters"):
+        await executor.execute(
+            ExecuteRequest("x", 1, "shell_run", {"command": "ls; id"}, 5, approved=True)
+        )
+    assert client.commands == ["flatpak run com.spotify.Client"]
+
+
+@pytest.mark.asyncio
+async def test_an_empty_allowlist_disables_shell_even_for_approved_commands() -> None:
+    """The local kill switch outranks approval — it means "no shell here"."""
+
+    class Client:
+        def __init__(self) -> None:
+            self.commands: list[str] = []
+
+        async def execute(self, call: ToolCall) -> ToolResult:
+            self.commands.append(call.arguments["command"])
+            return ToolResult(call.id, "ok", False)
+
+    executor = SystemExecutor.__new__(SystemExecutor)
+    executor._tools = {"shell_run": {"name": "shell_run"}}
+    executor._shell_allow = set()
+    executor._shell_disabled = True
+    client = Client()
+    executor._client = client  # type: ignore[assignment]
+
+    with pytest.raises(ValueError, match="disabled"):
+        await executor.execute(
+            ExecuteRequest("a", 1, "shell_run", {"command": "ls"}, 5, approved=True)
+        )
     assert client.commands == []
 
 
@@ -184,7 +254,12 @@ def test_edge_forwards_explicitly_empty_shell_allowlist(
     executor = SystemExecutor()
 
     assert executor._shell_allow == set()
-    assert captured["DAX_SYSTEM_SHELL_ALLOW"] == ""
+    assert executor._shell_disabled is True
+    # The binary cap is no longer handed to the subprocess: it cannot vary per
+    # call, so it would refuse the very commands the user approved on screen.
+    # Enforcement moved to `execute`, which is the only layer that can see the
+    # approval. Injection safety in the subprocess is unaffected.
+    assert "DAX_SYSTEM_SHELL_ALLOW" not in captured
 
 
 @pytest.mark.asyncio

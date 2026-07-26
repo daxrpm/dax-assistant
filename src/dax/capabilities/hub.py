@@ -153,6 +153,10 @@ class _Connection:
                         "request_id": wire_id,
                         "tool_name": local_name,
                         "arguments": call.arguments,
+                        # The node keeps its own allowlist and cannot see the
+                        # confirmation modal. Without this it would refuse every
+                        # command the user just approved on screen.
+                        "approved": call.human_approved,
                         "timeout_seconds": _CALL_TIMEOUT,
                     }
                 )

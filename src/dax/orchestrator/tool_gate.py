@@ -13,6 +13,7 @@ LLM↔tool conversation. The gate owns *whether and how* a tool call runs:
 from __future__ import annotations
 
 import logging
+from dataclasses import replace
 from typing import TYPE_CHECKING
 
 from dax.capabilities.protocol import is_canonical_shell
@@ -68,7 +69,9 @@ class ToolGate:
         """
         resolved_call = self._resolve_server(tool_call)
 
-        blocked = await self._gate(resolved_call, channel=channel, session_id=session_id)
+        blocked, resolved_call = await self._gate(
+            resolved_call, channel=channel, session_id=session_id
+        )
         if blocked is not None:
             return blocked
 
@@ -112,18 +115,27 @@ class ToolGate:
         *,
         channel: str | None = None,
         session_id: str | None = None,
-    ) -> ToolResult | None:
-        """Apply the policy. Returns a blocking ToolResult, or None to proceed."""
+    ) -> tuple[ToolResult | None, ToolCall]:
+        """Apply the policy.
+
+        Returns a blocking ToolResult (or None to proceed) together with the
+        call to actually run — which carries ``human_approved`` when the user
+        confirmed it, so an executor with its own allowlist can tell the
+        difference between the agent asking and the user agreeing.
+        """
         if self._policy is None:
-            return None
+            return None, call
         decision = self._policy.decide(call.tool_name)
         if decision is Decision.DENY:
             logger.warning("Tool '%s' denied by policy", call.tool_name)
             await self._audit(call, "denied")
-            return ToolResult(
-                call_id=call.id,
-                content=f"Error: tool '{call.tool_name}' is not permitted.",
-                is_error=True,
+            return (
+                ToolResult(
+                    call_id=call.id,
+                    content=f"Error: tool '{call.tool_name}' is not permitted.",
+                    is_error=True,
+                ),
+                call,
             )
         # Local shell calls use the user-managed allowlist; canonical node shell
         # calls always enter the one-time approval path.
@@ -132,17 +144,20 @@ class ToolGate:
         ):
             return await self._gate_shell(call, channel=channel, session_id=session_id)
         if decision is Decision.ALLOW:
-            return None
+            return None, call
         # ASK — require confirmation.
         if self._approval is None:
             await self._audit(call, "denied")
-            return ToolResult(
-                call_id=call.id,
-                content=(
-                    f"Error: '{call.tool_name}' requires confirmation but no "
-                    "approval channel is available."
+            return (
+                ToolResult(
+                    call_id=call.id,
+                    content=(
+                        f"Error: '{call.tool_name}' requires confirmation but no "
+                        "approval channel is available."
+                    ),
+                    is_error=True,
                 ),
-                is_error=True,
+                call,
             )
         result = await self._approval.request(
             tool_name=call.tool_name,
@@ -154,12 +169,15 @@ class ToolGate:
         approved = result != "deny"
         await self._audit(call, "approved" if approved else "declined")
         if not approved:
-            return ToolResult(
-                call_id=call.id,
-                content=f"Error: the user declined to run '{call.tool_name}'.",
-                is_error=True,
+            return (
+                ToolResult(
+                    call_id=call.id,
+                    content=f"Error: the user declined to run '{call.tool_name}'.",
+                    is_error=True,
+                ),
+                call,
             )
-        return None
+        return None, replace(call, human_approved=True)
 
     def _is_trusted_shell(self, call: ToolCall) -> bool:
         if call.tool_name == _SHELL_TOOL_NAME:
@@ -175,13 +193,17 @@ class ToolGate:
         *,
         channel: str | None = None,
         session_id: str | None = None,
-    ) -> ToolResult | None:
+    ) -> tuple[ToolResult | None, ToolCall]:
         """Gate a shell_run call against the user-managed command allowlist.
 
         Local allowlisted, bounded read-only commands run with no prompt. A
         capability-node shell always requires explicit one-time approval because
         its generic argv is not confined to the node's configured file roots.
         Eligible local commands can also be saved; denials block the call.
+
+        An approved node command is returned marked, because the node applies
+        its own allowlist and would otherwise refuse everything the user just
+        agreed to.
         """
         command = str(call.arguments.get("command", ""))
         binary = shell_binary(command)
@@ -193,17 +215,20 @@ class ToolGate:
             and self._shell_allow.allows_command(command)
         ):
             await self._audit(call, "executed")
-            return None
+            return None, call
 
         if self._approval is None:
             await self._audit(call, "denied")
-            return ToolResult(
-                call_id=call.id,
-                content=(
-                    f"Error: command '{binary or command}' is not in the shell "
-                    "allowlist and no approval channel is available to ask."
+            return (
+                ToolResult(
+                    call_id=call.id,
+                    content=(
+                        f"Error: command '{binary or command}' is not in the shell "
+                        "allowlist and no approval channel is available to ask."
+                    ),
+                    is_error=True,
                 ),
-                is_error=True,
+                call,
             )
 
         can_save = not node_shell and is_auto_allowable(command)
@@ -218,10 +243,13 @@ class ToolGate:
         )
         if decision not in options:
             await self._audit(call, "declined")
-            return ToolResult(
-                call_id=call.id,
-                content=f"Error: the user declined to run '{binary or command}'.",
-                is_error=True,
+            return (
+                ToolResult(
+                    call_id=call.id,
+                    content=f"Error: the user declined to run '{binary or command}'.",
+                    is_error=True,
+                ),
+                call,
             )
         if (
             decision == "save"
@@ -232,7 +260,7 @@ class ToolGate:
             self._shell_allow.add(binary)
             logger.info("Added '%s' to the shell allowlist", binary)
         await self._audit(call, "approved")
-        return None
+        return None, replace(call, human_approved=True)
 
     async def _audit(self, call: ToolCall, status: str) -> None:
         """Record a tool execution decision to the audit log, if supported."""
