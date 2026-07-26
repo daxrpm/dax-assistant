@@ -220,7 +220,7 @@ def build(args: argparse.Namespace) -> None:
     version = check_versions()
     tag = f"v{version}"
     ref = os.environ.get("GITHUB_REF_NAME")
-    if ref and ref != tag:
+    if os.environ.get("GITHUB_REF_TYPE") == "tag" and ref != tag:
         fail(f"tag {ref} does not match release version {tag}")
     commit = subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=ROOT, text=True).strip()
     if not re.fullmatch(r"[0-9a-f]{40}", commit):

@@ -720,6 +720,7 @@ def test_release_output_rejects_unsafe_deletion_targets(output: str) -> None:
         check=False,
         capture_output=True,
         text=True,
+        env={**os.environ, "GITHUB_REF_NAME": "main", "GITHUB_REF_TYPE": "branch"},
     )
     assert result.returncode != 0
     assert "--output must be a descendant" in result.stderr
@@ -732,6 +733,7 @@ def test_release_output_rejects_dist_root() -> None:
         check=False,
         capture_output=True,
         text=True,
+        env={**os.environ, "GITHUB_REF_NAME": "main", "GITHUB_REF_TYPE": "branch"},
     )
     assert result.returncode != 0
     assert "--output may not be the dist directory itself" in result.stderr

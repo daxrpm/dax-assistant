@@ -1,16 +1,16 @@
 # Graph Report - dax-assistant  (2026-07-26)
 
 ## Corpus Check
-- 424 files · ~615,873 words
+- 424 files · ~615,885 words
 - Verdict: corpus is large enough that graph structure adds value.
 
 ## Summary
-- 6795 nodes · 17535 edges · 340 communities (251 shown, 89 thin omitted)
+- 6795 nodes · 17535 edges · 341 communities (252 shown, 89 thin omitted)
 - Extraction: 80% EXTRACTED · 20% INFERRED · 0% AMBIGUOUS · INFERRED: 3425 edges (avg confidence: 0.58)
 - Token cost: 0 input · 0 output
 
 ## Graph Freshness
-- Built from commit: `392dc42d`
+- Built from commit: `d1ec8cc0`
 - Run `git rev-parse HEAD` and compare to check if the graph is stale.
 - Run `graphify update .` after code changes (no API cost).
 
@@ -165,6 +165,7 @@
 - 10. Phased milestones
 - 5. Design system specification
 - toggle
+- datetime
 - 3. Architecture
 - 6.0 SETTINGS INFORMATION ARCHITECTURE (authoritative, 2026-07-19)
 - AppShell.tsx
@@ -370,15 +371,15 @@
 - **Remote Voice v1 Flow** — docs_voice_websocket_authenticated_voice_socket, docs_voice_websocket_exclusive_remote_audio_lease, docs_voice_websocket_bounded_pcm_protocol, readme_remote_voice_limit [EXTRACTED 1.00]
 - **Orbita Realtime Rendering** — docs_desktop_architecture_demand_managed_realtime_stores, docs_desktop_architecture_orbita_canvas_renderer, docs_voice_websocket_source_separated_level_frames, desktop_plan_voice_hud [EXTRACTED 1.00]
 
-## Communities (340 total, 89 thin omitted)
+## Communities (341 total, 89 thin omitted)
 
 ### Community 0 - "Bundle Collection Utilities"
 Cohesion: 0.01
-Nodes (181): ab(), add(), addDescendants(), addNode(), __addSublanguage(), addText(), addTreeNode(), Ag() (+173 more)
+Nodes (187): ab(), add(), addDescendants(), addNode(), __addSublanguage(), addText(), addTreeNode(), Ag() (+179 more)
 
 ### Community 1 - "Voice Processing Pipeline"
 Cohesion: 0.08
-Nodes (111): ae(), Av(), b(), be(), Bm(), br(), C(), Ce() (+103 more)
+Nodes (109): ae(), Av(), b(), be(), Bm(), br(), C(), Ce() (+101 more)
 
 ### Community 2 - "Frontend Runtime Internals"
 Cohesion: 0.04
@@ -390,7 +391,7 @@ Nodes (26): _codes(), delete_device(), DeviceListResponse, enroll_device(), Enro
 
 ### Community 4 - "Tree Collection Traversal"
 Cohesion: 0.06
-Nodes (89): Ad(), addChild(), addEventListener(), at(), bd(), cd(), cf(), Cu() (+81 more)
+Nodes (87): Ad(), addChild(), addEventListener(), at(), bd(), cd(), cf(), Cu() (+79 more)
 
 ### Community 5 - "Tool Dispatch Interfaces"
 Cohesion: 0.09
@@ -402,7 +403,7 @@ Nodes (79): ac(), Am(), ao(), bc(), Bi(), bs(), cc(), ci() (+71 more)
 
 ### Community 7 - "Application Storage Lifecycle"
 Cohesion: 0.05
-Nodes (49): ChannelType, Conversation, Language, Message, MessageRole, StrEnum, Domain models for Dax Assistant.  Pure dataclasses with no external dependencies, Append a message and update the timestamp. (+41 more)
+Nodes (46): ChannelType, Conversation, Language, Message, MessageRole, StrEnum, Domain models for Dax Assistant.  Pure dataclasses with no external dependencies, Append a message and update the timestamp. (+38 more)
 
 ### Community 8 - "Agent Message Processing"
 Cohesion: 0.14
@@ -505,8 +506,8 @@ Cohesion: 0.12
 Nodes (28): get_host_metrics(), get_logs(), get_mcp_status(), get_status(), get_tool_audit(), get_tool_policy(), HostMetricsResponse, list_llm_models() (+20 more)
 
 ### Community 33 - "Keyboard Collection Navigation"
-Cohesion: 0.07
-Nodes (48): ai(), as(), Bo(), Bp(), bu(), ds(), es(), fp() (+40 more)
+Cohesion: 0.06
+Nodes (50): ai(), as(), Bo(), Bp(), bu(), ds(), es(), fp() (+42 more)
 
 ### Community 34 - "MCP Lifecycle Manager"
 Cohesion: 0.07
@@ -757,8 +758,8 @@ Cohesion: 0.12
 Nodes (8): Authentication and session security.      Secrets are supplied via environment v, SecurityConfig, _auth(), Device enrolment, short-lived tokens, and revocation., Salt separation: a browser session must not authenticate as a device., registry(), TestDeviceRegistry, TestDeviceTokens
 
 ### Community 152 - "TestYesNoParser"
-Cohesion: 0.06
-Nodes (30): datetime, In-memory log buffer + live fan-out for the web Logs viewer.  A single :class:`L, build_messages_for_llm(), Any, Message, Shared LLM helpers: the system prompt and the message builder.  The conversation, Build the OpenAI-format message list for an LLM call.      Converts our Message, Remove provider control markup that must never reach users or TTS. (+22 more)
+Cohesion: 0.07
+Nodes (25): build_messages_for_llm(), Any, Message, Shared LLM helpers: the system prompt and the message builder.  The conversation, Build the OpenAI-format message list for an LLM call.      Converts our Message, Remove provider control markup that must never reach users or TTS., sanitize_assistant_text(), Any (+17 more)
 
 ### Community 153 - "getFullNode"
 Cohesion: 0.09
@@ -803,6 +804,10 @@ Nodes (6): 2. Closed Decisions, D1. Tauri v2 + Rust + React, D2. Same repository
 ### Community 163 - "toggle"
 Cohesion: 0.23
 Nodes (14): handle_shortcut(), hide(), AppHandle, Option, R, Result, String, shortcut_action() (+6 more)
+
+### Community 164 - "datetime"
+Cohesion: 0.18
+Nodes (8): datetime, In-memory log buffer + live fan-out for the web Logs viewer.  A single :class:`L, _bounded_limit(), _parse_datetime(), Conversation repository — implements the Storage protocol for SQLite., Return the most recent tool-audit entries (newest first)., Return a lightweight summary list of conversations for a channel.          Does, Parse an ISO format datetime string.
 
 ### Community 165 - "3. Architecture"
 Cohesion: 0.33
@@ -933,8 +938,8 @@ Cohesion: 0.18
 Nodes (17): Approval, Completed, Boolean, Exception, String, T, Listening, Processing (+9 more)
 
 ### Community 230 - "voice_events.py"
-Cohesion: 0.11
-Nodes (31): ar(), bn(), cn(), dn(), en(), Ft(), gn(), gr() (+23 more)
+Cohesion: 0.14
+Nodes (24): bn(), cn(), dn(), en(), Ft(), gn(), gt(), ir() (+16 more)
 
 ### Community 231 - ".subscribe"
 Cohesion: 0.16
@@ -1006,7 +1011,7 @@ Nodes (24): LLMConfigUpdate, Update LLM provider settings and rebuild the live r
 
 ### Community 253 - ".bind_loop"
 Cohesion: 0.08
-Nodes (39): bb(), cb(), Cj(), consume(), currentNode(), Cx(), Db(), Eb() (+31 more)
+Nodes (42): bb(), cb(), Cj(), consume(), currentNode(), Cx(), Db(), Eb() (+34 more)
 
 ### Community 254 - ".list_tools"
 Cohesion: 0.20

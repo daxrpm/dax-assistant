@@ -710,7 +710,7 @@
     "semantic_hash": ""
   },
   "src/dax/web/static/index.html": {
-    "mtime": 1785080302.3669999,
+    "mtime": 1785086176.6600204,
     "ast_hash": "de09bc0217993aad2dcf514497c8622a",
     "semantic_hash": ""
   },
@@ -720,12 +720,12 @@
     "semantic_hash": "647271aabf0d04a8ba029b5b8ed54f36"
   },
   "src/dax/web/static/favicon.svg": {
-    "mtime": 1785080302.145059,
+    "mtime": 1785086176.4279962,
     "ast_hash": "7e840862161341271697daa99a40d76b",
     "semantic_hash": "7e840862161341271697daa99a40d76b"
   },
   "src/dax/web/static/icons.svg": {
-    "mtime": 1785080302.145171,
+    "mtime": 1785086176.4281151,
     "ast_hash": "3b4fcfcf393eca4d264dca4a4663bc37",
     "semantic_hash": "3b4fcfcf393eca4d264dca4a4663bc37"
   },
@@ -765,8 +765,8 @@
     "semantic_hash": ""
   },
   "tests/unit/test_installer.py": {
-    "mtime": 1784821717.0995507,
-    "ast_hash": "6f2d2fed22c99d7df815f3d2850c4b1e",
+    "mtime": 1785087504.114868,
+    "ast_hash": "9994ef108909bc7bf31e08bcb52117db",
     "semantic_hash": ""
   },
   "desktop/src-tauri/build.rs": {
@@ -2195,8 +2195,8 @@
     "semantic_hash": ""
   },
   "scripts/release.py": {
-    "mtime": 1784780774.3449793,
-    "ast_hash": "44db8b1dae2111f96c4b6f7c59404c54",
+    "mtime": 1785087504.112868,
+    "ast_hash": "c6a890ba181d00c808f6827ab000fadb",
     "semantic_hash": ""
   },
   "src/dax/capabilities/__init__.py": {
@@ -2290,7 +2290,7 @@
     "semantic_hash": ""
   },
   "docs/deployment.md": {
-    "mtime": 1785085214.1333632,
+    "mtime": 1785087527.1189525,
     "ast_hash": "5ed9227ed43670fb68dfdfd8d7f39546",
     "semantic_hash": ""
   },
@@ -2500,7 +2500,7 @@
     "semantic_hash": ""
   },
   "src/dax/web/static/assets/index-C9xr8q6U.js": {
-    "mtime": 1785080302.366,
+    "mtime": 1785086176.6590202,
     "ast_hash": "34864f562cd670d6198c027c30ee57a2",
     "semantic_hash": ""
   },
