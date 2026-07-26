@@ -61,6 +61,9 @@ _PONG_TIMEOUT = 10.0
 _CALL_TIMEOUT = 60.0
 _CLOSE_TIMEOUT = 5.0
 _MAX_CONCURRENT_CALLS = 4
+# 16 s of 80 ms capture frames — the pre-roll burst plus a long sentence behind
+# a consumer that is still starting up.
+_WAKE_QUEUE_FRAMES = 200
 
 
 class CapabilityTTSTransportError(RuntimeError):
@@ -536,7 +539,13 @@ class CapabilityHub:
             return
 
         lease_id = uuid.uuid4().hex
-        source = RemoteAudioSource()
+        # A wake lease opens with a burst, not a trickle: the node flushes its
+        # pre-roll — everything buffered since the detection, through the whole
+        # arbitration window — the instant it is granted. That is comfortably
+        # more than the steady-state queue holds, and the pipeline has not
+        # necessarily started reading yet, so a default-sized buffer overflows
+        # and drops the first words of the command.
+        source = RemoteAudioSource(max_frames=_WAKE_QUEUE_FRAMES)
         source.start()
         try:
             # Take input, output and events together, then point the pipeline at
