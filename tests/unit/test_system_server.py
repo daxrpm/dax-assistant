@@ -10,6 +10,8 @@ import pytest
 from dax.mcp_servers.system.server import (
     _command_environment,
     _completed_command_output,
+    _launch_application,
+    _resolve_application,
     build_server,
     configured_shell_allowlist,
     safe_path,
@@ -100,6 +102,68 @@ class TestCommandResult:
         proc = subprocess.CompletedProcess(["which"], 0, stdout="/usr/bin/which\n", stderr="")
 
         assert _completed_command_output(proc) == "/usr/bin/which\n\n[exit 0]"
+
+
+class TestApplicationLaunch:
+    @staticmethod
+    def _desktop_file(directory: Path, desktop_id: str, name: str) -> None:
+        directory.mkdir(exist_ok=True)
+        (directory / f"{desktop_id}.desktop").write_text(
+            f"[Desktop Entry]\nType=Application\nName={name}\n",
+            encoding="utf-8",
+        )
+
+    def test_resolves_human_name_to_desktop_id(self, tmp_path: Path):
+        self._desktop_file(tmp_path, "com.spotify.Client", "Spotify")
+
+        assert _resolve_application("spotify", [tmp_path]) == (
+            "com.spotify.Client",
+            "Spotify",
+        )
+
+    def test_rejects_ambiguous_partial_name(self, tmp_path: Path):
+        tmp_path.mkdir(exist_ok=True)
+        for desktop_id, name in (("org.foo.Music", "Music"), ("org.bar.Music", "Music Box")):
+            (tmp_path / f"{desktop_id}.desktop").write_text(
+                f"[Desktop Entry]\nType=Application\nName={name}\n",
+                encoding="utf-8",
+            )
+
+        with pytest.raises(ValueError, match="ambiguous"):
+            _resolve_application("mus", [tmp_path])
+
+    def test_launches_resolved_app_outside_the_node_scope(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        self._desktop_file(tmp_path, "com.spotify.Client", "Spotify")
+        seen: list[list[str]] = []
+
+        monkeypatch.setattr(
+            "dax.mcp_servers.system.server.shutil.which",
+            lambda command: f"/usr/bin/{command}",
+        )
+
+        def run(argv: list[str], **_kwargs: object) -> subprocess.CompletedProcess[str]:
+            seen.append(argv)
+            return subprocess.CompletedProcess(argv, 0, "", "")
+
+        monkeypatch.setattr("dax.mcp_servers.system.server.subprocess.run", run)
+
+        assert _launch_application("Spotify", [tmp_path]) == (
+            "Opened Spotify (com.spotify.Client)"
+        )
+        assert seen == [
+            [
+                "/usr/bin/systemd-run",
+                "--user",
+                "--collect",
+                "--wait",
+                "--quiet",
+                "--property=Type=exec",
+                "/usr/bin/gtk-launch",
+                "com.spotify.Client",
+            ]
+        ]
 
 
 def test_build_server_registers_tools():

@@ -80,7 +80,7 @@ BUNDLED_TOOLS: dict[str, tuple[str, dict[str, object]]] = {
         _object({"text": _STRING}, ["text"]),
     ),
     "app_open": (
-        "Open an installed application on the connected Android phone.",
+        "Open an installed application on this connected device.",
         _object({"app": _STRING}, ["app"]),
     ),
     "app_deeplink": (

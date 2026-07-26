@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import os
 import platform
+import re
 import shlex
 import shutil
 import subprocess
@@ -33,6 +34,7 @@ _DEFAULT_SHELL_ALLOW = ",".join(DEFAULT_SHELL_ALLOW)
 
 _MAX_OUTPUT = 8000
 _SHELL_TIMEOUT = 30
+_APP_LAUNCH_TIMEOUT = 15
 
 
 def allowed_roots() -> list[Path]:
@@ -118,6 +120,118 @@ def _completed_command_output(proc: subprocess.CompletedProcess[str]) -> str:
     if proc.returncode != 0:
         raise RuntimeError(result)
     return result
+
+
+def _application_dirs() -> list[Path]:
+    data_home = Path(os.environ.get("XDG_DATA_HOME", Path.home() / ".local/share"))
+    data_dirs = os.environ.get("XDG_DATA_DIRS", "/usr/local/share:/usr/share").split(
+        os.pathsep
+    )
+    roots = [
+        data_home,
+        Path.home() / ".local/share/flatpak/exports/share",
+        Path("/var/lib/flatpak/exports/share"),
+        *(Path(path) for path in data_dirs if path),
+    ]
+    directories: list[Path] = []
+    for root in roots:
+        directory = root / "applications"
+        if directory not in directories:
+            directories.append(directory)
+    return directories
+
+
+def _app_key(value: str) -> str:
+    return re.sub(r"[^\w]+", "", value.casefold())
+
+
+def _resolve_application(app: str, directories: list[Path] | None = None) -> tuple[str, str]:
+    """Resolve a human app name to one visible desktop entry."""
+    query = app.strip()
+    if not query or len(query) > 128 or "/" in query or "\x00" in query:
+        raise ValueError("Application name is invalid")
+    query_key = _app_key(query.removesuffix(".desktop"))
+    candidates: list[tuple[int, str, str]] = []
+    seen: set[str] = set()
+    for directory in directories or _application_dirs():
+        if not directory.is_dir():
+            continue
+        for entry in sorted(directory.glob("*.desktop")):
+            desktop_id = entry.stem
+            if desktop_id in seen:
+                continue
+            seen.add(desktop_id)
+            names: list[str] = []
+            hidden = False
+            desktop_entry = False
+            try:
+                for raw_line in entry.read_text(encoding="utf-8", errors="replace").splitlines():
+                    line = raw_line.strip()
+                    if line.startswith("["):
+                        desktop_entry = line == "[Desktop Entry]"
+                        continue
+                    if not desktop_entry or "=" not in line:
+                        continue
+                    key, value = line.split("=", 1)
+                    if key in {"Hidden", "NoDisplay"} and value.casefold() == "true":
+                        hidden = True
+                    elif key == "Name" or key.startswith("Name["):
+                        names.append(value.strip())
+            except OSError:
+                continue
+            if hidden:
+                continue
+            display_name = names[0] if names else desktop_id
+            keys = {_app_key(desktop_id), *(_app_key(name) for name in names)}
+            if query_key in keys:
+                score = 0
+            elif any(key.startswith(query_key) for key in keys):
+                score = 1
+            elif any(query_key in key for key in keys):
+                score = 2
+            else:
+                continue
+            candidates.append((score, desktop_id, display_name))
+    if not candidates:
+        raise ValueError(f"Application '{query}' is not installed")
+    best_score = min(candidate[0] for candidate in candidates)
+    best = [candidate for candidate in candidates if candidate[0] == best_score]
+    if len(best) != 1:
+        choices = ", ".join(sorted(candidate[2] for candidate in best)[:5])
+        raise ValueError(f"Application name '{query}' is ambiguous: {choices}")
+    _, desktop_id, display_name = best[0]
+    return desktop_id, display_name
+
+
+def _launch_application(app: str, directories: list[Path] | None = None) -> str:
+    desktop_id, display_name = _resolve_application(app, directories)
+    systemd_run = shutil.which("systemd-run")
+    gtk_launch = shutil.which("gtk-launch")
+    if not systemd_run or not gtk_launch:
+        raise RuntimeError("Application launching requires systemd-run and gtk-launch")
+    try:
+        proc = subprocess.run(
+            [
+                systemd_run,
+                "--user",
+                "--collect",
+                "--wait",
+                "--quiet",
+                "--property=Type=exec",
+                gtk_launch,
+                desktop_id,
+            ],
+            capture_output=True,
+            text=True,
+            timeout=_APP_LAUNCH_TIMEOUT,
+        )
+    except subprocess.TimeoutExpired:
+        raise RuntimeError(
+            f"Application launcher timed out after {_APP_LAUNCH_TIMEOUT}s"
+        ) from None
+    if proc.returncode != 0:
+        raise RuntimeError(_truncate(proc.stderr or proc.stdout or "Application launch failed"))
+    return f"Opened {display_name} ({desktop_id})"
 
 
 def build_server() -> FastMCP:
@@ -226,6 +340,11 @@ def build_server() -> FastMCP:
             return "Error: xdg-open not available"
         subprocess.Popen(["xdg-open", str(target)])
         return f"Opened {target}"
+
+    @mcp.tool()
+    def app_open(app: str) -> str:
+        """Open an installed desktop application by name or desktop ID."""
+        return _launch_application(app)
 
     @mcp.tool()
     def clipboard_set(text: str) -> str:
