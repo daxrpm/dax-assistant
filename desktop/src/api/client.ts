@@ -155,11 +155,13 @@ export const api = {
 
   /* ---------------- paired devices ---------------- */
 
-  /** Mints a one-time pairing code. A bodyless request remains normal client pairing. */
+  /** Mints a one-time pairing code. Node QR URLs use the validated active origin. */
   pairDevice: (kind: "client" | "capability_node" = "client") =>
     request<PairCodeResponse>("/auth/devices/pair", {
       method: "POST",
-      ...(kind === "client" ? {} : { body: JSON.stringify({ kind }) }),
+      ...(kind === "client"
+        ? {}
+        : { body: JSON.stringify({ kind, backend_url: getBaseUrl() }) }),
     }),
 
   devices: () => request<{ devices: PairedDevice[] }>("/auth/devices"),

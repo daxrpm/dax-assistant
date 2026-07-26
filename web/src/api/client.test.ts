@@ -55,7 +55,10 @@ describe("device pairing requests", () => {
       "/api/auth/devices/pair",
       expect.objectContaining({
         method: "POST",
-        body: JSON.stringify({ kind: "capability_node" }),
+        body: JSON.stringify({
+          kind: "capability_node",
+          backend_url: window.location.origin,
+        }),
       }),
     );
   });

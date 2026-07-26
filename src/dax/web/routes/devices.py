@@ -28,6 +28,7 @@ from urllib.parse import urlencode
 from fastapi import APIRouter, Depends, HTTPException, Request, Response, status
 from pydantic import BaseModel, Field
 
+from dax.edge.credentials import normalize_server_url
 from dax.storage.devices import (
     CAPABILITY_NODE_KIND,
     CLIENT_KIND,
@@ -113,6 +114,7 @@ class PairRequest(BaseModel):
     model_config = {"extra": "forbid"}
 
     kind: str = CLIENT_KIND
+    backend_url: str | None = Field(default=None, max_length=2048)
 
 
 class EnrollRequest(BaseModel):
@@ -193,8 +195,13 @@ async def pair_device(
     body = body or PairRequest()
     if body.kind not in DEVICE_KINDS:
         raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, "Invalid device kind")
-    entry = _codes(request).issue(ttl, body.kind)
     backend_url = str(request.base_url).rstrip("/")
+    if body.backend_url is not None:
+        try:
+            backend_url = normalize_server_url(body.backend_url)
+        except ValueError as exc:
+            raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, str(exc)) from exc
+    entry = _codes(request).issue(ttl, body.kind)
     pairing_query = urlencode(
         {"url": backend_url, "code": entry.code, "kind": entry.kind}
     )

@@ -30,6 +30,7 @@ import threading
 import time
 import uuid
 from collections import deque
+from concurrent.futures import CancelledError as FutureCancelledError
 from enum import StrEnum
 from pathlib import Path
 from typing import TYPE_CHECKING, Literal
@@ -1062,6 +1063,9 @@ class VoicePipeline:
                 # Emit it only after the state is IDLE, never while SPEAKING.
                 self._events.emit_turn_completed(str(self._turn))
 
+        except FutureCancelledError:
+            logger.info("Voice response wait cancelled for a newer remote turn")
+            self._state = PipelineState.IDLE
         except TTSError:
             logger.exception("TTS synthesis failed")
             self._state = PipelineState.IDLE

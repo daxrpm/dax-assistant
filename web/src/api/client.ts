@@ -208,7 +208,9 @@ export const api = {
   pairDevice: (kind: DeviceKind = "client") =>
     request<PairCodeResponse>("/auth/devices/pair", {
       method: "POST",
-      ...(kind === "client" ? {} : { body: JSON.stringify({ kind }) }),
+      ...(kind === "client"
+        ? {}
+        : { body: JSON.stringify({ kind, backend_url: window.location.origin }) }),
     }),
 
   devices: () => request<{ devices: PairedDevice[] }>("/auth/devices"),

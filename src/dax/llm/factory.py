@@ -95,10 +95,15 @@ def build_provider(name: str, config: LLMConfig) -> LLMProvider | None:
                 timeout=config.anthropic.timeout,
             )
         if name == "gemini":
+            gemini_key = _resolve_env(config.gemini.api_key) or os.environ.get(
+                "GEMINI_API_KEY"
+            ) or os.environ.get("GOOGLE_API_KEY")
+            if not gemini_key:
+                raise ValueError("Gemini API key not configured")
             return GeminiProvider(
                 name="gemini",
                 model=config.gemini.model,
-                api_key=_resolve_env(config.gemini.api_key),
+                api_key=gemini_key,
                 timeout=config.gemini.timeout,
             )
     except Exception as e:

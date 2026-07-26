@@ -11,6 +11,7 @@ import io
 import threading
 import time
 import wave
+from concurrent.futures import CancelledError as FutureCancelledError
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -790,6 +791,21 @@ class TestPushToTalk:
 
         assert pipeline.state == PipelineState.LISTENING
         pipeline._adaptive_endpoint.assert_not_called()
+
+    def test_interrupted_remote_response_is_not_a_playback_error(self, caplog):
+        pipeline = self._make_pipeline()
+        future = MagicMock()
+        future.result.side_effect = FutureCancelledError()
+
+        def submit(coroutine, _loop):
+            coroutine.close()
+            return future
+
+        with patch("dax.voice.pipeline.asyncio.run_coroutine_threadsafe", submit):
+            pipeline._wait_and_speak(Language.SPANISH)
+
+        assert pipeline.state == PipelineState.IDLE
+        assert "Error during speech playback" not in caplog.text
 
     def test_timed_out_command_cannot_run_late(self):
         pipeline = self._make_pipeline()

@@ -151,6 +151,36 @@ class TestEnrolmentFlow:
         assert app.state.auth.capability_node_from_token(token) == listed["id"]
         assert app.state.auth.validate_token(token) is False
 
+    async def test_capability_node_pairing_uses_the_clients_https_origin(
+        self, client: AsyncClient
+    ):
+        pair = await client.post(
+            "/api/auth/devices/pair",
+            json={
+                "kind": "capability_node",
+                "backend_url": "https://assistant.home.daxrpm.dev/",
+            },
+        )
+
+        assert pair.status_code == 200
+        assert pair.json()["backend_url"] == "https://assistant.home.daxrpm.dev"
+        assert parse_qs(urlparse(pair.json()["pairing_uri"]).query)["url"] == [
+            "https://assistant.home.daxrpm.dev"
+        ]
+
+    async def test_capability_node_pairing_rejects_a_remote_http_origin(
+        self, client: AsyncClient
+    ):
+        pair = await client.post(
+            "/api/auth/devices/pair",
+            json={
+                "kind": "capability_node",
+                "backend_url": "http://assistant.home.daxrpm.dev",
+            },
+        )
+
+        assert pair.status_code == 422
+
     async def test_enrollment_rejects_a_code_for_the_wrong_kind(
         self, client: AsyncClient
     ):

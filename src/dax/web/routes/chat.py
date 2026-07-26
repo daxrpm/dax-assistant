@@ -187,7 +187,9 @@ class WebSocketManager:
                 if targets:
                     await self._send_many(targets, data)
                     return
-            logger.warning("Dropping frame for invalid or unowned session %r", session_id)
+                logger.debug("Dropping frame for unowned session %r", session_id)
+                return
+            logger.warning("Dropping frame with invalid session %r", session_id)
             return
         await self._send_many(self._connection_snapshot(), data)
 
