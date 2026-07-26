@@ -401,6 +401,11 @@ class NodePolicyConfig(BaseModel):
     # Speech is the real win. Audio is bulky and today it crosses the network
     # twice to reach a backend that may be off-LAN.
     voice: Literal["auto", "local", "server"] = "auto"
+    # Commands the user has permanently approved for *this* node. Kept per node
+    # rather than in `tools.shell_allow` because that list governs the backend
+    # host: saving a laptop's command there would silently grant it on the
+    # server too, which is a different machine with different contents.
+    shell_allow: list[str] = Field(default_factory=list)
     # Whether this laptop listens for the wake word on its own microphone. On
     # by default because a laptop is usually the machine in the room with the
     # user, and a backend in a cupboard cannot hear them at all. Turn it off
@@ -425,6 +430,20 @@ class NodesConfig(BaseModel):
     def hosts_sessions(self, node_id: str) -> bool:
         """Whether *node_id* may terminate a client session and run the turn."""
         return self.enabled and self.policy_for(node_id).process_locally
+
+    def node_allows_command(self, node_id: str, binary: str) -> bool:
+        """Whether *binary* was already approved for keeps on this node."""
+        if not self.enabled or not binary:
+            return False
+        return binary in self.policy_for(node_id).shell_allow
+
+    def remember_node_command(self, node_id: str, binary: str) -> None:
+        """Persist a user's "always allow" for one command on one node."""
+        if not binary:
+            return
+        policy = self.policies.setdefault(node_id, NodePolicyConfig())
+        if binary not in policy.shell_allow:
+            policy.shell_allow = [*policy.shell_allow, binary]
 
     def listens_for_wake_word(self, node_id: str) -> bool:
         """Whether *node_id* may run a wake-word detector and claim activations."""

@@ -71,3 +71,88 @@ async def test_capability_node_shell_denial_stays_fail_closed() -> None:
     assert result.is_error
     assert provider.executed == []
     assert approval.requests == []
+
+
+@pytest.mark.asyncio
+async def test_approval_reaches_the_node_that_has_to_enforce_it() -> None:
+    """The flag has to survive every hop, or Allow silently does nothing.
+
+    A node applies its own shell allowlist and cannot see the confirmation
+    modal, so it refuses anything not marked approved. This shipped broken
+    twice: once because the gate never set the flag, and once because
+    ``MCPManager.execute`` rebuilt the call on the way out and dropped it.
+    """
+    tool_name = canonical_name("node", "shell_run")
+    provider = _Provider(tool_name)
+    gate = ToolGate(
+        provider,  # type: ignore[arg-type]
+        policy=ToolPolicy(ask=[]),
+        approval=_Approval("once"),  # type: ignore[arg-type]
+    )
+
+    await gate.execute(
+        ToolCall("call", "capability-node:node", tool_name, {"command": "flatpak run x"})
+    )
+
+    assert [c.human_approved for c in provider.executed] == [True]
+
+
+@pytest.mark.asyncio
+async def test_a_remembered_node_command_stops_asking_but_stays_approved() -> None:
+    """"Approve and save" has to mean it, and keep meaning it next time."""
+    from dax.core.config import NodesConfig
+
+    tool_name = canonical_name("node", "shell_run")
+    provider = _Provider(tool_name)
+    approval = _Approval("save")
+    nodes = NodesConfig()
+    saved: list[bool] = []
+
+    async def persist() -> None:
+        saved.append(True)
+
+    gate = ToolGate(
+        provider,  # type: ignore[arg-type]
+        policy=ToolPolicy(ask=[]),
+        approval=approval,  # type: ignore[arg-type]
+        nodes=nodes,
+        save_config=persist,
+    )
+    call = ToolCall(
+        "call", "capability-node:node", tool_name, {"command": "flatpak run x"}
+    )
+
+    await gate.execute(call)
+    assert nodes.node_allows_command("node", "flatpak") is True
+    assert saved == [True]
+
+    # Second time: no prompt, but the node still has to be told it is approved.
+    await gate.execute(call)
+    assert len(approval.requests) == 1
+    assert [c.human_approved for c in provider.executed] == [True, True]
+
+
+@pytest.mark.asyncio
+async def test_remembering_a_node_command_does_not_grant_it_on_the_backend() -> None:
+    """Different machines, different contents — the lists must stay separate."""
+    from dax.core.config import NodesConfig
+    from dax.core.shell_allow import ShellAllowlist
+
+    tool_name = canonical_name("node", "shell_run")
+    provider = _Provider(tool_name)
+    backend_allow = ShellAllowlist([])
+    nodes = NodesConfig()
+    gate = ToolGate(
+        provider,  # type: ignore[arg-type]
+        policy=ToolPolicy(ask=[]),
+        approval=_Approval("save"),  # type: ignore[arg-type]
+        shell_allow=backend_allow,
+        nodes=nodes,
+    )
+
+    await gate.execute(
+        ToolCall("call", "capability-node:node", tool_name, {"command": "flatpak run x"})
+    )
+
+    assert nodes.node_allows_command("node", "flatpak") is True
+    assert backend_allow.allows_command("flatpak run x") is False

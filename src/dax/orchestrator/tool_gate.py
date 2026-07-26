@@ -23,6 +23,9 @@ from dax.core.policy import Decision
 from dax.core.shell_allow import is_auto_allowable, shell_binary
 
 if TYPE_CHECKING:
+    from collections.abc import Awaitable, Callable
+
+    from dax.core.config import NodesConfig
     from dax.core.policy import ToolPolicy
     from dax.core.ports import Storage, ToolProvider
     from dax.core.shell_allow import ShellAllowlist
@@ -46,8 +49,14 @@ class ToolGate:
         approval: ApprovalManager | None = None,
         shell_allow: ShellAllowlist | None = None,
         storage: Storage | None = None,
+        nodes: NodesConfig | None = None,
+        save_config: Callable[[], Awaitable[None]] | None = None,
     ) -> None:
         self._tools = tools
+        # Held live so a remembered command is visible to the next turn without
+        # a reload, matching how every other settings edit behaves.
+        self._nodes = nodes
+        self._save_config = save_config
         # When no policy/approval is wired, tools run unrestricted (used in
         # tests). In the app both are provided so destructive actions are gated.
         self._policy = policy
@@ -107,6 +116,7 @@ class ToolGate:
             server_name=server,
             tool_name=tool_call.tool_name,
             arguments=tool_call.arguments,
+            human_approved=tool_call.human_approved,
         )
 
     async def _gate(
@@ -179,6 +189,29 @@ class ToolGate:
             )
         return None, replace(call, human_approved=True)
 
+    @staticmethod
+    def _node_id(call: ToolCall) -> str | None:
+        """The node behind a canonical node tool, from its owning server name.
+
+        The tool name itself carries only a hash of the id, so the server name
+        is the only place the id survives intact.
+        """
+        prefix = "capability-node:"
+        if not call.server_name.startswith(prefix):
+            return None
+        return call.server_name.removeprefix(prefix) or None
+
+    async def _persist_nodes(self) -> None:
+        """Write a remembered node command through, so it outlives a restart."""
+        if self._save_config is None:
+            return
+        try:
+            await self._save_config()
+        except Exception:
+            # The decision still stands for this turn; only its persistence
+            # failed, and saying so is better than pretending it was kept.
+            logger.exception("Could not persist the node command allowlist")
+
     def _is_trusted_shell(self, call: ToolCall) -> bool:
         if call.tool_name == _SHELL_TOOL_NAME:
             return call.server_name == "dax-system"
@@ -217,6 +250,19 @@ class ToolGate:
             await self._audit(call, "executed")
             return None, call
 
+        # A node command the user already chose to remember runs without asking
+        # again — but still carries the approval, because the node's own
+        # allowlist knows nothing about what was saved on the backend.
+        node_id = self._node_id(call) if node_shell else None
+        if (
+            node_id is not None
+            and self._nodes is not None
+            and binary
+            and self._nodes.node_allows_command(node_id, binary)
+        ):
+            await self._audit(call, "executed")
+            return None, replace(call, human_approved=True)
+
         if self._approval is None:
             await self._audit(call, "denied")
             return (
@@ -231,8 +277,14 @@ class ToolGate:
                 call,
             )
 
-        can_save = not node_shell and is_auto_allowable(command)
-        options = ["once", "save"] if can_save else ["once"]
+        # A node command can be remembered too, into that node's own list. It is
+        # not held to `is_auto_allowable` the way a backend command is: that test
+        # asks whether a command is safe to run *silently and unreviewed*, which
+        # is the right bar for a list the user never explicitly touched. Here the
+        # user is looking at this exact command and choosing to keep it.
+        can_save_node = node_shell and node_id is not None and self._nodes is not None
+        can_save = can_save_node or (not node_shell and is_auto_allowable(command))
+        options = ["once", "save"] if can_save and binary else ["once"]
         decision = await self._approval.request(
             tool_name=call.tool_name,
             server_name=call.server_name,
@@ -251,14 +303,14 @@ class ToolGate:
                 ),
                 call,
             )
-        if (
-            decision == "save"
-            and binary
-            and can_save
-            and self._shell_allow is not None
-        ):
-            self._shell_allow.add(binary)
-            logger.info("Added '%s' to the shell allowlist", binary)
+        if decision == "save" and binary and can_save:
+            if can_save_node and node_id is not None and self._nodes is not None:
+                self._nodes.remember_node_command(node_id, binary)
+                logger.info("Remembered '%s' for node %s", binary, node_id)
+                await self._persist_nodes()
+            elif self._shell_allow is not None:
+                self._shell_allow.add(binary)
+                logger.info("Added '%s' to the shell allowlist", binary)
         await self._audit(call, "approved")
         return None, replace(call, human_approved=True)
 

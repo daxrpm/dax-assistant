@@ -171,6 +171,16 @@ class DaxApp:
         except Exception:
             logger.exception("Failed to persist shell allowlist")
 
+    async def _persist_config(self) -> None:
+        """Write the live config through, off the event loop.
+
+        Encryption plus a SQLite write is not something to do inline on the
+        loop that is holding a user's turn open.
+        """
+        from dax.core.config_io import save_encrypted_config
+
+        await asyncio.to_thread(save_encrypted_config, self._config, self._secrets)
+
     def set_system_prompt(self, prompt: str) -> None:
         """Apply the configured prompt to the live agent for its next turn."""
         if self._agent is not None:
@@ -288,6 +298,8 @@ class DaxApp:
             max_tool_iterations=self._config.llm.max_tool_iterations,
             memory_path=self._config.memory_path,
             system_prompt=self._config.system_prompt,
+            nodes=self._config.nodes,
+            save_config=self._persist_config,
         )
         await self._agent.start()
 

@@ -31,6 +31,7 @@ from dax.orchestrator.tool_gate import ToolGate
 if TYPE_CHECKING:
     from collections.abc import Callable, Coroutine, Sequence
 
+    from dax.core.config import NodesConfig
     from dax.core.models import Conversation, ToolCall, ToolResult
     from dax.core.policy import ToolPolicy
     from dax.core.ports import LLMProvider, Storage, ToolProvider
@@ -145,6 +146,8 @@ class Agent:
         memory_path: str | None = None,
         system_prompt: str = "",
         max_tool_iterations: int = MAX_TOOL_ITERATIONS,
+        nodes: NodesConfig | None = None,
+        save_config: Callable[[], Coroutine[Any, Any, None]] | None = None,
     ) -> None:
         self._bus = bus
         self._llm = llm
@@ -163,6 +166,8 @@ class Agent:
             approval=approval,
             shell_allow=shell_allow,
             storage=storage,
+            nodes=nodes,
+            save_config=save_config,
         )
         self._task: asyncio.Task[None] | None = None
         self._event_broadcaster: Callable[[dict[str, Any]], Coroutine[Any, Any, None]] | None = (

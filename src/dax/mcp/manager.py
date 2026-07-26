@@ -419,6 +419,10 @@ class MCPManager:
                 server_name=server_name,
                 tool_name=tool_call.tool_name,
                 arguments=tool_call.arguments,
+                # Carried, not defaulted: a capability node enforces its own
+                # allowlist and refuses anything it cannot see was approved, so
+                # dropping this here makes the confirmation modal do nothing.
+                human_approved=tool_call.human_approved,
             )
             return await dynamic(resolved_call)
 
@@ -438,6 +442,7 @@ class MCPManager:
             server_name=server_name,
             tool_name=tool_call.tool_name,
             arguments=tool_call.arguments,
+            human_approved=tool_call.human_approved,
         )
 
         return await client.execute(resolved_call)

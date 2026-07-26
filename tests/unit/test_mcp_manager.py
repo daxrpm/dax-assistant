@@ -45,3 +45,45 @@ class TestEnvVarResolution:
             {"HA_TOKEN": "server-token"},
         )
         assert result == {"Authorization": "Bearer server-token"}
+
+
+class TestApprovalSurvivesDispatch:
+    """The manager rebuilds a call before dispatch; it must not lose the flag.
+
+    A capability node refuses any command it cannot see was approved, so a
+    dropped ``human_approved`` here makes the confirmation modal appear, the
+    user click Allow, and the node refuse it anyway. That shipped once.
+    """
+
+    async def test_a_node_bound_call_arrives_still_marked_approved(self) -> None:
+        from dax.core.config import DaxConfig
+        from dax.core.models import ToolCall, ToolResult
+        from dax.mcp.manager import MCPManager
+
+        received: list[ToolCall] = []
+
+        async def dynamic(call: ToolCall) -> ToolResult:
+            received.append(call)
+            return ToolResult(call.id, "ok")
+
+        manager = MCPManager(DaxConfig().mcp)
+        tool = {
+            "name": "node_x__shell_run",
+            "description": "",
+            "inputSchema": {"type": "object", "properties": {}},
+            "server_name": "capability-node:x",
+        }
+        manager.register_dynamic_provider("capability-node:x", [tool], dynamic)
+
+        result = await manager.execute(
+            ToolCall(
+                "call",
+                "capability-node:x",
+                "node_x__shell_run",
+                {"command": "flatpak run x"},
+                human_approved=True,
+            )
+        )
+
+        assert not result.is_error
+        assert [c.human_approved for c in received] == [True]
