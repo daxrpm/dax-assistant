@@ -10,6 +10,7 @@ from __future__ import annotations
 import time
 
 import pytest
+from fastapi import WebSocketDisconnect
 from fastapi.testclient import TestClient
 
 from dax.core.config import DaxConfig
@@ -102,14 +103,43 @@ def _token(app) -> str:
 
 
 def test_unauthenticated_connection_is_rejected():
+    """Rejected with a close code the client can read, not a failed handshake.
+
+    Closing before accepting would make the server answer the handshake with
+    HTTP 403, which a browser reports to the page as 1006 — indistinguishable
+    from a dropped network, so clients reconnect forever instead of asking the
+    user to sign in. The handshake therefore completes and 1008 arrives as 1008.
+    """
     app, hub = _make_app()
     client = TestClient(app)
 
-    # Starlette surfaces the 1008 policy-violation close as an exception.
-    with pytest.raises(Exception), client.websocket_connect("/ws/voice"):  # noqa: B017
-        pass
+    with (
+        client.websocket_connect("/ws/voice") as websocket,
+        pytest.raises(WebSocketDisconnect) as rejection,
+    ):
+        websocket.receive_json()
 
+    assert rejection.value.code == 1008
     assert not hub.has_subscribers
+
+
+def test_an_expired_chat_session_closes_with_1008_not_a_dead_handshake():
+    """The regression that made the desktop app reconnect in a loop forever.
+
+    An expired session token used to fail the handshake outright, so the client
+    saw 1006, decided the network had blipped, and retried every two seconds
+    for as long as the app stayed open — never once telling the user to sign in.
+    """
+    app, _hub = _make_app()
+    client = TestClient(app)
+
+    with (
+        client.websocket_connect("/ws/chat") as websocket,
+        pytest.raises(WebSocketDisconnect) as rejection,
+    ):
+        websocket.receive_json()
+
+    assert rejection.value.code == 1008
 
 
 def test_connect_replays_synthetic_idle_when_no_state_yet():

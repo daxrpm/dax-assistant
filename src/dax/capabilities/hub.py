@@ -17,10 +17,13 @@ from pydantic import TypeAdapter, ValidationError
 
 from dax.capabilities.protocol import (
     MAX_ARGUMENT_BYTES,
+    MAX_AUDIO_FRAME_BYTES,
     MAX_FRAME_BYTES,
     MAX_TTS_AUDIO_BYTES,
     MAX_TTS_CHUNK_BYTES,
     MAX_TTS_CHUNKS,
+    AudioChunkFrame,
+    AudioEndFrame,
     FeaturesFrame,
     HeartbeatFrame,
     HelloFrame,
@@ -28,12 +31,17 @@ from dax.capabilities.protocol import (
     ResultFrame,
     SynthesizeChunkFrame,
     SynthesizeFinalFrame,
+    WakeClaimFrame,
     canonical_prefix,
+    listen_stop_frame,
     trusted_endpoints,
     trusted_inventory,
+    wake_grant_frame,
+    wake_yield_frame,
 )
 from dax.core.config import NodesConfig
 from dax.core.models import ToolCall, ToolResult
+from dax.voice.audio_io import RemoteAudioSource
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -43,6 +51,7 @@ if TYPE_CHECKING:
     from dax.core.config import VoiceConfig
     from dax.mcp.manager import MCPManager
     from dax.storage.devices import DeviceRegistry
+    from dax.voice.pipeline import VoicePipeline
 
 logger = logging.getLogger(__name__)
 _INBOUND: TypeAdapter[InboundFrame] = TypeAdapter(InboundFrame)
@@ -81,6 +90,18 @@ class _PendingSynthesis:
 
 
 @dataclass(slots=True)
+class _WakeLease:
+    """One granted wake turn: where the winning node's audio lands."""
+
+    lease_id: str
+    source: RemoteAudioSource
+    # Next sequence number expected. A gap means frames were lost, and splicing
+    # over it would hand the transcriber an utterance nobody said.
+    next_seq: int = 0
+    ended: bool = False
+
+
+@dataclass(slots=True)
 class _Connection:
     hub: CapabilityHub
     node_id: str
@@ -96,6 +117,7 @@ class _Connection:
     )
     pending: dict[str, asyncio.Future[ToolResult]] = field(default_factory=dict)
     tts_pending: dict[str, _PendingSynthesis] = field(default_factory=dict)
+    wake: _WakeLease | None = None
     closed: bool = False
 
     async def send(self, frame: dict[str, object]) -> None:
@@ -155,6 +177,10 @@ class _Connection:
         for pending in self.tts_pending.values():
             if not pending.future.done():
                 pending.future.set_exception(CapabilityTTSTransportError(reason))
+        # A node that drops mid-sentence must not leave the pipeline reading
+        # from a microphone that stopped existing, nor holding its lease.
+        if self.wake is not None:
+            self.hub._end_wake_lease(self, self.wake.lease_id)
 
     async def synthesize(
         self,
@@ -207,9 +233,13 @@ class CapabilityHub:
         devices: DeviceRegistry,
         nodes: NodesConfig | None = None,
         public_key: Callable[[], str] | None = None,
+        voice: VoiceConfig | None = None,
     ) -> None:
         self.manager = manager
         self.devices = devices
+        # Held live, like `nodes`: the wake word and threshold a node is told to
+        # use must follow a settings edit without the node reconnecting.
+        self._voice_config = voice
         # A callable rather than the key itself: it is generated on first use,
         # and a node that connects before anything has needed it should still
         # get the key that eventually signs its tickets.
@@ -221,6 +251,18 @@ class CapabilityHub:
         self._generations: dict[str, int] = {}
         self._lock = asyncio.Lock()
         self._stopping = False
+        # Wired after construction: the pipeline is built later than the hub,
+        # and voice is an optional extra that may never be present at all.
+        self._pipeline: VoicePipeline | None = None
+        # Captured on the first connection. The pipeline thread needs it to hand
+        # work back to the loop when a wake turn ends.
+        self._loop: asyncio.AbstractEventLoop | None = None
+
+    def set_pipeline(self, pipeline: VoicePipeline | None) -> None:
+        """Attach the voice pipeline nodes arbitrate and stream against."""
+        self._pipeline = pipeline
+        if pipeline is not None:
+            pipeline.set_remote_wake_end_callback(self._on_remote_wake_end)
 
     async def send_policy(self, node_id: str) -> None:
         """Push *node_id*'s current policy to it, if it is connected.
@@ -242,6 +284,13 @@ class CapabilityHub:
                     "process_locally": self.nodes.hosts_sessions(node_id),
                     "inference": policy.inference,
                     "voice": policy.voice,
+                    "wake_word": self.nodes.listens_for_wake_word(node_id),
+                    "wake_word_model": self._voice_config.wake_word_model
+                    if self._voice_config is not None
+                    else "hey_jarvis",
+                    "wake_word_threshold": self._voice_config.wake_word_threshold
+                    if self._voice_config is not None
+                    else 0.7,
                 }
             )
 
@@ -268,6 +317,7 @@ class CapabilityHub:
         if not self.nodes.enabled:
             await self._close_socket(websocket, code=1008)
             return
+        self._loop = asyncio.get_running_loop()
         try:
             raw = await asyncio.wait_for(websocket.receive_text(), timeout=_HELLO_TIMEOUT)
             if len(raw.encode()) > MAX_FRAME_BYTES:
@@ -419,11 +469,178 @@ class CapabilityHub:
                     await self._close_socket(connection.websocket, code=1008)
                     return
                 continue
+            if isinstance(frame, WakeClaimFrame):
+                await self._handle_wake_claim(connection, frame)
+                continue
+            if isinstance(frame, AudioChunkFrame):
+                if not self._accept_audio_chunk(connection, frame):
+                    await self._close_socket(connection.websocket, code=1008)
+                    return
+                continue
+            if isinstance(frame, AudioEndFrame):
+                self._end_wake_lease(connection, frame.lease_id)
+                continue
             if isinstance(frame, SynthesizeFinalFrame) and not self._accept_tts_final(
                 connection, frame
             ):
                 await self._close_socket(connection.websocket, code=1008)
                 return
+
+    # -- Wake word --
+
+    async def _handle_wake_claim(
+        self, connection: _Connection, frame: WakeClaimFrame
+    ) -> None:
+        """Judge a node's detection against every other microphone's.
+
+        The node is not told to act on its own detection, so the failure mode
+        of this path is a missed activation, never a duplicated one: anything
+        that goes wrong here ends in a yield.
+        """
+        pipeline = self._pipeline
+        node_id = connection.node_id
+        suppress_ms = int(
+            (pipeline.arbiter.suppress_s if pipeline is not None else 2.0) * 1000
+        )
+
+        if (
+            pipeline is None
+            or not pipeline.enabled
+            or not self.nodes.listens_for_wake_word(node_id)
+            or not self.devices.is_active(node_id)
+            or connection.wake is not None
+        ):
+            with contextlib.suppress(Exception):
+                await connection.send(
+                    wake_yield_frame(connection.generation, frame.claim_id, suppress_ms)
+                )
+            return
+
+        arbiter = pipeline.arbiter
+        claim = arbiter.claim(node_id, frame.score)
+        # `wait_for` blocks for the arbitration window, which must not stall the
+        # event loop that every other node's frames arrive on.
+        won = await asyncio.to_thread(arbiter.wait_for, claim)
+
+        if not won or not self.is_current(connection):
+            if won:
+                arbiter.release(node_id)
+            with contextlib.suppress(Exception):
+                await connection.send(
+                    wake_yield_frame(connection.generation, frame.claim_id, suppress_ms)
+                )
+            return
+
+        lease_id = uuid.uuid4().hex
+        source = RemoteAudioSource()
+        source.start()
+        try:
+            # Take input, output and events together, then point the pipeline at
+            # the node's microphone before opening the turn — so that by the
+            # time it starts reading, audio is already arriving.
+            pipeline.acquire_remote_owner(node_id)
+            pipeline.select_audio_source(source)
+        except Exception as exc:
+            logger.warning("Could not open a wake turn for %s: %s", node_id, exc)
+            arbiter.release(node_id)
+            source.stop()
+            with contextlib.suppress(Exception):
+                await connection.send(
+                    wake_yield_frame(connection.generation, frame.claim_id, suppress_ms)
+                )
+            return
+
+        connection.wake = _WakeLease(lease_id=lease_id, source=source)
+        pipeline.request_remote_wake(node_id)
+        try:
+            await connection.send(
+                wake_grant_frame(connection.generation, frame.claim_id, lease_id)
+            )
+        except Exception:
+            logger.warning("Wake grant to %s did not reach it", node_id)
+            self._end_wake_lease(connection, lease_id)
+
+    def _accept_audio_chunk(
+        self, connection: _Connection, frame: AudioChunkFrame
+    ) -> bool:
+        """Feed one capture frame into the turn this node was granted.
+
+        Returns False only for frames the node should never have sent — a wrong
+        lease, an out-of-order sequence, or oversized audio — which close the
+        socket. A full buffer is the node outrunning the consumer rather than
+        misbehaving, so it drops the frame and keeps the connection.
+        """
+        lease = connection.wake
+        if lease is None or lease.lease_id != frame.lease_id:
+            # A late frame from a lease that already ended is harmless.
+            return True
+        if lease.ended:
+            return True
+        if frame.seq != lease.next_seq:
+            logger.warning(
+                "Dropping wake audio from %s — expected seq %d, got %d",
+                connection.node_id,
+                lease.next_seq,
+                frame.seq,
+            )
+            return False
+        try:
+            chunk = base64.b64decode(frame.data, validate=True)
+        except (binascii.Error, ValueError):
+            return False
+        if not chunk or len(chunk) > MAX_AUDIO_FRAME_BYTES:
+            return False
+        lease.next_seq += 1
+        try:
+            lease.source.feed_pcm(chunk)
+        except BufferError:
+            logger.warning("Wake audio buffer full for %s — dropping", connection.node_id)
+        except ValueError:
+            return False
+        return True
+
+    def _end_wake_lease(self, connection: _Connection, lease_id: str | None) -> None:
+        """Stop accepting audio for this turn and hand the microphone back."""
+        lease = connection.wake
+        if lease is None or (lease_id is not None and lease.lease_id != lease_id):
+            return
+        lease.ended = True
+        connection.wake = None
+        lease.source.stop()
+        pipeline = self._pipeline
+        if pipeline is None:
+            return
+        # The pipeline releases the arbiter itself when it returns to IDLE; the
+        # lease only has to give back the audio source and the remote owner.
+        with contextlib.suppress(Exception):
+            pipeline.select_audio_source(None)
+        with contextlib.suppress(Exception):
+            pipeline.release_remote_owner(connection.node_id)
+
+    def _on_remote_wake_end(self, node_id: str) -> None:
+        """Tell a streaming node the backend has the audio it needs.
+
+        Invoked from the pipeline thread the moment its turn returns to IDLE,
+        which is the only party that knows where the sentence ended.
+        """
+        connection = self._connections.get(node_id)
+        if connection is None or connection.closed or connection.wake is None:
+            return
+        lease_id = connection.wake.lease_id
+        loop = self._loop
+        if loop is None:
+            return
+
+        async def _stop() -> None:
+            current = self._connections.get(node_id)
+            if current is None or current.wake is None:
+                return
+            with contextlib.suppress(Exception):
+                await current.send(listen_stop_frame(current.generation, lease_id))
+            self._end_wake_lease(current, lease_id)
+
+        with contextlib.suppress(RuntimeError):
+            asyncio.run_coroutine_threadsafe(_stop(), loop)
 
     def _accept_tts_chunk(
         self, connection: _Connection, frame: SynthesizeChunkFrame

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import contextlib
 import logging
 
 from fastapi import APIRouter, WebSocket
@@ -19,7 +20,12 @@ async def websocket_capabilities(websocket: WebSocket) -> None:
         auth.authenticate_capability_websocket(websocket) if auth is not None else None
     )
     if node_id is None:
-        await websocket.close(code=1008)
+        # Accept first so the node sees 1008 rather than a 1006 it would treat
+        # as a flaky link and retry against. See routes/chat.py.
+        with contextlib.suppress(Exception):
+            await websocket.accept()
+        with contextlib.suppress(Exception):
+            await websocket.close(code=1008)
         logger.warning("Rejected unauthenticated capability node")
         return
     hub = getattr(websocket.app.state, "capability_hub", None)

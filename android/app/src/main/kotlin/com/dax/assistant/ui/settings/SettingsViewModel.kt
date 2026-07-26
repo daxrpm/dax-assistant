@@ -81,6 +81,8 @@ class SettingsViewModel @Inject constructor(
 
     fun setFollowUpEnabled(value: Boolean) = preferences.setFollowUpEnabled(value)
 
+    fun setSpeakChatReplies(value: Boolean) = preferences.setSpeakChatReplies(value)
+
     fun save() {
         if (_state.value.saving || !_state.value.dirty) return
         val config = _state.value.config

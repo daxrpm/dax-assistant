@@ -20,6 +20,12 @@ MAX_RESULT_CHARS = 64 * 1024
 MAX_TTS_CHUNK_BYTES = 48 * 1024
 MAX_TTS_CHUNKS = 128
 MAX_TTS_AUDIO_BYTES = 6 * 1024 * 1024
+# One capture frame is 100 ms of mono PCM16 at 16 kHz; base64 inflates it by 4/3.
+MAX_AUDIO_FRAME_BYTES = 3_200
+MAX_AUDIO_FRAME_B64 = (MAX_AUDIO_FRAME_BYTES * 4) // 3 + 4
+# A wake turn that has streamed this many frames without the backend calling
+# end-of-speech is a stuck node, not a long sentence: 30 s of audio.
+MAX_AUDIO_FRAMES_PER_LEASE = 300
 
 _STRING: dict[str, object] = {"type": "string"}
 _INTEGER: dict[str, object] = {"type": "integer"}
@@ -159,10 +165,93 @@ class SynthesizeFinalFrame(StrictModel):
     error: str | None = Field(default=None, max_length=512)
 
 
+class WakeClaimFrame(StrictModel):
+    """A node reporting that it heard the wake word, and how clearly.
+
+    The score is the node's own detector confidence. It is a hint used to pick
+    the nearest microphone, never a permission: a node that inflates it wins
+    the room it already has a microphone in and nothing more.
+    """
+
+    type: Literal["wake_claim"]
+    generation: int = Field(ge=1)
+    claim_id: str = Field(min_length=1, max_length=128)
+    score: float = Field(ge=0.0, le=1.0)
+
+
+class AudioChunkFrame(StrictModel):
+    """One capture frame from the node that won the wake.
+
+    ``seq`` is checked rather than trusted for ordering: a gap means frames were
+    dropped somewhere, and silently splicing over it would hand the transcriber
+    an utterance the user never said.
+    """
+
+    type: Literal["audio_chunk"]
+    generation: int = Field(ge=1)
+    lease_id: str = Field(min_length=1, max_length=128)
+    seq: int = Field(ge=0, lt=MAX_AUDIO_FRAMES_PER_LEASE)
+    data: str = Field(min_length=1, max_length=MAX_AUDIO_FRAME_B64)
+
+
+class AudioEndFrame(StrictModel):
+    type: Literal["audio_end"]
+    generation: int = Field(ge=1)
+    lease_id: str = Field(min_length=1, max_length=128)
+    reason: Literal["complete", "aborted", "error"] = "complete"
+
+
 InboundFrame = Annotated[
-    ResultFrame | HeartbeatFrame | FeaturesFrame | SynthesizeChunkFrame | SynthesizeFinalFrame,
+    ResultFrame
+    | HeartbeatFrame
+    | FeaturesFrame
+    | SynthesizeChunkFrame
+    | SynthesizeFinalFrame
+    | WakeClaimFrame
+    | AudioChunkFrame
+    | AudioEndFrame,
     Field(discriminator="type"),
 ]
+
+
+def wake_grant_frame(
+    generation: int, claim_id: str, lease_id: str
+) -> dict[str, object]:
+    """Tell a node it won the wake and may start streaming its microphone."""
+    return {
+        "type": "wake_grant",
+        "generation": generation,
+        "claim_id": claim_id,
+        "lease_id": lease_id,
+    }
+
+
+def wake_yield_frame(
+    generation: int, claim_id: str, suppress_ms: int
+) -> dict[str, object]:
+    """Tell a node another microphone answered, and to stay quiet meanwhile.
+
+    Suppression is what stops the losing node from re-triggering on the rest of
+    the same sentence, which it can still hear perfectly well.
+    """
+    return {
+        "type": "wake_yield",
+        "generation": generation,
+        "claim_id": claim_id,
+        "suppress_ms": max(0, int(suppress_ms)),
+    }
+
+
+def listen_stop_frame(
+    generation: int, lease_id: str, reason: str = "complete"
+) -> dict[str, object]:
+    """Tell the streaming node the backend has all the audio it needs."""
+    return {
+        "type": "listen_stop",
+        "generation": generation,
+        "lease_id": lease_id,
+        "reason": reason,
+    }
 
 
 def canonical_prefix(node_id: str) -> str:

@@ -72,6 +72,10 @@ data class AppPreferenceState(
     val speechOutputMode: SpeechOutputMode = SpeechOutputMode.SERVER,
     val theme: ThemePreference = ThemePreference.SYSTEM,
     val followUpEnabled: Boolean = true,
+    // Whether a typed conversation is read aloud as well as shown. On by
+    // default: the phone is the one client normally used away from a screen,
+    // and a reply nobody hears is the whole reason this exists.
+    val speakChatReplies: Boolean = true,
 )
 
 class AppPreferences(context: Context) {
@@ -112,6 +116,11 @@ class AppPreferences(context: Context) {
         _state.value = _state.value.copy(followUpEnabled = value)
     }
 
+    fun setSpeakChatReplies(value: Boolean) {
+        store.edit().putBoolean(KEY_SPEAK_CHAT, value).apply()
+        _state.value = _state.value.copy(speakChatReplies = value)
+    }
+
     private fun read() = AppPreferenceState(
         appLanguage = AppLanguage.fromStored(store.getString(KEY_LANGUAGE, null)),
         recognitionMode = RecognitionMode.fromStored(store.getString(KEY_RECOGNITION_MODE, null)),
@@ -119,6 +128,7 @@ class AppPreferences(context: Context) {
         speechOutputMode = SpeechOutputMode.fromStored(store.getString(KEY_SPEECH_OUTPUT_MODE, null)),
         theme = ThemePreference.fromStored(store.getString(KEY_THEME, null)),
         followUpEnabled = store.getBoolean(KEY_FOLLOW_UP, true),
+        speakChatReplies = store.getBoolean(KEY_SPEAK_CHAT, true),
     )
 
     private fun applyLanguage(language: AppLanguage) {
@@ -133,5 +143,6 @@ class AppPreferences(context: Context) {
         const val KEY_SPEECH_OUTPUT_MODE = "speech_output_mode"
         const val KEY_THEME = "theme"
         const val KEY_FOLLOW_UP = "voice_follow_up"
+        const val KEY_SPEAK_CHAT = "speak_chat_replies"
     }
 }

@@ -1,6 +1,6 @@
 [package]
 name = "dax-desktop"
-version = "0.3.2"
+version = "0.4.0"
 description = "Desktop client for the Dax personal assistant"
 authors = ["Dax"]
 license = "MIT"

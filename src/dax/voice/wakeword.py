@@ -80,6 +80,21 @@ class WakeWordDetector:
         Raises:
             WakeWordError: If the detector has not been started.
         """
+        detection = self.detect_with_score(audio_chunk)
+        return detection[0] if detection is not None else None
+
+    def detect_with_score(self, audio_chunk: np.ndarray) -> tuple[str, float] | None:
+        """Detect, reporting the confidence alongside the model name.
+
+        The score matters when more than one microphone is listening: the
+        backend compares confidences to decide which one was closest to the
+        speaker, so a detector that only reported "yes" would leave the
+        arbiter nothing to arbitrate on.
+
+        Returns:
+            ``(model_name, score)`` for the highest-scoring model above the
+            threshold, or ``None`` if nothing triggered.
+        """
         if self._model is None:
             raise WakeWordError("WakeWordDetector not started")
 
@@ -88,13 +103,13 @@ class WakeWordDetector:
         except Exception as exc:
             raise WakeWordError(f"Prediction failed: {exc}") from exc
 
+        best: tuple[str, float] | None = None
         for model_name, score in predictions.items():
-            if score > self._threshold:
-                logger.debug(
-                    "Wake word '%s' detected (score=%.3f)", model_name, score
-                )
-                return model_name
-        return None
+            if score > self._threshold and (best is None or score > best[1]):
+                best = (model_name, float(score))
+        if best is not None:
+            logger.debug("Wake word '%s' detected (score=%.3f)", best[0], best[1])
+        return best
 
     def reset(self) -> None:
         """Reset the model's internal state between activations."""

@@ -73,6 +73,7 @@ fun SettingsScreen(
     onRecognitionLanguageChange: (RecognitionLanguage) -> Unit,
     onSpeechOutputModeChange: (SpeechOutputMode) -> Unit,
     onFollowUpChange: (Boolean) -> Unit,
+    onSpeakChatChange: (Boolean) -> Unit,
     onThemeChange: (ThemePreference) -> Unit,
     onOpenDiagnostics: () -> Unit,
     modifier: Modifier = Modifier,
@@ -315,6 +316,20 @@ fun SettingsScreen(
                         selected = state.preferences.followUpEnabled,
                         recommended = true,
                         onSelect = onFollowUpChange,
+                    )
+                }
+                SettingBlock(
+                    title = stringResource(R.string.settings_speak_chat),
+                    description = stringResource(R.string.settings_speak_chat_help),
+                ) {
+                    ChoiceRow(
+                        options = listOf(
+                            true to stringResource(R.string.choice_on),
+                            false to stringResource(R.string.choice_off),
+                        ),
+                        selected = state.preferences.speakChatReplies,
+                        recommended = true,
+                        onSelect = onSpeakChatChange,
                     )
                 }
                 SettingBlock(
@@ -728,6 +743,7 @@ private fun SettingsPreviewContent() {
         onRecognitionLanguageChange = {},
         onSpeechOutputModeChange = {},
         onFollowUpChange = {},
+        onSpeakChatChange = {},
         onThemeChange = {},
         onOpenDiagnostics = {},
     )

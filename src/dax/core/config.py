@@ -28,6 +28,16 @@ class VoiceConfig(BaseModel):
     # a custom ``.onnx`` model. The detector resolves both.
     wake_word_model: str = "hey_jarvis"
     wake_word_threshold: float = 0.7
+    # Dax can listen in several places at once — the backend's own microphone
+    # and every capability node allowed to listen. One "hey jarvis" spoken in a
+    # room where two of them are in earshot fires both, so detections are
+    # judged together and only the clearest answers. This is how long the
+    # backend waits for a competing detection before deciding: long enough to
+    # cover LAN jitter, short enough not to read as lag before the earcon.
+    wake_arbitration_window_ms: int = 350
+    # How long a microphone that lost the arbitration ignores its own detector,
+    # so the rest of the same sentence cannot re-trigger it.
+    wake_suppress_ms: int = 2000
     # "local" keeps audio on-device; "openai" uploads each completed utterance
     # to the Audio Transcriptions API and can fall back locally when unavailable.
     stt_backend: Literal["local", "openai"] = "local"
@@ -391,6 +401,11 @@ class NodePolicyConfig(BaseModel):
     # Speech is the real win. Audio is bulky and today it crosses the network
     # twice to reach a backend that may be off-LAN.
     voice: Literal["auto", "local", "server"] = "auto"
+    # Whether this laptop listens for the wake word on its own microphone. On
+    # by default because a laptop is usually the machine in the room with the
+    # user, and a backend in a cupboard cannot hear them at all. Turn it off
+    # for a node that sits somewhere it would only pick up noise.
+    wake_word: bool = True
 
 
 class NodesConfig(BaseModel):
@@ -410,6 +425,10 @@ class NodesConfig(BaseModel):
     def hosts_sessions(self, node_id: str) -> bool:
         """Whether *node_id* may terminate a client session and run the turn."""
         return self.enabled and self.policy_for(node_id).process_locally
+
+    def listens_for_wake_word(self, node_id: str) -> bool:
+        """Whether *node_id* may run a wake-word detector and claim activations."""
+        return self.enabled and self.policy_for(node_id).wake_word
 
     def lends_tool(self, node_id: str, tool_name: str) -> bool:
         """Whether the authoritative backend may route this node tool."""

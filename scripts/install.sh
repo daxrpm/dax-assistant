@@ -279,6 +279,46 @@ fetch() {
     esac
 }
 
+# Kokoro is the default TTS engine, but its weights are not in the wheel, so a
+# fresh install used to start, fail to find them, and quietly fall back to
+# Piper — leaving the configured voice silently unused. Fetch them here instead.
+#
+# Non-fatal on purpose: the Piper fallback is real and works, so a slow mirror
+# or an offline install should cost the nicer voice, not the whole deployment.
+KOKORO_BASE_URL="https://github.com/thewh1teagle/kokoro-onnx/releases/download/model-files-v1.0"
+KOKORO_MODEL_FILES=("kokoro-v1.0.onnx" "voices-v1.0.bin")
+
+install_kokoro_models() {
+    local directory="$DATA_DIR/models/kokoro" name destination missing=0
+    for name in "${KOKORO_MODEL_FILES[@]}"; do
+        [[ -s "$directory/$name" ]] || missing=1
+    done
+    if (( missing == 0 )); then
+        ok "Kokoro voice models already present"
+        return 0
+    fi
+
+    step "Downloading Kokoro voice models"
+    install -d -m 700 "$directory"
+    for name in "${KOKORO_MODEL_FILES[@]}"; do
+        destination="$directory/$name"
+        [[ -s "$destination" ]] && continue
+        # Written to a temporary name first so an interrupted download can never
+        # be mistaken for a complete model on the next start.
+        if curl --proto '=https' --tlsv1.2 --fail --silent --show-error --location \
+            --retry 3 --retry-delay 2 --output "$destination.part" \
+            "$KOKORO_BASE_URL/$name" && [[ -s "$destination.part" ]]; then
+            mv -f "$destination.part" "$destination"
+            ok "$name"
+        else
+            rm -f "$destination.part"
+            warn "could not download $name; voice falls back to Piper"
+            return 0
+        fi
+    done
+    ok "Kokoro voice models ready"
+}
+
 # ------------------------------------------------------------------ dependency
 
 ensure_base_tools() {
@@ -692,6 +732,9 @@ install_backend() {
     backup_database
     build_runtime "$target" "$wheel" "$requirements"
     ok "runtime built at $target"
+    # Before the service starts, so its first run already finds the weights and
+    # does not fall back to Piper for the lifetime of that boot.
+    install_kokoro_models
 
     ln -sfn "$target" "$CURRENT_LINK.new"
     mv -Tf "$CURRENT_LINK.new" "$CURRENT_LINK"
