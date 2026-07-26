@@ -15,8 +15,8 @@
     "semantic_hash": "3ea725724bc8ebe483c9f13d6aa1124f"
   },
   "pyproject.toml": {
-    "mtime": 1785028341.539901,
-    "ast_hash": "80554332297603b9f5bc5df40a4e5636",
+    "mtime": 1785085781.3910968,
+    "ast_hash": "a734fbb75aa4e80a797114660219a42b",
     "semantic_hash": ""
   },
   "scripts/download_models.py": {
@@ -820,8 +820,8 @@
     "semantic_hash": ""
   },
   "desktop/src-tauri/tauri.conf.json": {
-    "mtime": 1785028341.539901,
-    "ast_hash": "7a4fee11816a1b65b1f38390e3ccfa79",
+    "mtime": 1785085781.4254785,
+    "ast_hash": "de7ac95a8d39193d82b2c2f4eba1fd39",
     "semantic_hash": ""
   },
   "desktop/src/App.tsx": {
@@ -1420,8 +1420,8 @@
     "semantic_hash": ""
   },
   "android/app/build.gradle.kts": {
-    "mtime": 1785028341.536901,
-    "ast_hash": "7e954d27f40e5ecba15bd1d3ee9019a8",
+    "mtime": 1785085781.426536,
+    "ast_hash": "6104694c4faa2b1b65444dbf68a259cc",
     "semantic_hash": ""
   },
   "android/app/src/main/kotlin/com/dax/assistant/DaxApplication.kt": {
@@ -2185,8 +2185,8 @@
     "semantic_hash": ""
   },
   "release.json": {
-    "mtime": 1785028341.539901,
-    "ast_hash": "2b9be32fc4d993e2b42e6c9b60991707",
+    "mtime": 1785085781.3909018,
+    "ast_hash": "5d4b1e53f82a51a9d7e88a58247d10e0",
     "semantic_hash": ""
   },
   "scripts/release-manifest.schema.json": {

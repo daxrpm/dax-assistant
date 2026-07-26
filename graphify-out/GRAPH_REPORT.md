@@ -5,12 +5,12 @@
 - Verdict: corpus is large enough that graph structure adds value.
 
 ## Summary
-- 6795 nodes · 17535 edges · 342 communities (254 shown, 88 thin omitted)
+- 6795 nodes · 17535 edges · 340 communities (251 shown, 89 thin omitted)
 - Extraction: 80% EXTRACTED · 20% INFERRED · 0% AMBIGUOUS · INFERRED: 3425 edges (avg confidence: 0.58)
 - Token cost: 0 input · 0 output
 
 ## Graph Freshness
-- Built from commit: `e05cd9b0`
+- Built from commit: `392dc42d`
 - Run `git rev-parse HEAD` and compare to check if the graph is stale.
 - Run `graphify update .` after code changes (no API cost).
 
@@ -165,7 +165,6 @@
 - 10. Phased milestones
 - 5. Design system specification
 - toggle
-- .transcribe
 - 3. Architecture
 - 6.0 SETTINGS INFORMATION ARCHITECTURE (authoritative, 2026-07-19)
 - AppShell.tsx
@@ -319,7 +318,6 @@
 - DaxNotificationListenerService
 - boundedNotificationPayload
 - CapabilityNodeCredentialStore
-- datetime
 - SettingsPage.tsx
 - main
 - Brief: turn the Android app into a capability node
@@ -372,15 +370,15 @@
 - **Remote Voice v1 Flow** — docs_voice_websocket_authenticated_voice_socket, docs_voice_websocket_exclusive_remote_audio_lease, docs_voice_websocket_bounded_pcm_protocol, readme_remote_voice_limit [EXTRACTED 1.00]
 - **Orbita Realtime Rendering** — docs_desktop_architecture_demand_managed_realtime_stores, docs_desktop_architecture_orbita_canvas_renderer, docs_voice_websocket_source_separated_level_frames, desktop_plan_voice_hud [EXTRACTED 1.00]
 
-## Communities (342 total, 88 thin omitted)
+## Communities (340 total, 89 thin omitted)
 
 ### Community 0 - "Bundle Collection Utilities"
 Cohesion: 0.01
-Nodes (173): ab(), add(), addDescendants(), addNode(), addText(), addTreeNode(), Ag(), an() (+165 more)
+Nodes (181): ab(), add(), addDescendants(), addNode(), __addSublanguage(), addText(), addTreeNode(), Ag() (+173 more)
 
 ### Community 1 - "Voice Processing Pipeline"
 Cohesion: 0.08
-Nodes (110): ae(), Av(), b(), be(), Bm(), br(), C(), Ce() (+102 more)
+Nodes (111): ae(), Av(), b(), be(), Bm(), br(), C(), Ce() (+103 more)
 
 ### Community 2 - "Frontend Runtime Internals"
 Cohesion: 0.04
@@ -392,7 +390,7 @@ Nodes (26): _codes(), delete_device(), DeviceListResponse, enroll_device(), Enro
 
 ### Community 4 - "Tree Collection Traversal"
 Cohesion: 0.06
-Nodes (90): Ad(), addChild(), addEventListener(), at(), bd(), cd(), cf(), Cu() (+82 more)
+Nodes (89): Ad(), addChild(), addEventListener(), at(), bd(), cd(), cf(), Cu() (+81 more)
 
 ### Community 5 - "Tool Dispatch Interfaces"
 Cohesion: 0.09
@@ -400,11 +398,11 @@ Nodes (49): AsyncMutex, AtomicU64, analyze_spectrum(), artwork_data_url(), brows
 
 ### Community 6 - "DOM Collection Mutation"
 Cohesion: 0.06
-Nodes (80): ac(), Am(), ao(), bc(), Bi(), bs(), cc(), ci() (+72 more)
+Nodes (79): ac(), Am(), ao(), bc(), Bi(), bs(), cc(), ci() (+71 more)
 
 ### Community 7 - "Application Storage Lifecycle"
 Cohesion: 0.05
-Nodes (46): ChannelType, Conversation, Language, Message, MessageRole, StrEnum, Domain models for Dax Assistant.  Pure dataclasses with no external dependencies, Append a message and update the timestamp. (+38 more)
+Nodes (49): ChannelType, Conversation, Language, Message, MessageRole, StrEnum, Domain models for Dax Assistant.  Pure dataclasses with no external dependencies, Append a message and update the timestamp. (+41 more)
 
 ### Community 8 - "Agent Message Processing"
 Cohesion: 0.14
@@ -427,8 +425,8 @@ Cohesion: 0.07
 Nodes (35): is_canonical_shell(), A request to execute an MCP tool., The result of an MCP tool execution., ToolCall, ToolResult, Execute a tool call on the appropriate MCP server., Replace the whole list (de-duped, order preserved) and persist., Execute a tool call on this server. (+27 more)
 
 ### Community 13 - "Voice Conversation State"
-Cohesion: 0.11
-Nodes (58): a(), Au(), Ba(), bj(), cp(), dk(), dp(), f() (+50 more)
+Cohesion: 0.09
+Nodes (85): a(), af(), announce(), ap(), appendChild(), Au(), Ba(), bf() (+77 more)
 
 ### Community 14 - "React Collection Rendering"
 Cohesion: 0.11
@@ -507,8 +505,8 @@ Cohesion: 0.12
 Nodes (28): get_host_metrics(), get_logs(), get_mcp_status(), get_status(), get_tool_audit(), get_tool_policy(), HostMetricsResponse, list_llm_models() (+20 more)
 
 ### Community 33 - "Keyboard Collection Navigation"
-Cohesion: 0.06
-Nodes (50): ai(), as(), Bo(), Bp(), bu(), ds(), ed(), es() (+42 more)
+Cohesion: 0.07
+Nodes (48): ai(), as(), Bo(), Bp(), bu(), ds(), es(), fp() (+40 more)
 
 ### Community 34 - "MCP Lifecycle Manager"
 Cohesion: 0.07
@@ -523,8 +521,8 @@ Cohesion: 0.09
 Nodes (24): ConversationSummary, ThemeToggle(), Modal(), AgentEvent, boundChatMessages(), ChatMessage, ConfirmationRequest, nextId() (+16 more)
 
 ### Community 37 - "Frontend Runtime Dependencies"
-Cohesion: 0.07
-Nodes (75): api, FullConfig, MCPPreset, MemoryType, RegistryServer, VoicePreviewOptions, AlertIcon(), PlayIcon() (+67 more)
+Cohesion: 0.05
+Nodes (103): api, FullConfig, MCPPreset, RegistryServer, VoicePreviewOptions, AlertIcon(), PlayIcon(), PlusIcon() (+95 more)
 
 ### Community 38 - "Memory File Management"
 Cohesion: 0.26
@@ -545,10 +543,6 @@ Nodes (10): MCPClient, Any, MCP client wrapper — manages a connection to a sin
 ### Community 42 - "System Prompt Construction"
 Cohesion: 0.11
 Nodes (18): Any, System-prompt assembly for the agent.  Builds the per-turn system prompt from th, Append a concrete live tool inventory to the base system prompt.      Grouping b, Assembles the per-turn system prompt (tools + memory + voice style)., Replace the editable base prompt for subsequent turns., Return the full system prompt for this turn., Read user-curated memory files and format them for the system prompt.          E, SystemPromptBuilder (+10 more)
-
-### Community 43 - "Frontend Development Dependencies"
-Cohesion: 0.09
-Nodes (35): BadgeTone, ButtonProps, ButtonSize, ButtonVariant, Checkbox(), CodeBlock(), EmptyState(), IconButton() (+27 more)
 
 ### Community 44 - "Logs and Configuration Types"
 Cohesion: 0.05
@@ -583,8 +577,8 @@ Cohesion: 0.07
 Nodes (21): _build_prompt(), build_stt(), FallbackSpeechToText, OpenAISpeechToText, ndarray, VoiceConfig, Speech-to-Text via faster-whisper.  Wraps the CTranslate2-based Whisper model fo, Release model resources. (+13 more)
 
 ### Community 52 - "Audio Capture Playback"
-Cohesion: 0.08
-Nodes (38): authHeaders(), request(), requestBlob(), requestForm(), responseError(), getBaseUrl(), ConversationDetail, ConversationMessage (+30 more)
+Cohesion: 0.07
+Nodes (40): authHeaders(), request(), requestBlob(), requestForm(), responseError(), getBaseUrl(), ConversationDetail, ConversationMessage (+32 more)
 
 ### Community 53 - "Shared Test Fixtures"
 Cohesion: 0.12
@@ -732,7 +726,7 @@ Nodes (20): Decide which microphone answers when several hear the same wake word
 
 ### Community 96 - "MemoryTab.tsx"
 Cohesion: 0.07
-Nodes (45): Locale, APPLY_CLASS, APPLY_KEY, asNumber(), asString(), FieldControl(), FieldLabel(), fromIntLines() (+37 more)
+Nodes (47): Locale, ThemeMode, APPLY_CLASS, APPLY_KEY, asNumber(), asString(), FieldControl(), FieldLabel() (+39 more)
 
 ### Community 98 - "Production Favicon Graphics"
 Cohesion: 0.50
@@ -751,7 +745,7 @@ Cohesion: 0.06
 Nodes (30): app, security, windows, build, beforeBuildCommand, beforeDevCommand, devUrl, frontendDist (+22 more)
 
 ### Community 112 - "models.py"
-Cohesion: 0.10
+Cohesion: 0.11
 Nodes (27): formatMediaTime(), hashTrack(), mediaProvider, NowPlaying(), NowPlayingView(), progressWaveform(), media, en (+19 more)
 
 ### Community 150 - "test_legacy_oauth_files_migrate_encrypted"
@@ -763,8 +757,8 @@ Cohesion: 0.12
 Nodes (8): Authentication and session security.      Secrets are supplied via environment v, SecurityConfig, _auth(), Device enrolment, short-lived tokens, and revocation., Salt separation: a browser session must not authenticate as a device., registry(), TestDeviceRegistry, TestDeviceTokens
 
 ### Community 152 - "TestYesNoParser"
-Cohesion: 0.07
-Nodes (25): build_messages_for_llm(), Any, Message, Shared LLM helpers: the system prompt and the message builder.  The conversation, Build the OpenAI-format message list for an LLM call.      Converts our Message, Remove provider control markup that must never reach users or TTS., sanitize_assistant_text(), Any (+17 more)
+Cohesion: 0.06
+Nodes (30): datetime, In-memory log buffer + live fan-out for the web Logs viewer.  A single :class:`L, build_messages_for_llm(), Any, Message, Shared LLM helpers: the system prompt and the message builder.  The conversation, Build the OpenAI-format message list for an LLM call.      Converts our Message, Remove provider control markup that must never reach users or TTS. (+22 more)
 
 ### Community 153 - "getFullNode"
 Cohesion: 0.09
@@ -787,8 +781,8 @@ Cohesion: 0.22
 Nodes (9): 7. Milestone Results, M0 - Risk spike: passed (2026-07-18), M1 - Foundation: passed with visual caveat (2026-07-18), M2 - Chat: automated gate passed, M3 - Settings and screens: automated gate passed, M4 - Voice and HUD: software gate passed; hardware gate open, M5 - Native polish: software gate passed; human accessibility gate open, M6 - Packaging: build gate passed; clean-install gate open (+1 more)
 
 ### Community 158 - "._resolve_voice"
-Cohesion: 0.15
-Nodes (9): Closed, Frame, ByteArray, String, WebSocket, VoiceSocket, VoiceSocketEvent, VoiceSocketTest (+1 more)
+Cohesion: 0.18
+Nodes (8): Closed, Frame, ByteArray, String, WebSocket, VoiceSocket, VoiceSocketEvent, ReceiveChannel
 
 ### Community 159 - "whatsapp_webhook"
 Cohesion: 0.16
@@ -809,10 +803,6 @@ Nodes (6): 2. Closed Decisions, D1. Tauri v2 + Rust + React, D2. Same repository
 ### Community 163 - "toggle"
 Cohesion: 0.23
 Nodes (14): handle_shortcut(), hide(), AppHandle, Option, R, Result, String, shortcut_action() (+6 more)
-
-### Community 164 - ".transcribe"
-Cohesion: 0.11
-Nodes (42): af(), announce(), ap(), appendChild(), bf(), bt(), constructor(), createElement() (+34 more)
 
 ### Community 165 - "3. Architecture"
 Cohesion: 0.33
@@ -891,8 +881,8 @@ Cohesion: 0.15
 Nodes (11): acquire_process_lock(), DatabaseLockedError, Path, RuntimeError, SQLite database initialization and connection management., Open the database connection and initialize the schema., Return the active connection, raising if not started., Create tables if they don't exist and track schema version. (+3 more)
 
 ### Community 216 - ".get_relevant_tools"
-Cohesion: 0.24
-Nodes (5): parse_tool_calls_from_response(), Maps MCP tool schemas to OpenAI function-calling format.  We use the OpenAI tool, Parse tool calls from a litellm response into our internal format.      Args:, Tests for MCP → OpenAI tool schema mapping and relevance filtering., TestParseToolCalls
+Cohesion: 0.28
+Nodes (5): parse_tool_calls_from_response(), Any, Parse tool calls from a litellm response into our internal format.      Args:, Tests for MCP → OpenAI tool schema mapping and relevance filtering., TestParseToolCalls
 
 ### Community 217 - ".bind_loop"
 Cohesion: 0.12
@@ -1003,8 +993,8 @@ Cohesion: 0.18
 Nodes (11): Phase, ACQUIRED, ACQUIRING, CLOSED, NEW, OPEN, RELEASING, STARTING (+3 more)
 
 ### Community 250 - "enroll_voice.py"
-Cohesion: 0.14
-Nodes (21): CapabilityNode, NodePolicy, CapabilityNodes(), mockApi, mockStatus, CapabilityNodeEnrollmentStatus, enrollCapabilityNode(), getCapabilityNodeStatus() (+13 more)
+Cohesion: 0.12
+Nodes (24): CapabilityNode, NodePolicy, CapabilityNodes(), mockApi, mockStatus, ServerForm(), CapabilityNodeEnrollmentStatus, enrollCapabilityNode() (+16 more)
 
 ### Community 251 - ".get_relevant_tools"
 Cohesion: 0.33
@@ -1015,8 +1005,8 @@ Cohesion: 0.13
 Nodes (24): LLMConfigUpdate, Update LLM provider settings and rebuild the live router., update_llm(), get_mobile_config(), MobileLLMConfigUpdate, MobileNodesConfigUpdate, MobileVoiceConfigUpdate, _node_summary() (+16 more)
 
 ### Community 253 - ".bind_loop"
-Cohesion: 0.11
-Nodes (29): __addSublanguage(), bb(), cb(), Cj(), consume(), currentNode(), Cx(), Db() (+21 more)
+Cohesion: 0.08
+Nodes (39): bb(), cb(), Cj(), consume(), currentNode(), Cx(), Db(), Eb() (+31 more)
 
 ### Community 254 - ".list_tools"
 Cohesion: 0.20
@@ -1250,10 +1240,6 @@ Nodes (10): boundedNotificationPayload(), Int, JsonObject, List, Map, playbackSt
 Cohesion: 0.23
 Nodes (6): CapabilityToken, CapabilityNodeCredentialStore, Boolean, Long, SharedPreferences, String
 
-### Community 324 - "datetime"
-Cohesion: 0.18
-Nodes (8): datetime, In-memory log buffer + live fan-out for the web Logs viewer.  A single :class:`L, _bounded_limit(), _parse_datetime(), Conversation repository — implements the Storage protocol for SQLite., Return the most recent tool-audit entries (newest first)., Return a lightweight summary list of conversations for a channel.          Does, Parse an ISO format datetime string.
-
 ### Community 325 - "SettingsPage.tsx"
 Cohesion: 0.29
 Nodes (6): useConfig(), useStatus(), DashboardPage(), McpPage(), SettingsPage(), TABS
@@ -1287,8 +1273,8 @@ Cohesion: 0.33
 Nodes (3): Map a spoken answer to a decision string (es/en)., The spoken-confirmation parser (voice approval)., TestYesNoParser
 
 ### Community 333 - "mcp_tools_to_openai"
-Cohesion: 0.36
-Nodes (4): mcp_tools_to_openai(), Any, Convert a list of MCP tool schemas to OpenAI function-calling format.      MCP f, TestMCPToolsToOpenAI
+Cohesion: 0.31
+Nodes (4): mcp_tools_to_openai(), Maps MCP tool schemas to OpenAI function-calling format.  We use the OpenAI tool, Convert a list of MCP tool schemas to OpenAI function-calling format.      MCP f, TestMCPToolsToOpenAI
 
 ### Community 335 - ".embed"
 Cohesion: 0.38
@@ -1309,7 +1295,7 @@ Nodes (4): main(), ndarray, Enroll the owner's voice for speaker verification (V
 ## Knowledge Gaps
 - **568 isolated node(s):** `$schema`, `.opencode/plugins/graphify.js`, `CHAT`, `VOICE`, `PHONE` (+563 more)
   These have ≤1 connection - possible missing edges or undocumented components.
-- **88 thin communities (<3 nodes) omitted from report** — run `graphify query` to explore isolated nodes.
+- **89 thin communities (<3 nodes) omitted from report** — run `graphify query` to explore isolated nodes.
 
 ## Suggested Questions
 _Questions this graph is uniquely positioned to answer:_
