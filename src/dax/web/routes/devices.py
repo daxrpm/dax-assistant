@@ -116,9 +116,12 @@ class PairRequest(BaseModel):
 
 
 class EnrollRequest(BaseModel):
+    model_config = {"extra": "forbid"}
+
     code: str = Field(max_length=32)
     name: str = Field(default="", max_length=64)
     platform: str = Field(default="", max_length=32)
+    expected_kind: str | None = Field(default=None, max_length=32)
 
 
 class EnrollResponse(BaseModel):
@@ -128,6 +131,7 @@ class EnrollResponse(BaseModel):
     device_id: str | None = None
     device_secret: str | None = None
     instance_id: str | None = None
+    kind: str | None = None
 
 
 class TokenRequest(BaseModel):
@@ -191,7 +195,10 @@ async def pair_device(
         raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, "Invalid device kind")
     entry = _codes(request).issue(ttl, body.kind)
     backend_url = str(request.base_url).rstrip("/")
-    pairing_uri = f"dax://pair?{urlencode({'url': backend_url, 'code': entry.code})}"
+    pairing_query = urlencode(
+        {"url": backend_url, "code": entry.code, "kind": entry.kind}
+    )
+    pairing_uri = f"dax://pair?{pairing_query}"
     logger.info("Issued a device pairing code (expires in %ds)", ttl)
     return PairResponse(
         code=entry.code,
@@ -214,6 +221,9 @@ async def enroll_device(
 
     _limit_attempts(request, auth, "device_enroll", client_limit=10, global_limit=50)
 
+    if body.expected_kind is not None and body.expected_kind not in DEVICE_KINDS:
+        raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, "Invalid device kind")
+
     kind = _codes(request).redeem(body.code)
     if kind is None:
         # Same delay as a failed login: the code space is small enough that
@@ -222,6 +232,10 @@ async def enroll_device(
         response.status_code = 401
         logger.warning("Rejected device enrolment with an invalid pairing code")
         return EnrollResponse(ok=False)
+    if body.expected_kind is not None and body.expected_kind != kind:
+        response.status_code = status.HTTP_409_CONFLICT
+        logger.warning("Rejected device enrolment with a mismatched device kind")
+        return EnrollResponse(ok=False, kind=kind)
 
     device, secret = await devices.enroll(
         name=body.name or "Unnamed device",
@@ -233,6 +247,7 @@ async def enroll_device(
         device_id=device.id,
         device_secret=secret,
         instance_id=request.app.state.server_instance_id,
+        kind=kind,
     )
 
 

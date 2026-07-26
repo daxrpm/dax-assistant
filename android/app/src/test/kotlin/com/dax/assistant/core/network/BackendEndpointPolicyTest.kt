@@ -8,6 +8,13 @@ import org.junit.Test
 
 class BackendEndpointPolicyTest {
     @Test
+    fun `capability nodes require tls away from loopback`() {
+        assertTrue(BackendEndpointPolicy.allowsCapabilityNode("https://dax.example"))
+        assertTrue(BackendEndpointPolicy.allowsCapabilityNode("http://127.0.0.1:8420"))
+        assertFalse(BackendEndpointPolicy.allowsCapabilityNode("http://192.168.1.20:8420"))
+        assertFalse(BackendEndpointPolicy.allowsCapabilityNode("http://100.64.1.2:8420"))
+    }
+    @Test
     fun `allows https and private cleartext backends`() {
         assertEquals("https://dax.example", BackendEndpointPolicy.normalize(" https://dax.example/ "))
         assertEquals("http://192.168.100.104:8420", BackendEndpointPolicy.normalize("http://192.168.100.104:8420"))

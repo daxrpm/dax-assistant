@@ -5,6 +5,7 @@ import android.content.SharedPreferences
 import androidx.security.crypto.EncryptedSharedPreferences
 import androidx.security.crypto.MasterKey
 import com.dax.assistant.core.log.DaxLog
+import com.dax.assistant.core.network.BackendEndpointPolicy
 import java.util.UUID
 
 /**
@@ -51,6 +52,12 @@ class CredentialStore(context: Context) {
     val deviceSecret: String?
         get() = prefs.getString(KEY_DEVICE_SECRET, null)
 
+    val instanceId: String?
+        get() = prefs.getString(KEY_INSTANCE_ID, null)
+
+    val enrollmentOrigin: String?
+        get() = prefs.getString(KEY_ENROLLMENT_ORIGIN, null)
+
     val isEnrolled: Boolean
         get() = !deviceId.isNullOrBlank() && !deviceSecret.isNullOrBlank()
 
@@ -64,12 +71,29 @@ class CredentialStore(context: Context) {
                     }
             }
 
-    fun saveEnrolment(deviceId: String, deviceSecret: String) {
+    fun saveEnrolment(
+        deviceId: String,
+        deviceSecret: String,
+        instanceId: String,
+        enrollmentOrigin: String,
+    ) {
         prefs.edit()
             .putString(KEY_DEVICE_ID, deviceId)
             .putString(KEY_DEVICE_SECRET, deviceSecret)
+            .putString(KEY_INSTANCE_ID, instanceId)
+            .putString(
+                KEY_ENROLLMENT_ORIGIN,
+                BackendEndpointPolicy.normalize(enrollmentOrigin) ?: enrollmentOrigin,
+            )
             .apply()
         DaxLog.i(TAG, "Device enrolment stored")
+    }
+
+    fun bindAuthority(instanceId: String, enrollmentOrigin: String) {
+        prefs.edit()
+            .putString(KEY_INSTANCE_ID, instanceId)
+            .putString(KEY_ENROLLMENT_ORIGIN, enrollmentOrigin)
+            .apply()
     }
 
     /**
@@ -104,6 +128,8 @@ class CredentialStore(context: Context) {
             .remove(KEY_BACKEND_URL)
             .remove(KEY_DEVICE_ID)
             .remove(KEY_DEVICE_SECRET)
+            .remove(KEY_INSTANCE_ID)
+            .remove(KEY_ENROLLMENT_ORIGIN)
             .apply()
         DaxLog.i(TAG, "Credentials cleared")
     }
@@ -113,6 +139,8 @@ class CredentialStore(context: Context) {
         const val KEY_BACKEND_URL = "backend_url"
         const val KEY_DEVICE_ID = "device_id"
         const val KEY_DEVICE_SECRET = "device_secret"
+        const val KEY_INSTANCE_ID = "instance_id"
+        const val KEY_ENROLLMENT_ORIGIN = "enrollment_origin"
         const val KEY_SESSION_ID = "session_id"
         const val EXPIRY_SKEW_MILLIS = 30_000L
     }

@@ -36,11 +36,18 @@ DEFAULT_ASK_PATTERNS: tuple[str, ...] = (
     "*run*",
     "*kill*",
     "*open_app*",
+    "*app_open*",
+    "*app_deeplink*",
     "*open_path*",
     "*launch*",
     "*clipboard_set*",
     "*install*",
     "*send*",
+    "*media_control*",
+    "*notifications_read*",
+    "*call_dial*",
+    "*call_place*",
+    "*sms_compose*",
 )
 
 

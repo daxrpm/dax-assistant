@@ -16,6 +16,7 @@ import com.dax.assistant.assistant.AssistantController
 import com.dax.assistant.assistant.AssistantState
 import com.dax.assistant.core.log.DaxLog
 import com.dax.assistant.data.transport.ChatSocket
+import com.dax.assistant.data.transport.CapabilityNodeSocket
 import com.dax.assistant.ui.MainActivity
 import dagger.hilt.android.AndroidEntryPoint
 import javax.inject.Inject
@@ -44,6 +45,9 @@ class AssistantService : LifecycleService() {
     @Inject
     lateinit var socket: ChatSocket
 
+    @Inject
+    lateinit var capabilitySocket: CapabilityNodeSocket
+
     override fun onCreate() {
         super.onCreate()
         createChannel()
@@ -58,6 +62,7 @@ class AssistantService : LifecycleService() {
             },
         )
         socket.connect()
+        capabilitySocket.connect()
 
         lifecycleScope.launch {
             controller.state.collectLatest { state ->
@@ -79,6 +84,7 @@ class AssistantService : LifecycleService() {
     }
 
     override fun onDestroy() {
+        capabilitySocket.disconnect()
         socket.disconnect()
         super.onDestroy()
     }

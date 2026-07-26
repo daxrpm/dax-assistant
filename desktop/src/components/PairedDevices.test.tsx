@@ -149,7 +149,7 @@ describe("PairedDevices", () => {
       code: "NODE2345",
       expires_in_seconds: 300,
       backend_url: "https://dax.example",
-      pairing_uri: "dax://pair?code=NODE2345",
+      pairing_uri: "dax://pair?url=https%3A%2F%2Fdax.example&code=NODE2345&kind=capability_node",
       kind: "capability_node",
     } as never);
     const writeText = vi.fn().mockResolvedValue(undefined);
@@ -160,6 +160,8 @@ describe("PairedDevices", () => {
 
     const command = "dax edge enroll --server https://dax.example --code NODE2345 --name <name>";
     expect(await screen.findByText(command)).toBeTruthy();
+    expect(screen.getByText("N O D E 2 3 4 5")).toBeTruthy();
+    expect(screen.getByLabelText(/pairing qr|qr de vinculación/i)).toBeTruthy();
     expect(mockApi.pairDevice).toHaveBeenCalledWith("capability_node");
     fireEvent.click(screen.getByRole("button", { name: /copy|copiar/i }));
     await waitFor(() => expect(writeText).toHaveBeenCalledWith(command));

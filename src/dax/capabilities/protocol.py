@@ -29,6 +29,7 @@ MAX_AUDIO_FRAMES_PER_LEASE = 300
 
 _STRING: dict[str, object] = {"type": "string"}
 _INTEGER: dict[str, object] = {"type": "integer"}
+_BOOLEAN: dict[str, object] = {"type": "boolean"}
 
 
 def _object(
@@ -77,6 +78,38 @@ BUNDLED_TOOLS: dict[str, tuple[str, dict[str, object]]] = {
     "clipboard_set": (
         "Write text to the system clipboard.",
         _object({"text": _STRING}, ["text"]),
+    ),
+    "app_open": (
+        "Open an installed application on the connected Android phone.",
+        _object({"app": _STRING}, ["app"]),
+    ),
+    "app_deeplink": (
+        "Open a validated web or application deep link on the connected Android phone.",
+        _object({"url": _STRING, "package": _STRING}, ["url"]),
+    ),
+    "media_status": (
+        "Report the active media session and playing item on the connected Android phone.",
+        _object({}),
+    ),
+    "media_control": (
+        "Control the active media session on the connected Android phone.",
+        _object({"action": _STRING, "position_ms": _INTEGER}, ["action"]),
+    ),
+    "notifications_read": (
+        "Read a bounded recent notification history from the connected Android phone.",
+        _object({"limit": _INTEGER, "include_ongoing": _BOOLEAN}),
+    ),
+    "call_dial": (
+        "Open the Android dialer with a phone number ready for user confirmation.",
+        _object({"phone_number": _STRING}, ["phone_number"]),
+    ),
+    "call_place": (
+        "Place a non-emergency phone call from the connected Android phone.",
+        _object({"phone_number": _STRING}, ["phone_number"]),
+    ),
+    "sms_compose": (
+        "Open the Android SMS composer with a recipient and message ready for user confirmation.",
+        _object({"phone_number": _STRING, "message": _STRING}, ["phone_number", "message"]),
     ),
 }
 

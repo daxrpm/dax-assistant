@@ -147,6 +147,25 @@ class TestCapabilityAuth:
 
 
 class TestCapabilityProtocol:
+    def test_android_inventory_is_bounded_and_server_owned(self):
+        names = (
+            "app_open",
+            "app_deeplink",
+            "media_status",
+            "media_control",
+            "notifications_read",
+            "call_dial",
+            "call_place",
+            "sms_compose",
+        )
+        hello = HelloFrame.model_validate(_hello(*names))
+
+        inventory = trusted_inventory("phone", hello)
+
+        assert len(inventory) == len(names) <= MAX_TOOLS
+        assert {str(tool["name"]).rsplit("__", 1)[-1] for tool in inventory} == set(names)
+        assert all(tool["server_name"] == "capability-node:phone" for tool in inventory)
+
     def test_rejects_unknown_schema_and_tool_count_limit(self):
         bad = HelloFrame.model_validate(_hello("shell_run"))
         bad.tools[0].input_schema = {"type": "object"}

@@ -35,6 +35,8 @@ import com.dax.assistant.trigger.MediaButtonTrigger
 import com.dax.assistant.ui.design.OrbitaTheme
 import com.dax.assistant.ui.setup.PermissionSetupScreen
 import com.dax.assistant.ui.setup.SetupScreen
+import com.dax.assistant.ui.setup.PairingKind
+import com.dax.assistant.ui.setup.PairingPayload
 import com.journeyapps.barcodescanner.ScanContract
 import com.journeyapps.barcodescanner.ScanOptions
 import dagger.hilt.android.AndroidEntryPoint
@@ -209,7 +211,12 @@ private fun DaxApp(
     }
 
     LaunchedEffect(pairingDeepLink) {
-        pairingDeepLink?.let(viewModel::applyPairingPayload)
+        pairingDeepLink?.let { raw ->
+            val payload = PairingPayload.parse(raw)
+            if (!setup.enrolled || payload?.kind != PairingKind.CAPABILITY_NODE) {
+                viewModel.applyPairingPayload(raw)
+            }
+        }
     }
 
     if (!setup.enrolled) {
@@ -264,6 +271,9 @@ private fun DaxApp(
             onForgetEverything = viewModel::forgetEverything,
             onDeviceRecognition = viewModel.onDeviceRecognition,
             inputLevel = viewModel.controller.inputLevel,
+            nodePairingDeepLink = pairingDeepLink?.takeIf {
+                PairingPayload.parse(it)?.kind == PairingKind.CAPABILITY_NODE
+            },
         )
     }
 }

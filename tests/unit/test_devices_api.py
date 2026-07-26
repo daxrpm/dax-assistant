@@ -87,7 +87,11 @@ class TestEnrolmentFlow:
         assert pair.json()["backend_url"] == "http://test"
         parsed = urlparse(pair.json()["pairing_uri"])
         assert (parsed.scheme, parsed.netloc) == ("dax", "pair")
-        assert parse_qs(parsed.query) == {"url": ["http://test"], "code": [code]}
+        assert parse_qs(parsed.query) == {
+            "url": ["http://test"],
+            "code": [code],
+            "kind": ["client"],
+        }
 
         enroll = await client.post(
             "/api/auth/devices/enroll",
@@ -97,6 +101,7 @@ class TestEnrolmentFlow:
         device_id = enroll.json()["device_id"]
         secret = enroll.json()["device_secret"]
         assert device_id and secret
+        assert enroll.json()["kind"] == "client"
 
         token = await client.post(
             "/api/auth/devices/token",
@@ -145,6 +150,27 @@ class TestEnrolmentFlow:
         assert listed["kind"] == "capability_node"
         assert app.state.auth.capability_node_from_token(token) == listed["id"]
         assert app.state.auth.validate_token(token) is False
+
+    async def test_enrollment_rejects_a_code_for_the_wrong_kind(
+        self, client: AsyncClient
+    ):
+        pair = await client.post(
+            "/api/auth/devices/pair", json={"kind": "capability_node"}
+        )
+
+        enrolled = await client.post(
+            "/api/auth/devices/enroll",
+            json={
+                "code": pair.json()["code"],
+                "name": "phone",
+                "platform": "android",
+                "expected_kind": "client",
+            },
+        )
+
+        assert enrolled.status_code == 409
+        assert enrolled.json()["ok"] is False
+        assert enrolled.json()["kind"] == "capability_node"
 
     async def test_bad_pairing_code_is_rejected(self, client: AsyncClient):
         response = await client.post("/api/auth/devices/enroll", json={"code": "ZZZZZZZZ"})

@@ -1,5 +1,12 @@
 package com.dax.assistant.ui.settings
 
+import android.Manifest
+import android.content.Intent
+import android.net.Uri
+import android.provider.Settings
+import androidx.activity.result.contract.ActivityResultContracts
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.compose.LifecycleEventEffect
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
@@ -38,6 +45,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.rotate
 import androidx.compose.ui.draw.shadow
@@ -49,7 +57,9 @@ import androidx.compose.ui.text.input.KeyboardCapitalization
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.ui.unit.dp
+import androidx.activity.compose.rememberLauncherForActivityResult
 import com.dax.assistant.R
+import com.dax.assistant.data.transport.CapabilityConnectionState
 import com.dax.assistant.mobileapi.MobileConfig
 import com.dax.assistant.preferences.AppLanguage
 import com.dax.assistant.preferences.RecognitionLanguage
@@ -59,6 +69,8 @@ import com.dax.assistant.preferences.ThemePreference
 import com.dax.assistant.ui.design.Orbita
 import com.dax.assistant.ui.design.OrbitaTheme
 import com.dax.assistant.ui.design.OrbitaType
+import com.journeyapps.barcodescanner.ScanContract
+import com.journeyapps.barcodescanner.ScanOptions
 
 private enum class SettingsSection { INTERFACE, INTELLIGENCE, NODES, SPEECH }
 
@@ -75,12 +87,32 @@ fun SettingsScreen(
     onFollowUpChange: (Boolean) -> Unit,
     onSpeakChatChange: (Boolean) -> Unit,
     onThemeChange: (ThemePreference) -> Unit,
+    onNodeCodeChange: (String) -> Unit,
+    onNodeQr: (String) -> Unit,
+    onEnrolNode: () -> Unit,
+    onNodeEnabledChange: (Boolean) -> Unit,
+    onForgetNode: () -> Unit,
+    onNodePermissionsChanged: () -> Unit,
     onOpenDiagnostics: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
     androidx.compose.runtime.LaunchedEffect(Unit) { if (!state.loaded) onLoad() }
     var expanded by remember { mutableStateOf<SettingsSection?>(null) }
     var advanced by remember { mutableStateOf(false) }
+    val nodeScanner = rememberLauncherForActivityResult(ScanContract()) { result ->
+        result.contents?.let(onNodeQr)
+    }
+    val notificationAccessLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.StartActivityForResult(),
+    ) { onNodePermissionsChanged() }
+    val callPermissionLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.RequestPermission(),
+    ) { onNodePermissionsChanged() }
+    val appSettingsLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.StartActivityForResult(),
+    ) { onNodePermissionsChanged() }
+    val context = LocalContext.current
+    LifecycleEventEffect(Lifecycle.Event.ON_RESUME) { onNodePermissionsChanged() }
 
     Box(modifier.fillMaxSize().background(Orbita.colors.bgWindow)) {
     Column(
@@ -222,6 +254,34 @@ fun SettingsScreen(
                     advanced = false
                 },
             ) {
+                PhoneCapabilityNode(
+                    state = state,
+                    onCodeChange = onNodeCodeChange,
+                    onScan = {
+                        nodeScanner.launch(
+                            ScanOptions().setDesiredBarcodeFormats(ScanOptions.QR_CODE)
+                                .setBeepEnabled(false).setOrientationLocked(false),
+                        )
+                    },
+                    onEnrol = onEnrolNode,
+                    onEnabledChange = onNodeEnabledChange,
+                    onForget = onForgetNode,
+                    onNotificationAccess = {
+                        notificationAccessLauncher.launch(
+                            Intent(Settings.ACTION_NOTIFICATION_LISTENER_SETTINGS),
+                        )
+                    },
+                    onCallPermission = {
+                        if (state.callPermission) {
+                            appSettingsLauncher.launch(
+                                Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS)
+                                    .setData(Uri.fromParts("package", context.packageName, null)),
+                            )
+                        } else {
+                            callPermissionLauncher.launch(Manifest.permission.CALL_PHONE)
+                        }
+                    },
+                )
                 NodePresence(state.config)
                 SettingBlock(
                     title = stringResource(R.string.settings_nodes_prefer),
@@ -399,6 +459,112 @@ fun SettingsScreen(
         }
         Spacer(Modifier.height(Orbita.spacing.x8))
     }
+    }
+}
+
+@Composable
+private fun PhoneCapabilityNode(
+    state: SettingsUiState,
+    onCodeChange: (String) -> Unit,
+    onScan: () -> Unit,
+    onEnrol: () -> Unit,
+    onEnabledChange: (Boolean) -> Unit,
+    onForget: () -> Unit,
+    onNotificationAccess: () -> Unit,
+    onCallPermission: () -> Unit,
+) {
+    SettingBlock(
+        title = stringResource(R.string.settings_phone_node),
+        description = stringResource(R.string.settings_phone_node_help),
+    ) {
+        if (!state.nodeEnrolled) {
+            ModelField(
+                stringResource(R.string.settings_phone_node_code),
+                state.nodePairingCode,
+                onCodeChange,
+            )
+            PrimaryButton(
+                label = stringResource(R.string.settings_phone_node_scan),
+                enabled = !state.nodeEnrolling,
+                onClick = onScan,
+            )
+            PrimaryButton(
+                label = stringResource(
+                    if (state.nodeEnrolling) R.string.settings_phone_node_enrolling
+                    else R.string.settings_phone_node_enrol,
+                ),
+                enabled = !state.nodeEnrolling && state.nodePairingCode.length == 8,
+                onClick = onEnrol,
+            )
+        } else {
+            Text(
+                text = when (val connection = state.nodeConnection) {
+                    is CapabilityConnectionState.Connected -> stringResource(
+                        R.string.settings_phone_node_connected,
+                        connection.generation,
+                    )
+                    CapabilityConnectionState.Connecting -> stringResource(R.string.settings_phone_node_connecting)
+                    is CapabilityConnectionState.Failed -> stringResource(
+                        R.string.settings_phone_node_retry,
+                        connection.retryInSeconds,
+                    )
+                    is CapabilityConnectionState.Revoked -> stringResource(R.string.settings_phone_node_revoked)
+                    CapabilityConnectionState.Disabled -> stringResource(R.string.settings_phone_node_disabled)
+                    CapabilityConnectionState.Disconnected -> stringResource(R.string.settings_phone_node_disconnected)
+                },
+                style = OrbitaType.footnote,
+                color = if (state.nodeConnection is CapabilityConnectionState.Connected) {
+                    Orbita.colors.success
+                } else {
+                    Orbita.colors.fgTertiary
+                },
+            )
+            ChoiceRow(
+                options = listOf(
+                    true to stringResource(R.string.choice_on),
+                    false to stringResource(R.string.choice_off),
+                ),
+                selected = state.nodeEnabled,
+                recommended = true,
+                onSelect = onEnabledChange,
+            )
+            PrimaryButton(
+                label = stringResource(R.string.settings_phone_node_forget),
+                enabled = true,
+                onClick = onForget,
+            )
+            Text(
+                stringResource(R.string.settings_phone_node_forget_help),
+                style = OrbitaType.footnote,
+                color = Orbita.colors.fgTertiary,
+            )
+            SettingBlock(
+                title = stringResource(R.string.settings_notification_access),
+                description = stringResource(R.string.settings_notification_access_help),
+            ) {
+                PrimaryButton(
+                    label = stringResource(
+                        if (state.notificationAccess) R.string.settings_notification_access_manage
+                        else R.string.settings_notification_access_open,
+                    ),
+                    enabled = true,
+                    onClick = onNotificationAccess,
+                )
+            }
+            SettingBlock(
+                title = stringResource(R.string.settings_call_permission),
+                description = stringResource(R.string.settings_call_permission_help),
+            ) {
+                PrimaryButton(
+                    label = stringResource(
+                        if (state.callPermission) R.string.settings_call_permission_manage
+                        else R.string.settings_call_permission_allow,
+                    ),
+                    enabled = true,
+                    onClick = onCallPermission,
+                )
+            }
+        }
     }
 }
 
@@ -745,6 +911,12 @@ private fun SettingsPreviewContent() {
         onFollowUpChange = {},
         onSpeakChatChange = {},
         onThemeChange = {},
+        onNodeCodeChange = {},
+        onNodeQr = {},
+        onEnrolNode = {},
+        onNodeEnabledChange = {},
+        onForgetNode = {},
+        onNodePermissionsChanged = {},
         onOpenDiagnostics = {},
     )
 }

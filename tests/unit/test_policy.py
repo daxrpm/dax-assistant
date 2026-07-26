@@ -13,6 +13,12 @@ class TestToolPolicy:
         assert p.decide("shell_run") == Decision.ASK
         assert p.decide("open_path") == Decision.ASK
         assert p.decide("clipboard_set") == Decision.ASK
+        assert p.decide("app_open") == Decision.ASK
+        assert p.decide("app_deeplink") == Decision.ASK
+        assert p.decide("media_control") == Decision.ASK
+        assert p.decide("notifications_read") == Decision.ASK
+        assert p.decide("call_place") == Decision.ASK
+        assert p.decide("sms_compose") == Decision.ASK
 
     def test_defaults_allow_readonly(self):
         p = ToolPolicy()

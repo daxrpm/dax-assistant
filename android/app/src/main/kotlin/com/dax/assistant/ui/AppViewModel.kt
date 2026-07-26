@@ -7,10 +7,13 @@ import com.dax.assistant.assistant.AssistantController
 import com.dax.assistant.audio.SpeechRecognition
 import com.dax.assistant.core.network.BackendEndpointPolicy
 import com.dax.assistant.data.auth.BackendAuth
+import com.dax.assistant.data.auth.CapabilityNodeCredentialStore
 import com.dax.assistant.data.auth.CredentialStore
 import com.dax.assistant.data.auth.EnrolResult
 import com.dax.assistant.data.transport.ChatSocket
+import com.dax.assistant.data.transport.CapabilityNodeSocket
 import com.dax.assistant.ui.setup.PairingPayload
+import com.dax.assistant.ui.setup.PairingKind
 import com.dax.assistant.ui.setup.isValidPairingCode
 import com.dax.assistant.R
 import dagger.hilt.android.lifecycle.HiltViewModel
@@ -36,6 +39,8 @@ class AppViewModel @Inject constructor(
     private val credentials: CredentialStore,
     private val auth: BackendAuth,
     private val socket: ChatSocket,
+    private val capabilityCredentials: CapabilityNodeCredentialStore,
+    private val capabilitySocket: CapabilityNodeSocket,
     private val recognition: SpeechRecognition,
     @ApplicationContext private val context: Context,
 ) : ViewModel() {
@@ -62,6 +67,10 @@ class AppViewModel @Inject constructor(
         val payload = PairingPayload.parse(raw)
         if (payload == null) {
             _setup.update { it.copy(error = context.getString(R.string.setup_error_invalid_qr)) }
+            return
+        }
+        if (payload.kind != PairingKind.CLIENT) {
+            _setup.update { it.copy(error = context.getString(R.string.setup_error_node_qr)) }
             return
         }
         _setup.update {
@@ -108,7 +117,9 @@ class AppViewModel @Inject constructor(
 
     /** Forgets the device credential and every stored turn. */
     fun forgetEverything() {
+        capabilitySocket.disconnect()
         socket.disconnect()
+        capabilityCredentials.clear()
         credentials.clear()
         _setup.value = SetupUiState()
     }

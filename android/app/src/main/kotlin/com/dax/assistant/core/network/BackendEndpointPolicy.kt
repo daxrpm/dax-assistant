@@ -18,6 +18,15 @@ object BackendEndpointPolicy {
         return trimmed
     }
 
+    /** Capability credentials may cross a network only through TLS. */
+    fun allowsCapabilityNode(value: String): Boolean {
+        val normalized = normalize(value) ?: return false
+        val uri = runCatching { URI(normalized) }.getOrNull() ?: return false
+        if (uri.scheme.equals("https", ignoreCase = true)) return true
+        val host = uri.host?.removeSurrounding("[", "]")?.lowercase() ?: return false
+        return host == "localhost" || host == "127.0.0.1" || host == "::1"
+    }
+
     internal fun isPrivateHost(host: String): Boolean {
         if (host == "localhost") return true
         if (':' in host) {

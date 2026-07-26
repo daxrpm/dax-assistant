@@ -8,7 +8,7 @@ import { useI18n } from "../i18n/I18n";
 import s from "./PairedDevices.module.css";
 
 /**
- * Paired phones, and the code that pairs a new one.
+ * Paired clients and capability nodes, and the code that pairs a new one.
  *
  * This is deliberately on the deck rather than buried in settings. The phone is
  * a peer client, not a preference: when it attaches, that is a fact about the
@@ -131,8 +131,8 @@ export function PairedDevices() {
     <div className={s.wrap}>
       <p className={s.model}>
         {text(
-          "El servidor sigue siendo la autoridad. Este portátil solo aporta comandos y archivos locales mientras está conectado; desactivarlo no mueve chats, configuración ni almacenamiento.",
-          "The server remains authoritative. This laptop contributes local commands and files only while online; turning it off does not move chats, configuration, or storage.",
+          "El servidor sigue siendo la autoridad. Los nodos solo aportan capacidades del dispositivo mientras están conectados; desactivarlos no mueve chats, configuración ni almacenamiento.",
+          "The server remains authoritative. Nodes contribute device capabilities only while online; turning them off does not move chats, configuration, or storage.",
         )}
       </p>
 
@@ -141,9 +141,9 @@ export function PairedDevices() {
           <span className={s.codeLabel}>
             {pairingKind === "client"
               ? t("devices.enterOnPhone")
-              : text("Inscribir este portátil como nodo", "Enroll this laptop as a node")}
+              : text("Inscribir un dispositivo como nodo", "Enroll a device as a node")}
           </span>
-          {pairingKind === "client" && pairingUri && (
+          {pairingUri && (
             <div className={s.qr} aria-label={t("devices.scanQr")}>
               <QRCodeSVG
                 value={pairingUri}
@@ -155,12 +155,9 @@ export function PairedDevices() {
               />
             </div>
           )}
-          {pairingKind === "client" ? (
-            <>
-              <span className={s.or}>{t("devices.orCode")}</span>
-              <span className={s.code}>{code.split("").join(" ")}</span>
-            </>
-          ) : (
+          <span className={s.or}>{t("devices.orCode")}</span>
+          <span className={s.code}>{code.split("").join(" ")}</span>
+          {pairingKind === "capability_node" && (
             <div className={s.commandRow}>
               <code className={s.command}>{enrollmentCommand}</code>
               <button type="button" className={s.revoke} onClick={() => void copyCommand()}>
@@ -178,7 +175,7 @@ export function PairedDevices() {
             {busy ? t("devices.pairing") : t("devices.pair")}
           </button>
           <button type="button" className={s.pairButton} onClick={() => void pair("capability_node")} disabled={busy}>
-            {text("Añadir capacidad de este portátil", "Add this laptop's capability")}
+            {text("Añadir nodo de capacidad", "Add capability node")}
           </button>
         </div>
       )}

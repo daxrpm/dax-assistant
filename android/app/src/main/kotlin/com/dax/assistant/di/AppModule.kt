@@ -2,6 +2,9 @@ package com.dax.assistant.di
 
 import android.content.Context
 import com.dax.assistant.assistant.AssistantController
+import com.dax.assistant.capabilities.AndroidCapabilityExecutor
+import com.dax.assistant.capabilities.NotificationHistory
+import com.dax.assistant.capabilities.AppVisibility
 import com.dax.assistant.audio.AudioRouteManager
 import com.dax.assistant.audio.BackendSpeechClient
 import com.dax.assistant.audio.NativeAudioCapture
@@ -9,7 +12,10 @@ import com.dax.assistant.audio.RemoteVoiceClient
 import com.dax.assistant.audio.Speaker
 import com.dax.assistant.audio.SpeechRecognition
 import com.dax.assistant.data.auth.BackendAuth
+import com.dax.assistant.data.auth.CapabilityNodeAuth
+import com.dax.assistant.data.auth.CapabilityNodeCredentialStore
 import com.dax.assistant.data.auth.CredentialStore
+import com.dax.assistant.data.transport.CapabilityNodeSocket
 import com.dax.assistant.data.transport.ChatSocket
 import com.dax.assistant.diagnostics.CapabilityProbe
 import com.dax.assistant.preferences.AppPreferences
@@ -78,6 +84,12 @@ object AppModule {
 
     @Provides
     @Singleton
+    fun provideCapabilityNodeCredentialStore(
+        @ApplicationContext context: Context,
+    ): CapabilityNodeCredentialStore = CapabilityNodeCredentialStore(context)
+
+    @Provides
+    @Singleton
     fun provideAppPreferences(@ApplicationContext context: Context): AppPreferences =
         AppPreferences(context)
 
@@ -85,6 +97,45 @@ object AppModule {
     @Singleton
     fun provideBackendAuth(client: OkHttpClient, credentials: CredentialStore): BackendAuth =
         BackendAuth(client, credentials)
+
+    @Provides
+    @Singleton
+    fun provideCapabilityNodeAuth(
+        client: OkHttpClient,
+        clientCredentials: CredentialStore,
+        credentials: CapabilityNodeCredentialStore,
+    ): CapabilityNodeAuth = CapabilityNodeAuth(client, clientCredentials, credentials)
+
+    @Provides
+    @Singleton
+    fun provideNotificationHistory(@ApplicationContext context: Context): NotificationHistory =
+        NotificationHistory(context)
+
+    @Provides
+    @Singleton
+    fun provideAndroidCapabilityExecutor(
+        @ApplicationContext context: Context,
+        history: NotificationHistory,
+        visibility: AppVisibility,
+    ): AndroidCapabilityExecutor = AndroidCapabilityExecutor(context, history, visibility)
+
+    @Provides
+    @Singleton
+    fun provideCapabilityNodeSocket(
+        client: OkHttpClient,
+        clientCredentials: CredentialStore,
+        credentials: CapabilityNodeCredentialStore,
+        auth: CapabilityNodeAuth,
+        executor: AndroidCapabilityExecutor,
+        @AppScope scope: CoroutineScope,
+    ): CapabilityNodeSocket = CapabilityNodeSocket(
+        client,
+        clientCredentials,
+        credentials,
+        auth,
+        executor,
+        scope,
+    )
 
     @Provides
     @Singleton

@@ -4,7 +4,13 @@ import java.net.URI
 import java.net.URLDecoder
 import java.nio.charset.StandardCharsets
 
-data class PairingPayload(val backendUrl: String, val code: String) {
+enum class PairingKind { CLIENT, CAPABILITY_NODE }
+
+data class PairingPayload(
+    val backendUrl: String,
+    val code: String,
+    val kind: PairingKind = PairingKind.CLIENT,
+) {
     companion object {
         fun parse(raw: String): PairingPayload? = runCatching {
             val uri = URI(raw.trim())
@@ -17,7 +23,12 @@ data class PairingPayload(val backendUrl: String, val code: String) {
             }.toMap()
             val url = values["url"]?.trim().orEmpty()
             val code = values["code"]?.trim()?.uppercase().orEmpty()
-            if (url.isBlank() || code.isBlank()) null else PairingPayload(url, code)
+            val kind = when (values["kind"]) {
+                null, "client" -> PairingKind.CLIENT
+                "capability_node" -> PairingKind.CAPABILITY_NODE
+                else -> return null
+            }
+            if (url.isBlank() || code.isBlank()) null else PairingPayload(url, code, kind)
         }.getOrNull()
 
         private fun decode(value: String): String =

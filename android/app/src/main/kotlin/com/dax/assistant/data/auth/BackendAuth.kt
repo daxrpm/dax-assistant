@@ -1,6 +1,7 @@
 package com.dax.assistant.data.auth
 
 import com.dax.assistant.core.log.DaxLog
+import com.dax.assistant.core.network.BackendEndpointPolicy
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
@@ -29,6 +30,7 @@ private data class EnrolRequest(
     val code: String,
     val name: String,
     val platform: String = "android",
+    @SerialName("expected_kind") val expectedKind: String = "client",
 )
 
 @Serializable
@@ -36,6 +38,8 @@ private data class EnrolResponse(
     val ok: Boolean = false,
     @SerialName("device_id") val deviceId: String? = null,
     @SerialName("device_secret") val deviceSecret: String? = null,
+    @SerialName("instance_id") val instanceId: String? = null,
+    val kind: String? = null,
 )
 
 @Serializable
@@ -49,6 +53,13 @@ private data class TokenResponse(
     val ok: Boolean = false,
     val token: String? = null,
     @SerialName("expires_in_seconds") val expiresInSeconds: Int? = null,
+)
+
+@Serializable
+private data class BackendHealth(
+    @SerialName("instance_id") val instanceId: String,
+    val role: String,
+    @SerialName("api_protocol") val apiProtocol: String,
 )
 
 /**
@@ -92,10 +103,17 @@ class BackendAuth(
                     )
                 }
                 val result = json.decodeFromString<EnrolResponse>(payload)
-                if (!result.ok || result.deviceId.isNullOrBlank() || result.deviceSecret.isNullOrBlank()) {
+                if (!result.ok || result.kind != "client" || result.deviceId.isNullOrBlank() ||
+                    result.deviceSecret.isNullOrBlank() || result.instanceId.isNullOrBlank()
+                ) {
                     EnrolResult.Failed("Backend returned an incomplete enrolment")
                 } else {
-                    credentials.saveEnrolment(result.deviceId, result.deviceSecret)
+                    credentials.saveEnrolment(
+                        result.deviceId,
+                        result.deviceSecret,
+                        result.instanceId,
+                        base,
+                    )
                     EnrolResult.Success
                 }
             }
@@ -114,8 +132,6 @@ class BackendAuth(
      */
     suspend fun accessToken(): AuthResult = tokenMutex.withLock {
         withContext(Dispatchers.IO) {
-            credentials.validToken()?.let { return@withContext AuthResult.Success(it) }
-
             val deviceId = credentials.deviceId
             val secret = credentials.deviceSecret
             if (deviceId.isNullOrBlank() || secret.isNullOrBlank()) {
@@ -123,6 +139,9 @@ class BackendAuth(
             }
             val base = credentials.backendUrl
             if (base.isBlank()) return@withContext AuthResult.Failed("No backend URL configured")
+            val identityError = verifyIdentity(base)
+            if (identityError != null) return@withContext AuthResult.Failed(identityError)
+            credentials.validToken()?.let { return@withContext AuthResult.Success(it) }
 
             val body = json.encodeToString(TokenRequest(deviceId, secret)).toRequestBody(jsonMedia)
 
@@ -150,6 +169,33 @@ class BackendAuth(
                 AuthResult.Failed(error.message ?: "Could not reach the backend")
             }
         }
+    }
+
+    private fun verifyIdentity(base: String): String? {
+        val normalized = BackendEndpointPolicy.normalize(base)
+            ?: return "Backend URL is invalid"
+        val storedOrigin = credentials.enrollmentOrigin
+        if (storedOrigin != null && normalized != storedOrigin) return "Backend origin changed; pair again"
+        return runCatching {
+            client.newCall(Request.Builder().url("$base/api/health").get().build())
+                .execute().use { response ->
+                    if (!response.isSuccessful) return@use "Could not verify backend identity"
+                    val health = json.decodeFromString<BackendHealth>(response.body?.string().orEmpty())
+                    val storedInstance = credentials.instanceId
+                    if (health.role != "authoritative" ||
+                        health.apiProtocol != "dax"
+                    ) {
+                        "Backend identity changed; pair again"
+                    } else if (storedInstance != null && health.instanceId != storedInstance) {
+                        "Backend identity changed; pair again"
+                    } else {
+                        if (storedOrigin == null || storedInstance == null) {
+                            credentials.bindAuthority(health.instanceId, normalized)
+                        }
+                        null
+                    }
+                }
+        }.getOrElse { "Could not verify backend identity" }
     }
 
     private companion object {

@@ -4,6 +4,7 @@
 
     <string name="notification_channel_name">Assistant status</string>
     <string name="notification_channel_description">Shows whether Dax is listening, thinking, or speaking.</string>
+    <string name="notification_action_channel_name">Phone actions awaiting confirmation</string>
 
     <string name="status_ready">Ready</string>
     <string name="status_connecting_audio">Opening the microphone…</string>
@@ -33,6 +34,7 @@
     <string name="setup_step_backend">Choose where Dax runs</string>
     <string name="setup_step_pair">Enter the one-time code</string>
     <string name="setup_error_invalid_qr">This is not a valid Dax pairing QR.</string>
+    <string name="setup_error_node_qr">This is a capability-node QR. Pair this phone as a client first, then scan it from Settings → Local node.</string>
     <string name="setup_error_backend_required">Enter the backend address first.</string>
     <string name="setup_error_backend_invalid">Use HTTPS, or a private-network address without a path.</string>
     <string name="setup_error_code_invalid">Enter the complete 8-character pairing code.</string>
@@ -87,6 +89,31 @@
     <string name="settings_nodes_using">%1$s is up and would serve this phone.</string>
     <string name="settings_nodes_tools_only">A laptop is up, lending tools only.</string>
     <string name="settings_nodes_off">Nodes refused</string>
+    <string name="settings_phone_node">This phone as a capability node</string>
+    <string name="settings_phone_node_help">Creates a second, independently revocable identity that lends approved phone actions only while Dax is connected. Durable background presence requires the foreground assistant service and its microphone permission.</string>
+    <string name="settings_phone_node_code">Capability-node pairing code</string>
+    <string name="settings_phone_node_scan">Scan node QR</string>
+    <string name="settings_phone_node_enrol">Enrol this phone as a node</string>
+    <string name="settings_phone_node_enrolling">Enrolling…</string>
+    <string name="settings_phone_node_connected">Connected · generation %1$d</string>
+    <string name="settings_phone_node_connecting">Connecting capability node…</string>
+    <string name="settings_phone_node_retry">Offline · retrying in %1$d s</string>
+    <string name="settings_phone_node_revoked">Revoked by the backend</string>
+    <string name="settings_phone_node_disabled">Capability lending is off</string>
+    <string name="settings_phone_node_disconnected">Capability node is disconnected</string>
+    <string name="settings_phone_node_forget">Forget node credentials locally</string>
+    <string name="settings_phone_node_forget_help">This does not delete the server entry. Revoke or delete it from Desktop or Web to cut off the remote credential.</string>
+    <string name="settings_phone_node_invalid_qr">Scan a capability-node QR, not a client pairing QR.</string>
+    <string name="settings_phone_node_wrong_backend">This node code belongs to a different backend.</string>
+    <string name="settings_phone_node_https">Capability nodes require an HTTPS backend. HTTP is accepted only on loopback.</string>
+    <string name="settings_notification_access">Notification and media access</string>
+    <string name="settings_notification_access_help">Android calls this Notification access. It lets Dax read every notification on this phone and inspect active media sessions. Dax keeps at most 200 entries for 24 hours in encrypted local storage and sends them only after an approved request.</string>
+    <string name="settings_notification_access_open">Review notification access</string>
+    <string name="settings_notification_access_manage">Granted · manage access</string>
+    <string name="settings_call_permission">Place calls directly</string>
+    <string name="settings_call_permission_help">Allows approved non-emergency calls without tapping the dialer. Dialer preview remains available without this permission.</string>
+    <string name="settings_call_permission_allow">Allow direct calls</string>
+    <string name="settings_call_permission_manage">Granted · manage in app settings</string>
     <string name="chat_reasoning">Reasoning</string>
     <string name="chat_step_done">done</string>
     <string name="chat_step_failed">failed</string>

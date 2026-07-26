@@ -30,6 +30,7 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -92,10 +93,14 @@ fun MainNavigation(
     onForgetEverything: () -> Unit,
     onDeviceRecognition: Boolean,
     inputLevel: kotlinx.coroutines.flow.StateFlow<Float>,
+    nodePairingDeepLink: String?,
 ) {
     val navController = rememberNavController()
     val route = navController.currentBackStackEntryAsState().value?.destination?.route
     var conversationDetailVisible by remember { mutableStateOf(false) }
+    LaunchedEffect(nodePairingDeepLink) {
+        if (nodePairingDeepLink != null) navController.navigate(MainDestination.SettingsPage.route)
+    }
     BoxWithConstraints(Modifier.fillMaxSize()) {
         if (maxWidth >= 720.dp) {
             Row(
@@ -109,6 +114,7 @@ fun MainNavigation(
                     navController, assistantState, history, diagnosticsState, diagnostics,
                     onTrigger, onCancel, onApprove, microphonePermission, onRequestPermissions,
                     onForgetEverything, onDeviceRecognition, inputLevel,
+                    nodePairingDeepLink,
                     onConversationDetailChanged = { conversationDetailVisible = it },
                     Modifier.weight(1f).padding(start = Orbita.spacing.x3),
                 )
@@ -125,6 +131,7 @@ fun MainNavigation(
                     navController, assistantState, history, diagnosticsState, diagnostics,
                     onTrigger, onCancel, onApprove, microphonePermission, onRequestPermissions,
                     onForgetEverything, onDeviceRecognition, inputLevel,
+                    nodePairingDeepLink,
                     onConversationDetailChanged = { conversationDetailVisible = it },
                     Modifier.fillMaxSize().padding(contentPadding),
                 )
@@ -148,6 +155,7 @@ private fun MainGraph(
     onForgetEverything: () -> Unit,
     onDeviceRecognition: Boolean,
     inputLevel: kotlinx.coroutines.flow.StateFlow<Float>,
+    nodePairingDeepLink: String?,
     onConversationDetailChanged: (Boolean) -> Unit,
     modifier: Modifier,
 ) {
@@ -167,6 +175,9 @@ private fun MainGraph(
         composable(MainDestination.SettingsPage.route) {
             val viewModel: SettingsViewModel = hiltViewModel()
             val state by viewModel.state.collectAsStateWithLifecycle()
+            LaunchedEffect(nodePairingDeepLink) {
+                nodePairingDeepLink?.let(viewModel::applyNodePairingPayload)
+            }
             SettingsScreen(
                 state = state,
                 onLoad = viewModel::load,
@@ -179,6 +190,12 @@ private fun MainGraph(
                 onFollowUpChange = viewModel::setFollowUpEnabled,
                 onSpeakChatChange = viewModel::setSpeakChatReplies,
                 onThemeChange = viewModel::setTheme,
+                onNodeCodeChange = viewModel::setNodePairingCode,
+                onNodeQr = viewModel::applyNodePairingPayload,
+                onEnrolNode = viewModel::enrolPhoneNode,
+                onNodeEnabledChange = viewModel::setPhoneNodeEnabled,
+                onForgetNode = viewModel::forgetPhoneNode,
+                onNodePermissionsChanged = viewModel::refreshPhoneNodePermissions,
                 onOpenDiagnostics = { navController.navigate(DIAGNOSTICS_ROUTE) },
             )
         }
