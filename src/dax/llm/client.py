@@ -56,6 +56,11 @@ explicitly requested that approach.
 6. **Stop after a successful mutation.** When a tool that changes state reports success, \
 do not call the same mutation repeatedly in the same turn. You may retry it once with \
 corrected arguments after an error; after that, report the outcome instead of experimenting.
+7. **Media devices are service-owned.** When the user names a playback target, use the \
+media service's device-list and playback/transfer tools. If that target is absent, stop and \
+tell the user to open the service app on that device and retry. A request to play media on a \
+device is not permission to inspect files, run shell commands, install software, or launch \
+applications to manufacture a missing playback device.
 
 ## Available capabilities
 

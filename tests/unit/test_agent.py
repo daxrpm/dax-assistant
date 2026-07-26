@@ -14,7 +14,7 @@ from dax.core.models import (
     ToolCall,
     ToolResult,
 )
-from dax.orchestrator.agent import MAX_TOOL_ITERATIONS, Agent
+from dax.orchestrator.agent import MAX_TOOL_ITERATIONS, Agent, _tool_budget_fallback
 from dax.orchestrator.bus import MessageBus
 
 
@@ -113,6 +113,16 @@ class _MockStorage:
 
     async def get_recent_conversations(self, channel: str, limit: int = 5) -> list[object]:
         return []
+
+
+def test_tool_budget_fallback_detects_spanish_media_request() -> None:
+    message = Message(
+        content="ponme echoes en spotify en la laptop",
+        channel=ChannelType.WEB,
+        language=Language.AUTO,
+    )
+
+    assert _tool_budget_fallback(message, []).startswith("No pude completar")
 
 
 class TestAgentSimpleResponse:

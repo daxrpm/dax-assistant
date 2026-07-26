@@ -2,12 +2,14 @@
 
 from __future__ import annotations
 
+import subprocess
 from typing import TYPE_CHECKING
 
 import pytest
 
 from dax.mcp_servers.system.server import (
     _command_environment,
+    _completed_command_output,
     build_server,
     configured_shell_allowlist,
     safe_path,
@@ -83,6 +85,21 @@ class TestValidateCommand:
             "custom-approved-tool",
             "--version",
         ]
+
+
+class TestCommandResult:
+    def test_nonzero_exit_is_a_tool_error(self):
+        proc = subprocess.CompletedProcess(
+            ["flatpak"], 1, stdout="", stderr="bwrap: Operation not permitted"
+        )
+
+        with pytest.raises(RuntimeError, match="bwrap: Operation not permitted"):
+            _completed_command_output(proc)
+
+    def test_zero_exit_returns_output(self):
+        proc = subprocess.CompletedProcess(["which"], 0, stdout="/usr/bin/which\n", stderr="")
+
+        assert _completed_command_output(proc) == "/usr/bin/which\n\n[exit 0]"
 
 
 def test_build_server_registers_tools():

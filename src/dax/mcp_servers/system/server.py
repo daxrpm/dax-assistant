@@ -111,6 +111,15 @@ def _truncate(text: str) -> str:
     return text
 
 
+def _completed_command_output(proc: subprocess.CompletedProcess[str]) -> str:
+    """Format command output and expose a non-zero exit as an MCP error."""
+    out = proc.stdout + (f"\n[stderr]\n{proc.stderr}" if proc.stderr else "")
+    result = _truncate(out) + f"\n[exit {proc.returncode}]"
+    if proc.returncode != 0:
+        raise RuntimeError(result)
+    return result
+
+
 def build_server() -> FastMCP:
     """Construct the FastMCP server with all dax-system tools registered."""
     mcp = FastMCP("dax-system")
@@ -204,9 +213,10 @@ def build_server() -> FastMCP:
                 env=_command_environment(),
             )
         except subprocess.TimeoutExpired:
-            return f"Error: command timed out after {_SHELL_TIMEOUT}s"
-        out = proc.stdout + (f"\n[stderr]\n{proc.stderr}" if proc.stderr else "")
-        return _truncate(out) + f"\n[exit {proc.returncode}]"
+            raise RuntimeError(
+                f"Command timed out after {_SHELL_TIMEOUT}s"
+            ) from None
+        return _completed_command_output(proc)
 
     @mcp.tool()
     def open_path(path: str) -> str:

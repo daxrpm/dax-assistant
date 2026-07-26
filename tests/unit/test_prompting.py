@@ -18,6 +18,11 @@ def test_build_without_tools_returns_base_prompt() -> None:
     assert prompt == SYSTEM_PROMPT
 
 
+def test_base_prompt_stops_when_a_named_media_device_is_missing() -> None:
+    assert "Media devices are service-owned" in SYSTEM_PROMPT
+    assert "not permission to inspect files, run shell commands" in SYSTEM_PROMPT
+
+
 def test_build_lists_tool_inventory_grouped_by_server() -> None:
     builder = SystemPromptBuilder(memory_path=None)
     tools = [
