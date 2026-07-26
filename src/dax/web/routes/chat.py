@@ -7,6 +7,7 @@ is handled by the Dispatcher → WebChannel → WebSocketManager path.
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import logging
 import threading
 from typing import Any
@@ -269,6 +270,22 @@ def _device_for(auth: Any, websocket: WebSocket) -> str | None:
     return None
 
 
+async def _reject(websocket: WebSocket) -> None:
+    """Refuse a socket with a close code the client can actually read.
+
+    Closing before accepting makes the ASGI server answer the handshake with
+    HTTP 403, and a browser reports that to the page as code 1006 — an abnormal
+    closure, indistinguishable from a dropped network. Clients therefore treat
+    an expired session as a transient fault and reconnect forever instead of
+    asking the user to sign in again. Accepting first costs one frame and makes
+    1008 arrive as 1008.
+    """
+    with contextlib.suppress(Exception):
+        await websocket.accept()
+    with contextlib.suppress(Exception):
+        await websocket.close(code=1008)  # policy violation
+
+
 @router.websocket("/chat")
 async def websocket_chat(websocket: WebSocket) -> None:
     """WebSocket endpoint for real-time chat with Dax.
@@ -282,7 +299,7 @@ async def websocket_chat(websocket: WebSocket) -> None:
     """
     auth = auth_from_app(websocket.app)
     if auth is None or not auth.authenticate_websocket(websocket):
-        await websocket.close(code=1008)  # policy violation
+        await _reject(websocket)
         logger.warning("Rejected unauthenticated WebSocket connection")
         return
 

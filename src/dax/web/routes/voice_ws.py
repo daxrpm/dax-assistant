@@ -13,6 +13,7 @@ blocking the audio thread. A dropped level frame is invisible in a waveform.
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import json
 import logging
 import uuid
@@ -138,7 +139,12 @@ async def websocket_voice(websocket: WebSocket) -> None:
     """Stream events and accept one bounded remote PTT stream at a time."""
     auth = auth_from_app(websocket.app)
     if auth is None or not auth.authenticate_websocket(websocket):
-        await websocket.close(code=1008)  # policy violation
+        # Accept first: a pre-accept close reaches the client as 1006, which it
+        # reads as a dropped network and retries forever. See routes/chat.py.
+        with contextlib.suppress(Exception):
+            await websocket.accept()
+        with contextlib.suppress(Exception):
+            await websocket.close(code=1008)  # policy violation
         logger.warning("Rejected unauthenticated voice WebSocket connection")
         return
 
