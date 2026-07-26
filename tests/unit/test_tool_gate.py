@@ -40,7 +40,7 @@ async def test_capability_node_shell_never_auto_runs() -> None:
     approval = _Approval("once")
     gate = ToolGate(
         provider,  # type: ignore[arg-type]
-        policy=ToolPolicy(ask=[]),
+        policy=ToolPolicy(ask=[tool_name]),
         approval=approval,  # type: ignore[arg-type]
     )
 
@@ -113,7 +113,7 @@ async def test_a_remembered_node_command_stops_asking_but_stays_approved() -> No
 
     gate = ToolGate(
         provider,  # type: ignore[arg-type]
-        policy=ToolPolicy(ask=[]),
+        policy=ToolPolicy(ask=[tool_name]),
         approval=approval,  # type: ignore[arg-type]
         nodes=nodes,
         save_config=persist,
@@ -156,3 +156,64 @@ async def test_remembering_a_node_command_does_not_grant_it_on_the_backend() -> 
 
     assert nodes.node_allows_command("node", "flatpak") is True
     assert backend_allow.allows_command("flatpak run x") is False
+
+
+@pytest.mark.asyncio
+async def test_a_remembered_node_app_stops_asking_only_for_that_app() -> None:
+    from dax.core.config import NodesConfig
+
+    tool_name = canonical_name("node", "app_open")
+    provider = _Provider(tool_name)
+    approval = _Approval("save")
+    nodes = NodesConfig()
+    saved: list[bool] = []
+
+    async def persist() -> None:
+        saved.append(True)
+
+    gate = ToolGate(
+        provider,  # type: ignore[arg-type]
+        policy=ToolPolicy(ask=[tool_name]),
+        approval=approval,  # type: ignore[arg-type]
+        nodes=nodes,
+        save_config=persist,
+    )
+    spotify = ToolCall(
+        "spotify", "capability-node:node", tool_name, {"app": " Spotify "}
+    )
+
+    await gate.execute(spotify)
+    await gate.execute(spotify)
+    await gate.execute(
+        ToolCall("code", "capability-node:node", tool_name, {"app": "Code"})
+    )
+
+    assert nodes.node_allows_app("node", "spotify") is True
+    assert nodes.node_allows_app("node", "code") is True
+    assert saved == [True, True]
+    assert len(approval.requests) == 2
+    assert approval.requests[0]["options"] == ["once", "save"]
+    assert [call.human_approved for call in provider.executed] == [True, True, True]
+
+
+@pytest.mark.asyncio
+async def test_node_app_denial_overrides_a_remembered_app() -> None:
+    from dax.core.config import NodesConfig
+
+    tool_name = canonical_name("node", "app_open")
+    provider = _Provider(tool_name)
+    nodes = NodesConfig()
+    nodes.remember_node_app("node", "spotify")
+    gate = ToolGate(
+        provider,  # type: ignore[arg-type]
+        policy=ToolPolicy(ask=[], deny=[tool_name]),
+        approval=_Approval("save"),  # type: ignore[arg-type]
+        nodes=nodes,
+    )
+
+    result = await gate.execute(
+        ToolCall("call", "capability-node:node", tool_name, {"app": "Spotify"})
+    )
+
+    assert result.is_error is True
+    assert provider.executed == []

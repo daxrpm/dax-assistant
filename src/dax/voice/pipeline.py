@@ -31,9 +31,10 @@ import time
 import uuid
 from collections import deque
 from concurrent.futures import CancelledError as FutureCancelledError
+from concurrent.futures import Future
 from enum import StrEnum
 from pathlib import Path
-from typing import TYPE_CHECKING, Literal
+from typing import TYPE_CHECKING, Any, Literal
 
 import numpy as np
 
@@ -51,7 +52,7 @@ from dax.voice.vad import VAD_CHUNK_SIZE, VoiceActivityDetector
 from dax.voice.wakeword import WakeWordDetector
 
 if TYPE_CHECKING:
-    from collections.abc import Callable
+    from collections.abc import Callable, Coroutine
 
     from dax.channels.voice_channel import VoiceChannel
     from dax.core.config import VoiceConfig
@@ -310,6 +311,9 @@ class VoicePipeline:
         self._remote_wake_owner: str | None = None
         self._wake_holder: str | None = None
         self._remote_wake_end: Callable[[str], None] | None = None
+        self._remote_wake_speaker: (
+            Callable[[str, str, str], Coroutine[Any, Any, None]] | None
+        ) = None
         self._wake_lock = threading.Lock()
 
     # -- Properties --
@@ -520,6 +524,13 @@ class VoicePipeline:
         by either holding the other.
         """
         self._remote_wake_end = callback
+
+    def set_remote_wake_speaker(
+        self,
+        callback: Callable[[str, str, str], Coroutine[Any, Any, None]] | None,
+    ) -> None:
+        """Register acknowledged playback for capability-node wake replies."""
+        self._remote_wake_speaker = callback
 
     def request_remote_wake(self, owner: str) -> None:
         """Open a turn for a node that won the wake and is now streaming.
@@ -1080,12 +1091,19 @@ class VoicePipeline:
         sentences = _split_sentences(_clean_for_speech(text))
 
         if self._output_owner is not None:
-            # A remote client owns output. Publish the sentences it should
-            # speak and do no local work: no synthesis, no playback, and no
-            # mic muting, because the microphone in question is not ours.
-            # Barge-in is the client's to detect for the same reason.
+            with self._wake_lock:
+                wake_owner = self._wake_holder
+            speaker = self._remote_wake_speaker
             for sentence in sentences:
                 self._events.emit_speech(sentence, tts_lang)
+                if wake_owner == self._output_owner and speaker is not None:
+                    future: Future[None] = asyncio.run_coroutine_threadsafe(
+                        speaker(wake_owner, sentence, tts_lang), self._loop
+                    )
+                    try:
+                        future.result(timeout=70)
+                    except Exception as exc:
+                        raise TTSError("Capability node playback failed") from exc
             return False
 
         if not self._barge_in:

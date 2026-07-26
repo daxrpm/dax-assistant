@@ -11,7 +11,7 @@ import json
 import logging
 import uuid
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Literal
 
 from pydantic import TypeAdapter, ValidationError
 
@@ -64,6 +64,7 @@ _MAX_CONCURRENT_CALLS = 4
 # 16 s of 80 ms capture frames — the pre-roll burst plus a long sentence behind
 # a consumer that is still starting up.
 _WAKE_QUEUE_FRAMES = 200
+_LOCAL_TTS_ENGINES: tuple[Literal["kokoro", "piper"], ...] = ("kokoro", "piper")
 
 
 class CapabilityTTSTransportError(RuntimeError):
@@ -195,6 +196,8 @@ class _Connection:
         language: str,
         engine: str,
         config: dict[str, object],
+        *,
+        playback: bool = False,
     ) -> CapabilitySynthesis:
         if not self.hub.is_current(self) or not self.hub.devices.is_active(self.node_id):
             raise CapabilityTTSTransportError("Capability node is disconnected or revoked")
@@ -213,6 +216,7 @@ class _Connection:
                     "language": language,
                     "engine": engine,
                     "config": config,
+                    "playback": playback,
                 }
             )
             return await asyncio.wait_for(future, timeout=_CALL_TIMEOUT)
@@ -267,9 +271,14 @@ class CapabilityHub:
 
     def set_pipeline(self, pipeline: VoicePipeline | None) -> None:
         """Attach the voice pipeline nodes arbitrate and stream against."""
+        previous = self._pipeline
+        if previous is not None and previous is not pipeline:
+            previous.set_remote_wake_end_callback(None)
+            previous.set_remote_wake_speaker(None)
         self._pipeline = pipeline
         if pipeline is not None:
             pipeline.set_remote_wake_end_callback(self._on_remote_wake_end)
+            pipeline.set_remote_wake_speaker(self._speak_on_wake_node)
 
     async def send_policy(self, node_id: str) -> None:
         """Push *node_id*'s current policy to it, if it is connected.
@@ -613,20 +622,21 @@ class CapabilityHub:
         return True
 
     def _end_wake_lease(self, connection: _Connection, lease_id: str | None) -> None:
-        """Stop accepting audio for this turn and hand the microphone back."""
+        """Stop capture now, but retain output ownership until the reply ends."""
         lease = connection.wake
         if lease is None or (lease_id is not None and lease.lease_id != lease_id):
             return
         lease.ended = True
-        connection.wake = None
         lease.source.stop()
         pipeline = self._pipeline
         if pipeline is None:
+            connection.wake = None
             return
-        # The pipeline releases the arbiter itself when it returns to IDLE; the
-        # lease only has to give back the audio source and the remote owner.
         with contextlib.suppress(Exception):
             pipeline.select_audio_source(None)
+        if str(pipeline.state) != "idle":
+            return
+        connection.wake = None
         with contextlib.suppress(Exception):
             pipeline.release_remote_owner(connection.node_id)
 
@@ -654,6 +664,40 @@ class CapabilityHub:
 
         with contextlib.suppress(RuntimeError):
             asyncio.run_coroutine_threadsafe(_stop(), loop)
+
+    async def _speak_on_wake_node(
+        self, node_id: str, text: str, language: str
+    ) -> None:
+        """Synthesize and play a wake reply on its exact originating node."""
+        connection = self._connections.get(node_id)
+        if (
+            connection is None
+            or not self.is_current(connection)
+            or not self.devices.is_active(node_id)
+            or not connection.tts_engines
+            or self._voice_config is None
+        ):
+            raise CapabilityTTSTransportError("Wake node cannot play speech")
+        preferred = self._voice_config.tts_engine
+        engine: Literal["kokoro", "piper"] | None = None
+        if preferred == "kokoro" and preferred in connection.tts_engines:
+            engine = "kokoro"
+        elif preferred == "piper" and preferred in connection.tts_engines:
+            engine = "piper"
+        else:
+            for candidate in _LOCAL_TTS_ENGINES:
+                if candidate in connection.tts_engines:
+                    engine = candidate
+                    break
+        if engine is None:
+            raise CapabilityTTSTransportError("Wake node has no local TTS engine")
+        await connection.synthesize(
+            text,
+            language,
+            engine,
+            _tts_config(self._voice_config, engine),
+            playback=True,
+        )
 
     def _accept_tts_chunk(
         self, connection: _Connection, frame: SynthesizeChunkFrame

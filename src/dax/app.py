@@ -400,6 +400,8 @@ class DaxApp:
 
         old_tts_service = self._tts_service
 
+        if self._capability_hub is not None:
+            self._capability_hub.set_pipeline(None)
         if self._voice_pipeline is not None:
             await asyncio.to_thread(self._voice_pipeline.stop)
             self._voice_pipeline = None
@@ -441,10 +443,14 @@ class DaxApp:
             self._channels.pop("voice", None)
             await voice_channel.stop()
             self._voice_pipeline = None
+            if self._capability_hub is not None:
+                self._capability_hub.set_pipeline(None)
             raise
 
         self._web_app.state.voice_pipeline = self._voice_pipeline
         self._web_app.state.voice_listening = True
+        if self._capability_hub is not None:
+            self._capability_hub.set_pipeline(self._voice_pipeline)
         logger.info(
             "Voice pipeline reloaded (stt_backend=%s)",
             self._config.voice.stt_backend,

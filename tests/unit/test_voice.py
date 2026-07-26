@@ -236,6 +236,41 @@ class TestPipelineEnabled:
         ]
         pipeline._tts.synthesize.assert_not_called()
 
+    def test_wake_node_speaks_each_sentence_on_its_origin(self):
+        pipeline = self._make_pipeline()
+        pipeline._events = MagicMock()
+        pipeline._output_owner = "node"
+        pipeline._wake_holder = "node"
+        spoken: list[tuple[str, str, str]] = []
+
+        async def speak(owner: str, text: str, language: str) -> None:
+            spoken.append((owner, text, language))
+
+        pipeline.set_remote_wake_speaker(speak)
+        pipeline._loop = asyncio.new_event_loop()
+        thread = threading.Thread(target=pipeline._loop.run_forever)
+        thread.start()
+        try:
+            pipeline._speak(
+                "Esta primera frase tiene suficiente longitud para mantenerse sola. "
+                "Segunda frase.",
+                "es",
+            )
+        finally:
+            pipeline._loop.call_soon_threadsafe(pipeline._loop.stop)
+            thread.join(timeout=1)
+            pipeline._loop.close()
+
+        assert spoken == [
+            (
+                "node",
+                "Esta primera frase tiene suficiente longitud para mantenerse sola.",
+                "es",
+            ),
+            ("node", "Segunda frase.", "es"),
+        ]
+        pipeline._tts.synthesize.assert_not_called()
+
     def test_remote_output_never_samples_host_microphone_while_idle(self):
         pipeline = self._make_pipeline()
         pipeline._output_owner = "mobile"

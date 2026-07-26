@@ -16,6 +16,7 @@ from dax.edge.daemon import (
     LocalTTSExecutor,
     SystemExecutor,
     WebSocketConnection,
+    available_local_tts_engines,
     backoff_delay,
 )
 from dax.edge.protocol import ExecuteRequest, SynthesizeRequest
@@ -29,6 +30,25 @@ def test_backoff_is_exponential_jittered_and_capped(
     attempt: int, random_value: float, expected: float
 ) -> None:
     assert backoff_delay(attempt, random_value=random_value) == expected
+
+
+def test_tts_features_require_local_models(
+    tmp_path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(daemon_module.importlib.util, "find_spec", lambda _name: object())
+    assert available_local_tts_engines(str(tmp_path)) == []
+
+    piper = tmp_path / "piper"
+    piper.mkdir()
+    (piper / "es.onnx").write_bytes(b"model")
+    (piper / "es.onnx.json").write_text("{}", encoding="utf-8")
+    assert available_local_tts_engines(str(tmp_path)) == ["piper"]
+
+    kokoro = tmp_path / "kokoro"
+    kokoro.mkdir()
+    (kokoro / "kokoro-v1.0.onnx").write_bytes(b"model")
+    (kokoro / "voices-v1.0.bin").write_bytes(b"voices")
+    assert available_local_tts_engines(str(tmp_path)) == ["kokoro", "piper"]
 
 
 class _FakeExecutor:
@@ -422,3 +442,49 @@ async def test_daemon_uses_dedicated_tts_chunks_and_sanitizes_failures() -> None
     failure = json.loads(connection.sent[-1])
     assert failure["error"] == "Local TTS synthesis failed"
     assert "secret" not in json.dumps(failure)
+
+
+@pytest.mark.asyncio
+async def test_wake_synthesis_plays_before_acknowledging_success() -> None:
+    order: list[str] = []
+
+    class TTS:
+        def __init__(self) -> None:
+            self.engines = ["piper"]
+
+        async def synthesize(self, _request: SynthesizeRequest):
+            order.append("synthesize")
+            return b"\x00\x00\x01\x00", 22_050, "piper", "voice", "fingerprint"
+
+        async def stop(self) -> None:
+            pass
+
+    class Player:
+        def play(self, audio: np.ndarray, sample_rate: int) -> None:
+            assert audio.dtype == np.dtype("<i2")
+            assert sample_rate == 22_050
+            order.append("play")
+
+    daemon = EdgeDaemon(
+        NodeCredentials("https://dax.example", "device", "secret", "laptop"),
+        executor=_FakeExecutor(),  # type: ignore[arg-type]
+        tts_executor=TTS(),  # type: ignore[arg-type]
+        audio_player=Player(),  # type: ignore[arg-type]
+    )
+    connection = _FakeConnection()
+    request = SynthesizeRequest(
+        "tts",
+        3,
+        "respuesta",
+        "es",
+        "piper",
+        {"piper_voice_es": "es", "piper_voice_en": "en"},
+        playback=True,
+    )
+
+    await daemon._synthesize_and_send(connection, request)
+
+    order.append("ack")
+    final = json.loads(connection.sent[-1])
+    assert order == ["synthesize", "play", "ack"]
+    assert final["success"] is True

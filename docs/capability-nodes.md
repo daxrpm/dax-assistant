@@ -127,8 +127,8 @@ connection; no inbound laptop port is required.
 
 The server accepts only the bundled, server-owned inventory and schemas:
 `system_info`, `fs_list`, `fs_read`, `fs_search`, `clipboard_get`, `notify`,
-`fs_write`, `shell_run`, `open_path`, and `clipboard_set`. Tools are registered
-ephemerally as `node_<stable-id-hash>__<tool>`, for example
+`fs_write`, `shell_run`, `open_path`, `app_open`, and `clipboard_set`. Tools are
+registered ephemerally as `node_<stable-id-hash>__<tool>`, for example
 `node_0123456789abcdef__fs_read`. The opaque prefix prevents collisions and is
 not a friendly node name.
 
@@ -147,6 +147,13 @@ every command argument. Commands are parsed into argv, reject metacharacters,
 use a system PATH, and execute directly. This is not SSH, an interactive shell,
 or a pipeline.
 
+`app_open` resolves a visible desktop entry on the node and launches it through
+the graphical user systemd manager, outside the hardened node service cgroup.
+The approval dialog offers one-time access or a remembered application selector.
+Remembered selectors are normalized, scoped to the exact node, stored by the
+authoritative backend, and revocable from the capability-node settings. Deny
+rules, node revocation, and tool-disable policy still take precedence.
+
 ## Local TTS
 
 Android still calls the authoritative backend's `POST /api/voice/synthesize`.
@@ -154,6 +161,12 @@ When fleet preference and the node's `voice` policy allow it, the backend sends
 a bounded synthesis request to a connected node. The node uses local Kokoro or
 Piper only, returns chunked PCM16 with a byte count and SHA-256, and the backend
 validates it before returning WAV audio. OpenAI keys are never sent to a node.
+
+A laptop that wins wake-word arbitration is also the output owner for that turn.
+The backend sends each reply sentence to that exact node with `playback` enabled;
+the node synthesizes with a locally ready engine, plays through its user-session
+audio device, and acknowledges only after playback completes. It never falls
+through to another node or plays the response on an unattended backend host.
 
 `voice=auto` offloads configured Kokoro/Piper and keeps OpenAI on the backend.
 `voice=local` requires node-local Kokoro/Piper and fails rather than silently

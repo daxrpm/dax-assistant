@@ -150,16 +150,16 @@ class TestApplicationLaunch:
         monkeypatch.setattr("dax.mcp_servers.system.server.subprocess.run", run)
 
         assert _launch_application("Spotify", [tmp_path]) == (
-            "Opened Spotify (com.spotify.Client)"
+            "Started Spotify (com.spotify.Client)"
         )
         assert seen == [
             [
                 "/usr/bin/systemd-run",
                 "--user",
                 "--collect",
-                "--wait",
                 "--quiet",
                 "--property=Type=exec",
+                "--property=ExitType=cgroup",
                 "/usr/bin/gtk-launch",
                 "com.spotify.Client",
             ]

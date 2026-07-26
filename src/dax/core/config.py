@@ -7,6 +7,7 @@ Pydantic Settings handles the merge automatically.
 from __future__ import annotations
 
 import os
+import unicodedata
 from typing import TYPE_CHECKING, Any, Literal
 
 from pydantic import BaseModel, Field
@@ -406,6 +407,9 @@ class NodePolicyConfig(BaseModel):
     # host: saving a laptop's command there would silently grant it on the
     # server too, which is a different machine with different contents.
     shell_allow: list[str] = Field(default_factory=list)
+    # Application selectors explicitly approved for this node. They are scoped
+    # to the node because labels and installed software differ between devices.
+    app_open_allow: list[str] = Field(default_factory=list, max_length=64)
     # Whether this laptop listens for the wake word on its own microphone. On
     # by default because a laptop is usually the machine in the room with the
     # user, and a backend in a cupboard cannot hear them at all. Turn it off
@@ -444,6 +448,27 @@ class NodesConfig(BaseModel):
         policy = self.policies.setdefault(node_id, NodePolicyConfig())
         if binary not in policy.shell_allow:
             policy.shell_allow = [*policy.shell_allow, binary]
+
+    @staticmethod
+    def normalize_app_selector(app: str) -> str:
+        """Return the conservative equality key used for remembered apps."""
+        return unicodedata.normalize("NFKC", app.strip()).casefold()
+
+    def node_allows_app(self, node_id: str, app: str) -> bool:
+        """Whether this exact app selector was approved for this node."""
+        selector = self.normalize_app_selector(app)
+        if not self.enabled or not selector:
+            return False
+        return selector in self.policy_for(node_id).app_open_allow
+
+    def remember_node_app(self, node_id: str, app: str) -> None:
+        """Persist a user's remembered application approval for one node."""
+        selector = self.normalize_app_selector(app)
+        if not selector:
+            return
+        policy = self.policies.setdefault(node_id, NodePolicyConfig())
+        if selector not in policy.app_open_allow:
+            policy.app_open_allow = [*policy.app_open_allow, selector][-64:]
 
     def listens_for_wake_word(self, node_id: str) -> bool:
         """Whether *node_id* may run a wake-word detector and claim activations."""

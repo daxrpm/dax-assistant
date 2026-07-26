@@ -16,7 +16,7 @@ import logging
 from dataclasses import replace
 from typing import TYPE_CHECKING
 
-from dax.capabilities.protocol import is_canonical_shell
+from dax.capabilities.protocol import canonical_name, is_canonical_shell
 from dax.core.exceptions import ToolError
 from dax.core.models import ToolCall, ToolResult
 from dax.core.policy import Decision
@@ -36,6 +36,7 @@ logger = logging.getLogger(__name__)
 # The dax-system tool that runs shell commands — gated by the shell allowlist
 # rather than the generic name-pattern policy.
 _SHELL_TOOL_NAME = "shell_run"
+_APP_OPEN_TOOL_NAME = "app_open"
 
 
 class ToolGate:
@@ -153,6 +154,12 @@ class ToolGate:
             is_canonical_shell(call.tool_name) or self._shell_allow is not None
         ):
             return await self._gate_shell(call, channel=channel, session_id=session_id)
+        if self._is_trusted_node_app_open(call):
+            if decision is Decision.ALLOW:
+                return None, replace(call, human_approved=True)
+            return await self._gate_node_app_open(
+                call, channel=channel, session_id=session_id
+            )
         if decision is Decision.ALLOW:
             return None, call
         # ASK — require confirmation.
@@ -202,7 +209,7 @@ class ToolGate:
         return call.server_name.removeprefix(prefix) or None
 
     async def _persist_nodes(self) -> None:
-        """Write a remembered node command through, so it outlives a restart."""
+        """Write remembered node authorizations through across restarts."""
         if self._save_config is None:
             return
         try:
@@ -210,7 +217,7 @@ class ToolGate:
         except Exception:
             # The decision still stands for this turn; only its persistence
             # failed, and saying so is better than pretending it was kept.
-            logger.exception("Could not persist the node command allowlist")
+            logger.exception("Could not persist node authorizations")
 
     def _is_trusted_shell(self, call: ToolCall) -> bool:
         if call.tool_name == _SHELL_TOOL_NAME:
@@ -219,6 +226,75 @@ class ToolGate:
             return False
         owner = self._tools.get_server_for_tool(call.tool_name)
         return owner == call.server_name and owner.startswith("capability-node:")
+
+    def _is_trusted_node_app_open(self, call: ToolCall) -> bool:
+        node_id = self._node_id(call)
+        if node_id is None or call.tool_name != canonical_name(node_id, _APP_OPEN_TOOL_NAME):
+            return False
+        return self._tools.get_server_for_tool(call.tool_name) == call.server_name
+
+    async def _gate_node_app_open(
+        self,
+        call: ToolCall,
+        *,
+        channel: str | None = None,
+        session_id: str | None = None,
+    ) -> tuple[ToolResult | None, ToolCall]:
+        """Remember an app approval only for its exact capability node."""
+        node_id = self._node_id(call)
+        app_value = call.arguments.get("app")
+        app = app_value.strip() if isinstance(app_value, str) else ""
+        if node_id is None or not app or len(app) > 128 or "\x00" in app:
+            await self._audit(call, "denied")
+            return (
+                ToolResult(
+                    call_id=call.id,
+                    content="Error: app_open requires a valid application name.",
+                    is_error=True,
+                ),
+                call,
+            )
+        if self._nodes is not None and self._nodes.node_allows_app(node_id, app):
+            await self._audit(call, "executed")
+            return None, replace(call, human_approved=True)
+        if self._approval is None:
+            await self._audit(call, "denied")
+            return (
+                ToolResult(
+                    call_id=call.id,
+                    content=(
+                        f"Error: opening '{app}' requires confirmation but no "
+                        "approval channel is available."
+                    ),
+                    is_error=True,
+                ),
+                call,
+            )
+        options = ["once", "save"] if self._nodes is not None else ["once"]
+        decision = await self._approval.request(
+            tool_name=call.tool_name,
+            server_name=call.server_name,
+            arguments=dict(call.arguments),
+            options=options,
+            channel=channel,
+            session_id=session_id,
+        )
+        if decision not in options:
+            await self._audit(call, "declined")
+            return (
+                ToolResult(
+                    call_id=call.id,
+                    content=f"Error: the user declined to open '{app}'.",
+                    is_error=True,
+                ),
+                call,
+            )
+        if decision == "save" and self._nodes is not None:
+            self._nodes.remember_node_app(node_id, app)
+            logger.info("Remembered app '%s' for node %s", app, node_id)
+            await self._persist_nodes()
+        await self._audit(call, "approved")
+        return None, replace(call, human_approved=True)
 
     async def _gate_shell(
         self,

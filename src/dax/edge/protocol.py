@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import json
 from dataclasses import dataclass
-from typing import Any, Literal
+from typing import Any, Literal, cast
 
 PROTOCOL_VERSION = 1
 MAX_FRAME_BYTES = 256 * 1024
@@ -40,6 +40,9 @@ class SynthesizeRequest:
     language: Literal["es", "en"]
     engine: Literal["kokoro", "piper"]
     config: dict[str, object]
+    # Wake replies play on the node that heard them. Mobile synthesis keeps the
+    # default False and receives the validated PCM without sounding here.
+    playback: bool = False
 
 
 def hello_frame(
@@ -214,6 +217,7 @@ def parse_synthesize(frame: dict[str, object]) -> SynthesizeRequest:
     language = frame.get("language")
     engine = frame.get("engine")
     config = frame.get("config")
+    playback = frame.get("playback", False)
     if not isinstance(request_id, str) or not request_id or len(request_id) > 128:
         raise ValueError("Invalid request_id")
     if not isinstance(generation, int) or isinstance(generation, bool) or generation < 1:
@@ -226,6 +230,8 @@ def parse_synthesize(frame: dict[str, object]) -> SynthesizeRequest:
         raise ValueError("Invalid synthesis engine")
     if not isinstance(config, dict):
         raise ValueError("Invalid synthesis config")
+    if not isinstance(playback, bool):
+        raise ValueError("Invalid synthesis playback mode")
     if len(json.dumps(config, separators=(",", ":")).encode()) > MAX_TTS_CONFIG_BYTES:
         raise ValueError("Synthesis config exceeds limit")
     allowed = {"piper_voice_es", "piper_voice_en"}
@@ -249,7 +255,13 @@ def parse_synthesize(frame: dict[str, object]) -> SynthesizeRequest:
         ):
             raise ValueError("Invalid speed")
     return SynthesizeRequest(
-        request_id, generation, text.strip(), language, engine, dict(config)  # type: ignore[arg-type]
+        request_id,
+        generation,
+        text.strip(),
+        cast('Literal["es", "en"]', language),
+        cast('Literal["kokoro", "piper"]', engine),
+        dict(config),
+        playback,
     )
 
 

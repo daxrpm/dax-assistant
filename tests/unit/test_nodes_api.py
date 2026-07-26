@@ -138,6 +138,7 @@ class TestNodeListing:
             "process_locally": True,
             "inference": "auto",
             "voice": "auto",
+            "app_open_allow": [],
         }
 
     async def test_listing_excludes_plain_clients(self, client: AsyncClient) -> None:
@@ -164,6 +165,7 @@ class TestNodePolicyUpdates:
             "process_locally": False,
             "inference": "auto",
             "voice": "server",
+            "app_open_allow": [],
         }
         listed = await client.get("/api/nodes")
         row = next(n for n in listed.json()["nodes"] if n["id"] == node_id)

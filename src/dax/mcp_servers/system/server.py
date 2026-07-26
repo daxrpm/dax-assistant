@@ -215,9 +215,9 @@ def _launch_application(app: str, directories: list[Path] | None = None) -> str:
                 systemd_run,
                 "--user",
                 "--collect",
-                "--wait",
                 "--quiet",
                 "--property=Type=exec",
+                "--property=ExitType=cgroup",
                 gtk_launch,
                 desktop_id,
             ],
@@ -231,7 +231,7 @@ def _launch_application(app: str, directories: list[Path] | None = None) -> str:
         ) from None
     if proc.returncode != 0:
         raise RuntimeError(_truncate(proc.stderr or proc.stdout or "Application launch failed"))
-    return f"Opened {display_name} ({desktop_id})"
+    return f"Started {display_name} ({desktop_id})"
 
 
 def build_server() -> FastMCP:

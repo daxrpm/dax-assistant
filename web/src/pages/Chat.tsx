@@ -862,9 +862,20 @@ export function ChatPage() {
             )}
             {confirmation.options?.includes("save") && (
               <p className="text-xs text-muted">
-                <strong>Approve &amp; save</strong> adds this command to your allowlist
-                so it runs without asking next time. <strong>Approve once</strong> runs
-                it just this time. Manage the list under <em>Commands</em>.
+                {confirmation.tool_name === "app_open" ||
+                confirmation.tool_name.endsWith("__app_open") ? (
+                  <>
+                    <strong>Approve &amp; save</strong> remembers this application only
+                    for this device. Revoke it under <em>Capability nodes</em>.
+                  </>
+                ) : (
+                  <>
+                    <strong>Approve &amp; save</strong> adds this command to your
+                    allowlist so it runs without asking next time. <strong>Approve
+                    once</strong> runs it just this time. Manage the list under
+                    <em> Commands</em>.
+                  </>
+                )}
               </p>
             )}
             <ConfirmationCountdown request={confirmation} onExpire={expireConfirmation} />

@@ -113,6 +113,29 @@
   color: var(--fg-tertiary);
 }
 
+.appList {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+  margin-top: var(--space-2);
+}
+
+.appChip {
+  padding: 4px var(--space-2);
+  font-family: var(--font-mono);
+  font-size: var(--text-caption);
+  color: var(--fg-secondary);
+  background: var(--bg-inset);
+  border: none;
+  border-radius: var(--radius-pill);
+  cursor: pointer;
+}
+
+.appChip:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
 .select {
   flex: none;
   align-self: center;

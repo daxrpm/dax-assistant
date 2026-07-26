@@ -15,8 +15,8 @@
     "semantic_hash": "3ea725724bc8ebe483c9f13d6aa1124f"
   },
   "pyproject.toml": {
-    "mtime": 1785101619.1834033,
-    "ast_hash": "d27ff509148380f87ec067305595bfcf",
+    "mtime": 1785106432.940089,
+    "ast_hash": "38c402b47092d534742684c4f353b3b2",
     "semantic_hash": ""
   },
   "scripts/download_models.py": {
@@ -50,8 +50,8 @@
     "semantic_hash": ""
   },
   "src/dax/app.py": {
-    "mtime": 1785082816.9984193,
-    "ast_hash": "4c375a5445bf0dd8277f8350009dc012",
+    "mtime": 1785105839.5735633,
+    "ast_hash": "562e55d9e4089abe6dee838c327f42c5",
     "semantic_hash": ""
   },
   "src/dax/channels/__init__.py": {
@@ -85,8 +85,8 @@
     "semantic_hash": "d41d8cd98f00b204e9800998ecf8427e"
   },
   "src/dax/core/config.py": {
-    "mtime": 1785082718.904531,
-    "ast_hash": "c82c9f8fea525a53d287b2014e9c8bb8",
+    "mtime": 1785105782.1969779,
+    "ast_hash": "95d4805e52fa127730ad96c28bef3175",
     "semantic_hash": ""
   },
   "src/dax/core/config_io.py": {
@@ -210,8 +210,8 @@
     "semantic_hash": "34041218aa4fad9fb39816578847318b"
   },
   "src/dax/mcp_servers/system/server.py": {
-    "mtime": 1785101065.7439265,
-    "ast_hash": "34797764246dacd54e84640815d2ea2f",
+    "mtime": 1785105770.0358539,
+    "ast_hash": "222a035280338607281ca89304337c39",
     "semantic_hash": ""
   },
   "src/dax/orchestrator/__init__.py": {
@@ -245,8 +245,8 @@
     "semantic_hash": "50a1152f2bffa68ffd6c1cd10dc2e277"
   },
   "src/dax/orchestrator/tool_gate.py": {
-    "mtime": 1785082761.5699174,
-    "ast_hash": "ff50d538322db29130824f77718cdd02",
+    "mtime": 1785105770.0368538,
+    "ast_hash": "60c5ce044a2d8f53fcec8dfca2886d0f",
     "semantic_hash": ""
   },
   "src/dax/storage/__init__.py": {
@@ -280,8 +280,8 @@
     "semantic_hash": "c6aa55a8f9240604bd842fc1308ced2d"
   },
   "src/dax/voice/pipeline.py": {
-    "mtime": 1785101542.9550488,
-    "ast_hash": "6e68f419f6d12805907856f69cecb1ac",
+    "mtime": 1785106113.281356,
+    "ast_hash": "3740e69c834d5f1577bc974239467849",
     "semantic_hash": ""
   },
   "src/dax/voice/speaker.py": {
@@ -500,8 +500,8 @@
     "semantic_hash": ""
   },
   "tests/unit/test_system_server.py": {
-    "mtime": 1785101032.357568,
-    "ast_hash": "099d86174d6b6dff6575ed86743fb452",
+    "mtime": 1785105928.1594672,
+    "ast_hash": "44d8cefebfc403e164a66aacb08d3202",
     "semantic_hash": ""
   },
   "tests/unit/test_tool_mapper.py": {
@@ -510,8 +510,8 @@
     "semantic_hash": ""
   },
   "tests/unit/test_voice.py": {
-    "mtime": 1785101555.5261838,
-    "ast_hash": "92c08708c06fcfb16976ad0acccb8b95",
+    "mtime": 1785106034.8425558,
+    "ast_hash": "f67a86fc8997a56f770ad12f3fbea479",
     "semantic_hash": ""
   },
   "tests/unit/test_webhooks.py": {
@@ -590,8 +590,8 @@
     "semantic_hash": "2a67cd7f99fa4c0a1d8bd3c93a71ba4f"
   },
   "web/src/pages/Chat.tsx": {
-    "mtime": 1785001048.922302,
-    "ast_hash": "3aa2fec899df8078dd53f47ca0e9ae43",
+    "mtime": 1785105986.3350608,
+    "ast_hash": "8d300a0f66a1774e035f6db6a02fa195",
     "semantic_hash": ""
   },
   "web/src/pages/Dashboard.tsx": {
@@ -710,8 +710,8 @@
     "semantic_hash": ""
   },
   "src/dax/web/static/index.html": {
-    "mtime": 1785101647.310169,
-    "ast_hash": "e024e7dcf83fa6490b2b1626f891b623",
+    "mtime": 1785106305.937322,
+    "ast_hash": "e65651d0ddfd4c1aa910a348b76e62fc",
     "semantic_hash": ""
   },
   "web/index.html": {
@@ -720,12 +720,12 @@
     "semantic_hash": "647271aabf0d04a8ba029b5b8ed54f36"
   },
   "src/dax/web/static/favicon.svg": {
-    "mtime": 1785101646.8936412,
+    "mtime": 1785106305.5947104,
     "ast_hash": "7e840862161341271697daa99a40d76b",
     "semantic_hash": "7e840862161341271697daa99a40d76b"
   },
   "src/dax/web/static/icons.svg": {
-    "mtime": 1785101646.893799,
+    "mtime": 1785106305.5948553,
     "ast_hash": "3b4fcfcf393eca4d264dca4a4663bc37",
     "semantic_hash": "3b4fcfcf393eca4d264dca4a4663bc37"
   },
@@ -820,8 +820,8 @@
     "semantic_hash": ""
   },
   "desktop/src-tauri/tauri.conf.json": {
-    "mtime": 1785101619.1859047,
-    "ast_hash": "1adddaae938517aec846c37ea79b0540",
+    "mtime": 1785106432.943411,
+    "ast_hash": "62f056c542f796dc56fe027e50766f08",
     "semantic_hash": ""
   },
   "desktop/src/App.tsx": {
@@ -840,8 +840,8 @@
     "semantic_hash": ""
   },
   "desktop/src/api/types.ts": {
-    "mtime": 1784779636.2691689,
-    "ast_hash": "83438fb1090cf9107aa231898d3a322a",
+    "mtime": 1785105770.038854,
+    "ast_hash": "cb82b9e49a7b290d581d279a425443f2",
     "semantic_hash": ""
   },
   "desktop/src/components/AppShell.tsx": {
@@ -970,8 +970,8 @@
     "semantic_hash": "9a788af493afb38e68d77c0138492699"
   },
   "desktop/src/screens/Chat.tsx": {
-    "mtime": 1785001071.8673477,
-    "ast_hash": "100dbbb2b16dfe356d8dec51def091e5",
+    "mtime": 1785105986.3330607,
+    "ast_hash": "5074be2d523a946b72c6aa89916e7dd5",
     "semantic_hash": ""
   },
   "desktop/src/screens/Commands.tsx": {
@@ -1245,8 +1245,8 @@
     "semantic_hash": "8308b0dd1b3e781c7c912b13501ef5eb"
   },
   "desktop/src/i18n/catalog.ts": {
-    "mtime": 1784508280.773123,
-    "ast_hash": "c5c5f4fba3d429603004f6948be1f39c",
+    "mtime": 1785105986.334061,
+    "ast_hash": "e7307ce219062ddb1449c8dd7d1f7fb0",
     "semantic_hash": ""
   },
   "desktop/src/screens/settings/registry.en.ts": {
@@ -1420,8 +1420,8 @@
     "semantic_hash": ""
   },
   "android/app/build.gradle.kts": {
-    "mtime": 1785101619.186852,
-    "ast_hash": "726a3ee46ea6834a1321b95dc4533047",
+    "mtime": 1785106432.9444208,
+    "ast_hash": "a37a72038382eede83367c143985d80f",
     "semantic_hash": ""
   },
   "android/app/src/main/kotlin/com/dax/assistant/DaxApplication.kt": {
@@ -2185,8 +2185,8 @@
     "semantic_hash": ""
   },
   "release.json": {
-    "mtime": 1785101619.1832314,
-    "ast_hash": "90431e528fd60931ea75e50240ff917c",
+    "mtime": 1785106432.9396474,
+    "ast_hash": "62cecc796c48ab73635b0938a251aed3",
     "semantic_hash": ""
   },
   "scripts/release-manifest.schema.json": {
@@ -2205,8 +2205,8 @@
     "semantic_hash": ""
   },
   "src/dax/capabilities/hub.py": {
-    "mtime": 1785079858.7434235,
-    "ast_hash": "26d0c1d70a1ac1e5454245756a465a61",
+    "mtime": 1785106141.0236392,
+    "ast_hash": "72afc78dc24c084e2e3107b9c0e164d5",
     "semantic_hash": ""
   },
   "src/dax/capabilities/protocol.py": {
@@ -2230,13 +2230,13 @@
     "semantic_hash": ""
   },
   "src/dax/edge/daemon.py": {
-    "mtime": 1785079090.5453165,
-    "ast_hash": "43b5a2b59e17b9a65e0df8daf5aa2b81",
+    "mtime": 1785106241.5866654,
+    "ast_hash": "702ce33d274b45ff8ac659882faa5485",
     "semantic_hash": ""
   },
   "src/dax/edge/protocol.py": {
-    "mtime": 1785078904.5193934,
-    "ast_hash": "e07bbcdfe2e8068e53a6e12e7fb03e7f",
+    "mtime": 1785106141.0226393,
+    "ast_hash": "73b9622408e8a995eca16dbdd1d2cbce",
     "semantic_hash": ""
   },
   "src/dax/web/routes/capabilities_ws.py": {
@@ -2245,8 +2245,8 @@
     "semantic_hash": ""
   },
   "tests/unit/test_capabilities.py": {
-    "mtime": 1785083321.460004,
-    "ast_hash": "89d1a05332ca18af68e32249e400db12",
+    "mtime": 1785105944.9286385,
+    "ast_hash": "2ac6857c7f0a8d9c8f84b5f2a1dd59d4",
     "semantic_hash": ""
   },
   "tests/unit/test_edge_credentials.py": {
@@ -2255,13 +2255,13 @@
     "semantic_hash": ""
   },
   "tests/unit/test_edge_daemon.py": {
-    "mtime": 1785079133.5448651,
-    "ast_hash": "7e237696be6a52a0dd11ee0982ec210f",
+    "mtime": 1785106241.5876653,
+    "ast_hash": "db297575fb5c806dc8a495c03d96e0e0",
     "semantic_hash": ""
   },
   "tests/unit/test_edge_protocol.py": {
-    "mtime": 1784590268.8837316,
-    "ast_hash": "0f1c985154e0727aa7059a1b6b855b09",
+    "mtime": 1785105928.1624672,
+    "ast_hash": "85c9ce42781411fc0fb62c9543fef290",
     "semantic_hash": ""
   },
   "web/src/api/client.test.ts": {
@@ -2285,12 +2285,12 @@
     "semantic_hash": ""
   },
   "docs/capability-nodes.md": {
-    "mtime": 1784780849.799935,
-    "ast_hash": "467e36984fa5dce4eb10d5fc8c265663",
+    "mtime": 1785106428.160569,
+    "ast_hash": "9ccb837ef35739b70fe1cf94ae19ba4c",
     "semantic_hash": ""
   },
   "docs/deployment.md": {
-    "mtime": 1785101675.1342554,
+    "mtime": 1785106337.1546404,
     "ast_hash": "5ed9227ed43670fb68dfdfd8d7f39546",
     "semantic_hash": ""
   },
@@ -2330,8 +2330,8 @@
     "semantic_hash": ""
   },
   "desktop/src/components/CapabilityNodes.tsx": {
-    "mtime": 1784589518.9833653,
-    "ast_hash": "39fde245fe361e19de825ff12035d62f",
+    "mtime": 1785105770.038854,
+    "ast_hash": "0f119d4f9bdd735d9d7ddca26c3d64a6",
     "semantic_hash": ""
   },
   "desktop/src/native/FirstRun.test.ts": {
@@ -2350,8 +2350,8 @@
     "semantic_hash": ""
   },
   "src/dax/web/routes/nodes.py": {
-    "mtime": 1784589097.083746,
-    "ast_hash": "ea677d6f0ad76d5470baedeaed9f7251",
+    "mtime": 1785105770.037854,
+    "ast_hash": "ec1c743bafd9aefe163dc75211a162dc",
     "semantic_hash": ""
   },
   "tests/unit/test_capability_endpoints.py": {
@@ -2365,8 +2365,8 @@
     "semantic_hash": ""
   },
   "tests/unit/test_nodes_api.py": {
-    "mtime": 1784589415.4183242,
-    "ast_hash": "7402699bb851404cace8fc99f41cefee",
+    "mtime": 1785105928.1614673,
+    "ast_hash": "8297593619c64668f7878fa70ff89354",
     "semantic_hash": ""
   },
   "desktop/src-tauri/src/capability_node.rs": {
@@ -2395,8 +2395,8 @@
     "semantic_hash": ""
   },
   "tests/unit/test_tool_gate.py": {
-    "mtime": 1785083042.647403,
-    "ast_hash": "0b988054e8c17bbdfdaa310c235cb73f",
+    "mtime": 1785106067.002884,
+    "ast_hash": "97f80c99066290096a44364f5abc1f46",
     "semantic_hash": ""
   },
   "android/app/src/main/kotlin/com/dax/assistant/capabilities/AndroidCapabilityExecutor.kt": {
@@ -2505,8 +2505,8 @@
     "semantic_hash": ""
   },
   "tests/unit/test_wake_distribution.py": {
-    "mtime": 1785028341.541901,
-    "ast_hash": "e1abeafe9e8eb4a5d9c46b5bb900b354",
+    "mtime": 1785105928.1634674,
+    "ast_hash": "c55cc7c2fd1dc2df448c55ec40a54d5e",
     "semantic_hash": ""
   },
   "web/src/lib/audio.ts": {
@@ -2524,9 +2524,9 @@
     "ast_hash": "2f2cdf33726c0dda0d86ad321ff9e3ef",
     "semantic_hash": ""
   },
-  "src/dax/web/static/assets/index-DCJw1gxI.js": {
-    "mtime": 1785101647.309169,
-    "ast_hash": "41f624fa721222e9d00bc3dd4e489c41",
+  "src/dax/web/static/assets/index-CyQ5v_s7.js": {
+    "mtime": 1785106305.936322,
+    "ast_hash": "042bd6255f063a227a53cef5a5f2d565",
     "semantic_hash": ""
   }
 }

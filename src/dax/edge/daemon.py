@@ -33,6 +33,7 @@ from dax.mcp_servers.system.server import (
     shell_allowlist,
     validate_command,
 )
+from dax.voice.audio_io import AudioPlayer
 
 from .credentials import NodeCredentials, websocket_url
 from .protocol import (
@@ -62,12 +63,26 @@ MAX_ADVERTISED_ENDPOINTS = 4
 _WAKE_RESPONSES = frozenset({"wake_grant", "wake_yield", "listen_stop"})
 
 
-def available_local_tts_engines() -> list[str]:
-    """Advertise only local runtimes; model readiness is checked lazily."""
+def available_local_tts_engines(models_path: str | None = None) -> list[str]:
+    """Advertise only engines with both a runtime and local model files."""
+    data_home = Path(os.environ.get("XDG_DATA_HOME", Path.home() / ".local/share"))
+    models = Path(
+        models_path
+        or os.environ.get("DAX_MODELS_PATH", str(data_home / "dax-assistant/models"))
+    )
     engines: list[str] = []
-    if importlib.util.find_spec("kokoro_onnx") is not None:
+    kokoro = models / "kokoro"
+    if (
+        importlib.util.find_spec("kokoro_onnx") is not None
+        and (kokoro / "kokoro-v1.0.onnx").is_file()
+        and (kokoro / "voices-v1.0.bin").is_file()
+    ):
         engines.append("kokoro")
-    if importlib.util.find_spec("piper") is not None:
+    piper = models / "piper"
+    if importlib.util.find_spec("piper") is not None and any(
+        model.with_suffix(f"{model.suffix}.json").is_file()
+        for model in piper.glob("*.onnx")
+    ):
         engines.append("piper")
     return engines
 
@@ -207,11 +222,11 @@ class LocalTTSExecutor:
     """One lazy, resident local engine with strictly serialized synthesis."""
 
     def __init__(self, models_path: str | None = None) -> None:
-        self.engines = available_local_tts_engines()
         data_home = Path(os.environ.get("XDG_DATA_HOME", Path.home() / ".local/share"))
         self._models_path = models_path or os.environ.get(
             "DAX_MODELS_PATH", str(data_home / "dax-assistant/models")
         )
+        self.engines = available_local_tts_engines(self._models_path)
         self._lock = asyncio.Semaphore(1)
         self._thread_lock = threading.Lock()
         self._engine: Any = None
@@ -303,6 +318,7 @@ class EdgeDaemon:
         *,
         executor: SystemExecutor | None = None,
         tts_executor: LocalTTSExecutor | None = None,
+        audio_player: AudioPlayer | None = None,
         connect_factory: ConnectFactory = _connect,
         sleep: Sleep = asyncio.sleep,
         session_port: int | None = None,
@@ -310,6 +326,8 @@ class EdgeDaemon:
         self._credentials = credentials
         self._executor = executor or SystemExecutor()
         self._tts_executor = tts_executor or LocalTTSExecutor()
+        self._audio_player = audio_player or AudioPlayer()
+        self._playback_lock = asyncio.Lock()
         self._connect = connect_factory
         self._sleep = sleep
         self._stop = asyncio.Event()
@@ -571,6 +589,11 @@ class EdgeDaemon:
             pcm, sample_rate, engine, voice, fingerprint = (
                 await self._tts_executor.synthesize(request)
             )
+            if request.playback:
+                async with self._playback_lock:
+                    audio = np.frombuffer(pcm, dtype="<i2")
+                    await asyncio.to_thread(self._audio_player.play, audio, sample_rate)
+                logger.info("Played wake reply locally (%s, %s)", engine, request.language)
             digest = hashlib.sha256(pcm).hexdigest()
             chunks = [
                 pcm[offset : offset + MAX_TTS_CHUNK_BYTES]

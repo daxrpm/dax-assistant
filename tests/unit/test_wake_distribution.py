@@ -31,10 +31,15 @@ class FakePipeline:
         self.wake_requests: list[str] = []
         self.released: list[str] = []
         self.on_end = None
+        self.speaker = None
         self.refuse = False
+        self.state = "idle"
 
     def set_remote_wake_end_callback(self, callback) -> None:
         self.on_end = callback
+
+    def set_remote_wake_speaker(self, callback) -> None:
+        self.speaker = callback
 
     def acquire_remote_owner(self, owner: str) -> int:
         if self.refuse:
@@ -195,6 +200,34 @@ class TestGrantedTurn:
         await asyncio.sleep(0.05)
         assert pipeline.released == [node_id]
         assert pipeline.source is None
+
+    async def test_audio_end_during_processing_retains_the_output_route(
+        self, wake_env
+    ) -> None:
+        hub, pipeline, socket, node_id = wake_env
+        await socket.push(
+            {"type": "wake_claim", "generation": 1, "claim_id": "c1", "score": 0.8}
+        )
+        grant = await socket.wait_for_type("wake_grant")
+        pipeline.state = "processing"
+
+        await socket.push(
+            {
+                "type": "audio_end",
+                "generation": 1,
+                "lease_id": grant["lease_id"],
+                "reason": "complete",
+            }
+        )
+        await asyncio.sleep(0.05)
+
+        assert pipeline.released == []
+        assert hub._connections[node_id].wake is not None
+        pipeline.state = "idle"
+        assert pipeline.on_end is not None
+        pipeline.on_end(node_id)
+        await asyncio.sleep(0.05)
+        assert pipeline.released == [node_id]
 
     async def test_a_busy_pipeline_yields_instead_of_half_opening_a_turn(
         self, wake_env

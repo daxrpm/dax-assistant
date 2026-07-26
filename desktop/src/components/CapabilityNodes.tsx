@@ -132,6 +132,42 @@ export function CapabilityNodes() {
                 </span>
               </label>
 
+              {node.policy.app_open_allow.length > 0 && (
+                <div className={s.control}>
+                  <span className={s.controlBody}>
+                    <span className={s.controlLabel}>
+                      {text("Aplicaciones recordadas", "Remembered applications")}
+                    </span>
+                    <span className={s.controlHelp}>
+                      {text(
+                        "Estas aplicaciones pueden abrirse en este equipo sin volver a preguntar.",
+                        "These applications can open on this device without asking again.",
+                      )}
+                    </span>
+                    <span className={s.appList}>
+                      {node.policy.app_open_allow.map((app) => (
+                        <button
+                          key={app}
+                          type="button"
+                          className={s.appChip}
+                          disabled={busy === node.id || node.revoked}
+                          onClick={() =>
+                            void update(node.id, {
+                              app_open_allow: node.policy.app_open_allow.filter(
+                                (allowed) => allowed !== app,
+                              ),
+                            })
+                          }
+                          title={text(`Revocar ${app}`, `Revoke ${app}`)}
+                        >
+                          {app} ×
+                        </button>
+                      ))}
+                    </span>
+                  </span>
+                </div>
+              )}
+
               <label className={s.control}>
                 <input
                   type="checkbox"

@@ -109,7 +109,7 @@ async def capability_env(tmp_path):
         name="laptop", platform="linux", kind=CAPABILITY_NODE_KIND
     )
     manager = MCPManager(DaxConfig().mcp)
-    hub = CapabilityHub(manager, devices)
+    hub = CapabilityHub(manager, devices, voice=VoiceConfig())
     yield hub, manager, devices, node.id
     await hub.stop()
     await database.stop()
@@ -472,6 +472,51 @@ class TestCapabilityTTS:
             f"node:{node_id}:{ready['generation']}:actual-engine".encode()
         ).hexdigest()[:32]
         assert result.executor_fingerprint == expected
+        await hub.disconnect_node(node_id)
+        await task
+
+    async def test_wake_reply_targets_and_plays_on_its_exact_node(self, capability_env):
+        hub, _manager, _devices, node_id = capability_env
+        socket = FakeWebSocket(_tts_hello("kokoro"))
+        task = asyncio.create_task(hub.handle(socket, node_id))
+        ready = await socket.wait_for_type("ready")
+
+        speaking = asyncio.create_task(
+            hub._speak_on_wake_node(node_id, "Hola", "es")
+        )
+        request = await socket.wait_for_type("synthesize")
+        assert request["playback"] is True
+        pcm = b"\x00\x00\x01\x00"
+        await socket.push(
+            {
+                "type": "synthesize_chunk",
+                "generation": ready["generation"],
+                "request_id": request["request_id"],
+                "index": 0,
+                "data": base64.b64encode(pcm).decode(),
+            }
+        )
+        await socket.push(
+            {
+                "type": "synthesize_final",
+                "generation": ready["generation"],
+                "request_id": request["request_id"],
+                "success": True,
+                "chunks": 1,
+                "size": len(pcm),
+                "sha256": hashlib.sha256(pcm).hexdigest(),
+                "sample_rate": 24_000,
+                "channels": 1,
+                "sample_width": 2,
+                "engine": "kokoro",
+                "voice": "em_alex",
+                "language": "es",
+                "executor_fingerprint": "actual-engine",
+                "error": None,
+            }
+        )
+
+        await speaking
         await hub.disconnect_node(node_id)
         await task
 

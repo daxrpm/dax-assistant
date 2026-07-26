@@ -339,6 +339,7 @@ export interface NodePolicy {
    */
   inference: "auto" | "local" | "server";
   voice: "auto" | "local" | "server";
+  app_open_allow: string[];
 }
 
 export interface NodesConfig {

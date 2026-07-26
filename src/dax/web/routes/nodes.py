@@ -44,6 +44,7 @@ class NodePolicyUpdate(BaseModel):
     process_locally: bool | None = None
     inference: str | None = None
     voice: str | None = None
+    app_open_allow: list[str] | None = None
 
 
 def _policy_json(policy: NodePolicyConfig) -> dict[str, Any]:
@@ -53,6 +54,7 @@ def _policy_json(policy: NodePolicyConfig) -> dict[str, Any]:
         "process_locally": policy.process_locally,
         "inference": policy.inference,
         "voice": policy.voice,
+        "app_open_allow": policy.app_open_allow,
     }
 
 

@@ -402,6 +402,8 @@ function ConfirmationModal({
 
   const urgent = remaining <= 10;
   const canSave = request.options?.includes("save");
+  const remembersApp =
+    request.tool_name === "app_open" || request.tool_name.endsWith("__app_open");
 
   return (
     <Modal
@@ -474,7 +476,7 @@ function ConfirmationModal({
 
       {canSave && (
         <p className={s.confirmNote}>
-          {t("chat.confirmNote")}
+          {t(remembersApp ? "chat.confirmAppNote" : "chat.confirmNote")}
         </p>
       )}
 

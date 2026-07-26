@@ -105,6 +105,33 @@ def test_synthesize_request_is_strict_and_bounded() -> None:
 
     assert request.text == "Hola"
     assert request.engine == "kokoro"
+    assert request.playback is False
+    playback = parse_synthesize(
+        {
+            "type": "synthesize",
+            "request_id": "tts-play",
+            "generation": 2,
+            "text": "Hola",
+            "language": "es",
+            "engine": "piper",
+            "config": {"piper_voice_es": "es_ES", "piper_voice_en": "en_US"},
+            "playback": True,
+        }
+    )
+    assert playback.playback is True
+    with pytest.raises(ValueError, match="playback"):
+        parse_synthesize(
+            {
+                "type": "synthesize",
+                "request_id": "tts-bad-play",
+                "generation": 2,
+                "text": "Hola",
+                "language": "es",
+                "engine": "piper",
+                "config": {"piper_voice_es": "es_ES", "piper_voice_en": "en_US"},
+                "playback": "yes",
+            }
+        )
     with pytest.raises(ValueError, match="fields"):
         parse_synthesize(
             {
